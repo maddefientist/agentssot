@@ -1,0 +1,8 @@
+.env
+data/
+backups/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+firebase-debug.log
