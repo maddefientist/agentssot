@@ -379,6 +379,32 @@ def admin_delete_items(
     return schemas.DeleteItemsResponse(namespace=payload.namespace, deleted=deleted)
 
 
+@app.post("/admin/dedup", response_model=schemas.DedupResponse)
+def admin_dedup(
+    payload: schemas.DedupRequest,
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    require_admin(auth)
+    ensure_namespace_access(auth, payload.namespace, {ApiRole.admin.value})
+
+    result = crud.dedup_knowledge_items(session, payload.namespace, dry_run=payload.dry_run)
+    return schemas.DedupResponse(**result)
+
+
+@app.get("/admin/stats", response_model=schemas.NamespaceStatsResponse)
+def admin_stats(
+    namespace: str = Query(default="default"),
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    require_admin(auth)
+    ensure_namespace_access(auth, namespace, {ApiRole.admin.value})
+
+    result = crud.get_namespace_stats(session, namespace)
+    return schemas.NamespaceStatsResponse(**result)
+
+
 @app.post("/admin/backfill-embeddings", response_model=schemas.BackfillEmbeddingsResponse)
 def admin_backfill_embeddings(
     payload: schemas.BackfillEmbeddingsRequest,

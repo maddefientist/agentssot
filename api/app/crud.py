@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete as sa_delete, func, or_, select, text as sa_text
 from sqlalchemy.orm import Session
 
 from .chunking import chunk_text_semantic
@@ -147,6 +147,16 @@ def ingest_batch(session: Session, payload: IngestRequest, embedding_provider: E
             _validate_embedding_dim(item.embedding, settings.embedding_dim)
 
             for chunk in chunks:
+                # Pre-ingest dedup: skip if identical content already exists in this namespace
+                exists = session.scalar(
+                    select(func.count()).select_from(KnowledgeItem).where(
+                        and_(KnowledgeItem.namespace == payload.namespace, KnowledgeItem.content == chunk)
+                    )
+                )
+                if exists:
+                    logger.debug("skipping duplicate knowledge chunk (namespace=%s)", payload.namespace)
+                    continue
+
                 chunk_embedding = item.embedding
                 if chunk_embedding is None:
                     chunk_embedding = _maybe_embed_text(embedding_provider, chunk, settings.embedding_provider)
@@ -801,6 +811,109 @@ def delete_items(session: Session, namespace: str, ids: list[str]) -> int:
             deleted += 1
     session.commit()
     return deleted
+
+
+# ── Dedup ──────────────────────────────────────────────────────────
+
+
+def dedup_knowledge_items(session: Session, namespace: str, dry_run: bool = False) -> dict:
+    """Find and remove duplicate knowledge items within a namespace.
+
+    Keeps the oldest row for each unique content string; deletes newer duplicates.
+    Returns a summary with duplicate_groups count and deleted count.
+    """
+    ensure_namespace_exists(session, namespace)
+
+    # Find content values that appear more than once
+    dupe_query = (
+        select(KnowledgeItem.content, func.count().label("cnt"), func.min(KnowledgeItem.created_at).label("oldest"))
+        .where(KnowledgeItem.namespace == namespace)
+        .group_by(KnowledgeItem.content)
+        .having(func.count() > 1)
+    )
+    dupe_rows = session.execute(dupe_query).all()
+
+    duplicate_groups = len(dupe_rows)
+    total_deleted = 0
+
+    if not dry_run:
+        for content, cnt, oldest_at in dupe_rows:
+            # Keep the oldest, delete the rest
+            oldest_id = session.scalar(
+                select(KnowledgeItem.id)
+                .where(and_(KnowledgeItem.namespace == namespace, KnowledgeItem.content == content))
+                .order_by(KnowledgeItem.created_at.asc())
+                .limit(1)
+            )
+            if oldest_id is None:
+                continue
+            deleted = session.execute(
+                sa_delete(KnowledgeItem).where(
+                    and_(
+                        KnowledgeItem.namespace == namespace,
+                        KnowledgeItem.content == content,
+                        KnowledgeItem.id != oldest_id,
+                    )
+                )
+            )
+            total_deleted += deleted.rowcount
+        session.commit()
+    else:
+        total_deleted = sum((cnt - 1) for _, cnt, _ in dupe_rows)
+
+    return {
+        "namespace": namespace,
+        "duplicate_groups": duplicate_groups,
+        "deleted": total_deleted,
+        "dry_run": dry_run,
+    }
+
+
+# ── Stats ──────────────────────────────────────────────────────────
+
+
+def get_namespace_stats(session: Session, namespace: str) -> dict:
+    """Return item counts and embedding coverage for a namespace."""
+    ensure_namespace_exists(session, namespace)
+
+    ki_total = session.scalar(
+        select(func.count()).select_from(KnowledgeItem).where(KnowledgeItem.namespace == namespace)
+    ) or 0
+    ki_embedded = session.scalar(
+        select(func.count()).select_from(KnowledgeItem).where(
+            and_(KnowledgeItem.namespace == namespace, KnowledgeItem.embedding.is_not(None))
+        )
+    ) or 0
+
+    req_total = session.scalar(
+        select(func.count()).select_from(Requirement).where(Requirement.namespace == namespace)
+    ) or 0
+    req_embedded = session.scalar(
+        select(func.count()).select_from(Requirement).where(
+            and_(Requirement.namespace == namespace, Requirement.embedding.is_not(None))
+        )
+    ) or 0
+
+    ev_total = session.scalar(
+        select(func.count()).select_from(Event).where(Event.namespace == namespace)
+    ) or 0
+    ev_embedded = session.scalar(
+        select(func.count()).select_from(Event).where(
+            and_(Event.namespace == namespace, Event.embedding.is_not(None))
+        )
+    ) or 0
+
+    entity_total = session.scalar(
+        select(func.count()).select_from(Entity).where(Entity.namespace == namespace)
+    ) or 0
+
+    return {
+        "namespace": namespace,
+        "entities": entity_total,
+        "knowledge_items": {"total": ki_total, "embedded": ki_embedded},
+        "requirements": {"total": req_total, "embedded": req_embedded},
+        "events": {"total": ev_total, "embedded": ev_embedded},
+    }
 
 
 # ── Enrollment tokens ──────────────────────────────────────────────

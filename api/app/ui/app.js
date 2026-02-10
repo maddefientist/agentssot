@@ -273,6 +273,42 @@ $("ingestBtn").addEventListener("click", async () => {
   } catch (e) { $("adminOutput").textContent = e.message; }
 });
 
+// --- Stats ---
+$("statsBtn").addEventListener("click", async () => {
+  const ns = $("statsNamespace").value.trim() || "default";
+  try {
+    const res = await api(`/admin/stats?namespace=${encodeURIComponent(ns)}`);
+    const ki = res.knowledge_items || {};
+    const req = res.requirements || {};
+    const ev = res.events || {};
+    const lines = [
+      `Namespace: ${res.namespace}`,
+      `Entities:  ${res.entities}`,
+      `Knowledge: ${ki.total} (${ki.embedded} embedded)`,
+      `Require.:  ${req.total} (${req.embedded} embedded)`,
+      `Events:    ${ev.total} (${ev.embedded} embedded)`,
+    ];
+    $("statsOutput").textContent = lines.join("\n");
+  } catch (e) { $("statsOutput").textContent = e.message; }
+});
+
+// --- Dedup ---
+async function runDedup(dryRun) {
+  const ns = $("dedupNamespace").value.trim() || "default";
+  const out = $("dedupOutput");
+  out.textContent = dryRun ? "Scanning..." : "Cleaning...";
+  try {
+    const res = await api("/admin/dedup", {
+      method: "POST",
+      body: { namespace: ns, dry_run: dryRun }
+    });
+    const action = res.dry_run ? "would delete" : "deleted";
+    out.textContent = `${res.duplicate_groups} duplicate groups, ${res.deleted} ${action}`;
+  } catch (e) { out.textContent = e.message; }
+}
+$("dedupScanBtn").addEventListener("click", () => runDedup(true));
+$("dedupRunBtn").addEventListener("click", () => runDedup(false));
+
 // --- Boot ---
 loadSaved();
 checkHealth();
