@@ -165,7 +165,7 @@ class EnrollmentTokenCreateRequest(BaseModel):
     namespaces: list[str] = Field(default_factory=lambda: ["default"])
     name_hint: str | None = None
     max_uses: int = Field(default=1, ge=1, le=100)
-    expires_in_hours: int | None = Field(default=72, ge=1, le=8760)
+    expires_in_hours: int | None = Field(default=None, ge=1, le=8760)
 
 
 class EnrollmentTokenCreateResponse(BaseModel):
