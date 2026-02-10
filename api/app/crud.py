@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from .chunking import chunk_text_semantic
 from .embeddings import EmbeddingProvider, EmbeddingProviderError
 from .llm import LLMProvider, LLMProviderError
+from .reranker import RerankerProvider, RerankerProviderError
 from .models import ApiKey, ApiRole, Entity, EntityType, Event, EventType, KnowledgeItem, Namespace, Requirement
 from .schemas import IngestRequest, RecallRequest
 from .security import generate_api_key, hash_api_key
@@ -311,16 +312,46 @@ def query_records(
     return rows[:query_limit]
 
 
+def _apply_reranker(
+    query_text: str | None,
+    items: list[dict],
+    top_k: int,
+    reranker: RerankerProvider,
+) -> list[dict]:
+    """Rerank recall results using the cross-encoder, then trim to top_k."""
+    if not query_text or not reranker.is_available or not items:
+        return items[:top_k]
+
+    documents = [item["snippet"] for item in items]
+    try:
+        scores = reranker.rerank(query_text, documents)
+    except RerankerProviderError:
+        logger.warning("Reranker failed, falling back to vector scores", exc_info=True)
+        return items[:top_k]
+
+    for item, reranker_score in zip(items, scores):
+        item["reranker_score"] = reranker_score
+
+    items.sort(key=lambda x: x["reranker_score"], reverse=True)
+    return items[:top_k]
+
+
 def recall(
     session: Session,
     payload: RecallRequest,
     embedding_provider: EmbeddingProvider,
+    reranker_provider: RerankerProvider,
     settings,
 ) -> list[dict]:
     ensure_namespace_exists(session, payload.namespace)
 
     top_k = payload.top_k if payload.top_k is not None else settings.default_top_k
     top_k = min(max(top_k, 1), 50)
+
+    # When reranker is available, fetch a wider candidate set for re-scoring.
+    use_reranker = reranker_provider.is_available and payload.query_text
+    candidate_k = top_k * settings.reranker_candidate_multiplier if use_reranker else top_k
+    candidate_k = min(candidate_k, 150)
 
     query_embedding = payload.query_embedding
     if query_embedding is None:
@@ -356,7 +387,7 @@ def recall(
             .where(KnowledgeItem.namespace == payload.namespace)
             .where(KnowledgeItem.embedding.is_not(None))
             .order_by(score)
-            .limit(top_k)
+            .limit(candidate_k)
         )
         if project_id:
             stmt = stmt.where(KnowledgeItem.project_id == project_id)
@@ -364,7 +395,7 @@ def recall(
             stmt = stmt.where(KnowledgeItem.entity_id == entity_id)
 
         rows = session.execute(stmt).all()
-        return [
+        items = [
             {
                 "id": str(item.id),
                 "scope": "knowledge",
@@ -375,6 +406,7 @@ def recall(
             }
             for item, score_value in rows
         ]
+        return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
 
     if payload.scope == "requirements":
         score = Requirement.embedding.cosine_distance(query_embedding).label("score")
@@ -383,7 +415,7 @@ def recall(
             .where(Requirement.namespace == payload.namespace)
             .where(Requirement.embedding.is_not(None))
             .order_by(score)
-            .limit(top_k)
+            .limit(candidate_k)
         )
         if project_id:
             stmt = stmt.where(Requirement.project_id == project_id)
@@ -391,7 +423,7 @@ def recall(
             stmt = stmt.where(Requirement.owner_entity_id == entity_id)
 
         rows = session.execute(stmt).all()
-        return [
+        items = [
             {
                 "id": str(item.id),
                 "scope": "requirements",
@@ -402,6 +434,7 @@ def recall(
             }
             for item, score_value in rows
         ]
+        return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
 
     score = Event.embedding.cosine_distance(query_embedding).label("score")
     stmt = (
@@ -409,7 +442,7 @@ def recall(
         .where(Event.namespace == payload.namespace)
         .where(Event.embedding.is_not(None))
         .order_by(score)
-        .limit(top_k)
+        .limit(candidate_k)
     )
     if project_id:
         stmt = stmt.where(Event.project_id == project_id)
@@ -417,7 +450,7 @@ def recall(
         stmt = stmt.where(Event.agent_id == entity_id)
 
     rows = session.execute(stmt).all()
-    return [
+    items = [
         {
             "id": str(item.id),
             "scope": "events",
@@ -428,6 +461,7 @@ def recall(
         }
         for item, score_value in rows
     ]
+    return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
 
 
 def create_namespace(session: Session, name: str) -> Namespace:
@@ -746,3 +780,24 @@ def summarize_and_archive_session(
         "archived_events": len(events),
         "summary_knowledge_item_id": str(summary_item.id),
     }
+
+
+def delete_items(session: Session, namespace: str, ids: list[str]) -> int:
+    """Delete knowledge items by ID within a namespace. Returns count deleted."""
+    ensure_namespace_exists(session, namespace)
+    deleted = 0
+    for item_id in ids:
+        try:
+            uid = UUID(item_id)
+        except ValueError:
+            continue
+        item = session.scalar(
+            select(KnowledgeItem).where(
+                and_(KnowledgeItem.id == uid, KnowledgeItem.namespace == namespace)
+            )
+        )
+        if item:
+            session.delete(item)
+            deleted += 1
+    session.commit()
+    return deleted

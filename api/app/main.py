@@ -15,6 +15,7 @@ from .background import compaction_loop
 from .db import get_session
 from .embeddings import build_embedding_provider
 from .llm import LLMProviderError, build_llm_provider
+from .reranker import build_reranker_provider
 from .logging_config import configure_logging
 from .models import ApiRole
 from .security import AuthContext, ensure_namespace_access, require_admin, require_api_key
@@ -33,6 +34,7 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.embedding_provider = build_embedding_provider(settings)
     app.state.llm_provider = build_llm_provider(settings)
+    app.state.reranker_provider = build_reranker_provider(settings)
 
     initialize_system(settings)
 
@@ -58,7 +60,7 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(title="AgentSSOT (hari-hive) API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="AgentSSOT API", version="1.0.0", lifespan=lifespan)
 if UI_DIR.exists():
     app.mount("/ui/assets", StaticFiles(directory=UI_DIR), name="ui-assets")
 
@@ -108,6 +110,8 @@ def health() -> dict:
         "llm_provider": settings.llm_provider,
         "llm_available": app.state.llm_provider.is_available,
         "compaction_enabled": settings.effective_compaction_enabled,
+        "reranker_provider": settings.reranker_provider,
+        "reranker_available": app.state.reranker_provider.is_available,
     }
 
 
@@ -130,10 +134,10 @@ def onboarding(auth: AuthContext = Depends(require_api_key)) -> str:
     # Intentionally plaintext and LLM-friendly.
     return "\n".join(
         [
-            "hari-hive Onboarding (LLM-Friendly)",
+            "AgentSSOT Onboarding (LLM-Friendly)",
             "",
             "Purpose:",
-            "- hari-hive is our cross-LLM shared memory service, backed by AgentSSOT.",
+            "- AgentSSOT is a cross-LLM shared memory service backed by PostgreSQL + pgvector.",
             "- Use it to reduce prompt bloat by retrieving only the top relevant facts/events, then writing back durable memory.",
             "",
             "Getting an API key:",
@@ -249,6 +253,7 @@ def recall(
         session=session,
         payload=payload,
         embedding_provider=app.state.embedding_provider,
+        reranker_provider=app.state.reranker_provider,
         settings=app.state.settings,
     )
 
@@ -339,6 +344,19 @@ def admin_list_api_keys(
     require_admin(auth)
     rows = crud.list_api_keys_masked(session)
     return [schemas.ApiKeyListItem(**row) for row in rows]
+
+
+@app.post("/admin/delete-items", response_model=schemas.DeleteItemsResponse)
+def admin_delete_items(
+    payload: schemas.DeleteItemsRequest,
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    require_admin(auth)
+    ensure_namespace_access(auth, payload.namespace, {ApiRole.admin.value})
+
+    deleted = crud.delete_items(session, payload.namespace, payload.ids)
+    return schemas.DeleteItemsResponse(namespace=payload.namespace, deleted=deleted)
 
 
 @app.post("/admin/backfill-embeddings", response_model=schemas.BackfillEmbeddingsResponse)

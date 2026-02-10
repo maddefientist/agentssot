@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     openai_chat_model: str = Field(default="gpt-4o-mini", alias="OPENAI_CHAT_MODEL")
     ollama_chat_model: str = Field(default="llama3.1", alias="OLLAMA_CHAT_MODEL")
 
+    # Reranker
+    reranker_provider: Literal["none", "ollama"] = Field(default="none", alias="RERANKER_PROVIDER")
+    ollama_reranker_model: str = Field(
+        default="dengcao/Qwen3-Reranker-8B:Q8_0", alias="OLLAMA_RERANKER_MODEL"
+    )
+    reranker_candidate_multiplier: int = Field(default=3, alias="RERANKER_CANDIDATE_MULTIPLIER")
+
     compaction_enabled: bool = Field(default=True, alias="COMPACTION_ENABLED")
     compaction_event_threshold: int = Field(default=80, alias="COMPACTION_EVENT_THRESHOLD")
     compaction_char_threshold: int = Field(default=24000, alias="COMPACTION_CHAR_THRESHOLD")

@@ -88,6 +88,7 @@ class RecallItem(BaseModel):
     id: str
     scope: Literal["knowledge", "requirements", "events"]
     score: float
+    reranker_score: float | None = None
     snippet: str
     tags: list[str] = Field(default_factory=list)
     created_at: datetime | None = None
@@ -147,6 +148,16 @@ class ApiKeyListItem(BaseModel):
     is_active: bool
     created_at: datetime
     key_preview: str
+
+
+class DeleteItemsRequest(BaseModel):
+    namespace: str = "default"
+    ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class DeleteItemsResponse(BaseModel):
+    namespace: str
+    deleted: int
 
 
 class BackfillEmbeddingsRequest(BaseModel):
