@@ -75,7 +75,7 @@ agentssot/
 
 ```bash
 # 1. Clone
-git clone https://github.com/YOUR_USERNAME/agentssot.git
+git clone https://github.com/maddefientist/agentssot.git
 cd agentssot
 
 # 2. Configure
