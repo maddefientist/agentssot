@@ -1,156 +1,229 @@
-# AgentSSOT (hari-hive)
+# AgentSSOT
 
-AgentSSOT is the software project. **hari-hive** is your cross-LLM shared memory deployment name on your network.
+> A cross-LLM shared memory service — give every AI agent durable, scoped, semantic memory.
 
-## Stack
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](api/)
+[![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16+pgvector-4169E1?logo=postgresql&logoColor=white)](db/)
 
-- PostgreSQL 16 + pgvector
-- FastAPI API service
-- Daily `pg_dump` backups to `./backups`
-- Optional pgAdmin profile
+---
+
+## What is AgentSSOT?
+
+AgentSSOT (**Agent Single Source of Truth**) is a self-hosted memory backend for AI agents. It stores knowledge, events, and requirements in a PostgreSQL database with pgvector, providing both keyword search and semantic recall.
+
+Instead of stuffing entire conversation histories into prompts, agents query AgentSSOT for just the top-K relevant facts they need. Multiple agents (Claude, GPT, Gemini, local models) can share a common memory layer with namespace-based privacy isolation.
+
+The system includes a built-in web dashboard, LLM-friendly onboarding, pluggable embedding/LLM providers (Ollama, OpenAI, or bring-your-own), and an optional cross-encoder reranker for higher-quality recall.
+
+## Features
+
+- **Semantic recall** — vector similarity search via pgvector with optional HNSW indexing
+- **Two-stage retrieval** — optional cross-encoder reranker (Ollama) for precision on top of vector recall
+- **Namespace isolation** — multi-tenant memory with RBAC (reader / writer / admin)
+- **API key auth** — bcrypt-hashed keys with scoped namespace access
+- **Pluggable providers** — embeddings and LLM summarization via Ollama, OpenAI, or none
+- **Auto-chunking** — knowledge items automatically split to ~800 chars for optimal embedding
+- **Session compaction** — background loop summarizes verbose event streams into durable knowledge
+- **Built-in web dashboard** — browse, search, and admin panel served at `/`
+- **LLM onboarding** — plaintext guide at `/onboarding` tailored to the caller's API key
+- **Daily backups** — automated `pg_dump` to local volume
+
+## Architecture
+
+```mermaid
+graph LR
+    A[AI Agent] -->|X-API-Key| B[FastAPI]
+    B --> C[(PostgreSQL + pgvector)]
+    B -->|embed| D[Ollama / OpenAI]
+    B -->|summarize| D
+    B -->|rerank| E[Ollama Reranker]
+    F[Web Dashboard] -->|same API| B
+    G[Backup CronJob] -->|pg_dump| C
+```
+
+```
+agentssot/
+├── api/
+│   ├── app/
+│   │   ├── embeddings/      # Embedding provider plugins
+│   │   ├── llm/             # LLM provider plugins (summarization)
+│   │   ├── reranker/        # Cross-encoder reranker
+│   │   ├── ui/              # Built-in web dashboard (HTML/CSS/JS)
+│   │   ├── main.py          # FastAPI routes
+│   │   ├── crud.py          # Database operations
+│   │   ├── models.py        # SQLAlchemy models
+│   │   ├── schemas.py       # Pydantic request/response schemas
+│   │   ├── security.py      # Auth + RBAC
+│   │   ├── settings.py      # Configuration via env vars
+│   │   ├── startup.py       # Bootstrap (namespaces, admin key, HNSW)
+│   │   └── background.py    # Compaction loop
+│   ├── Dockerfile
+│   └── requirements.txt
+├── db/
+│   └── init/
+│       ├── 001_init.sql           # Idempotent schema bootstrap
+│       └── 002_optional_hnsw.sql  # HNSW index helper function
+├── docker-compose.yml
+├── .env.example
+└── docs/
+    └── ONBOARDING_FOR_LLMS.md
+```
 
 ## Quick Start
 
-1. Copy env template and set secrets:
-   - `cp .env.example .env`
-   - Edit `.env` and set at least `POSTGRES_PASSWORD`.
-2. Build and start:
-   - `docker compose up -d --build`
-3. Check health:
-   - `curl http://localhost:${API_PORT:-8088}/health`
-4. Open dashboard:
-   - `http://localhost:${API_PORT:-8088}/`
-   - Swagger docs remain at `http://localhost:${API_PORT:-8088}/docs`
-5. LLM-friendly onboarding page (requires API key):
-   - `GET /onboarding`
-6. Repo handoff notes (for future operators/LLMs):
-   - `HANDOFF.md`
-   - `STATUS.md`
-   - `docs/ONBOARDING_FOR_LLMS.md`
+```bash
+# 1. Clone
+git clone https://github.com/YOUR_USERNAME/agentssot.git
+cd agentssot
 
-## Auth bootstrap
+# 2. Configure
+cp .env.example .env
+# Edit .env — set at least POSTGRES_PASSWORD
 
-On first API startup:
+# 3. Launch
+docker compose up -d --build
 
-- If `namespaces` is empty, `default` is created.
-- If `api_keys` is empty, a bootstrap admin API key is generated and logged once.
-- Only the bcrypt hash is stored in DB.
+# 4. Capture the bootstrap admin key (printed once on first run)
+docker compose logs api | grep BOOTSTRAP_ADMIN_API_KEY
 
-Capture that key from API container logs immediately:
+# 5. Open the dashboard
+open http://localhost:8088
+```
 
-- `docker compose logs api | rg BOOTSTRAP_ADMIN_API_KEY`
+The bootstrap admin key is your first API key — it has full access and is only printed once. Save it immediately.
 
-Use it as header:
+## API Reference
 
-- `X-API-Key: <plaintext-key>`
+All authenticated endpoints require the `X-API-Key` header.
 
-## Endpoints
+| Endpoint | Method | Auth | Description |
+|----------|--------|------|-------------|
+| `/health` | GET | None | Health check with provider status |
+| `/` | GET | None | Web dashboard |
+| `/onboarding` | GET | Any | LLM-friendly plaintext onboarding guide |
+| `/ingest` | POST | Writer+ | Batch ingest entities, knowledge, events, requirements |
+| `/query` | GET | Reader+ | Keyword search with text filtering |
+| `/recall` | POST | Reader+ | Semantic vector search (Top-K) |
+| `/summarize_clear` | POST | Writer+ | Summarize session events into a knowledge item |
+| `/admin/namespaces` | POST | Admin | Create a new namespace |
+| `/admin/api-keys` | POST | Admin | Issue a new API key |
+| `/admin/api-keys` | GET | Admin | List all API keys (masked) |
+| `/admin/delete-items` | POST | Admin | Delete items by ID |
+| `/admin/backfill-embeddings` | POST | Admin | Backfill embeddings for existing items |
 
-Public:
+Full OpenAPI docs available at `/docs` when running.
 
-- `GET /health`
+## Built-in Web Dashboard
 
-Authenticated:
+The API serves a single-page dashboard at `/` with three tabs:
 
-- `POST /ingest` (writer/admin)
-- `GET /query` (reader/writer/admin)
-- `POST /recall` (reader/writer/admin)
-- `POST /summarize_clear` (writer/admin)
+- **Browse** — paginated knowledge items with tag filtering
+- **Search** — semantic recall with score display
+- **Admin** — health status, namespace/key management, raw ingest
 
-Admin:
+No build step required — it's plain HTML/CSS/JS calling the same API endpoints.
 
-- `POST /admin/namespaces`
-- `POST /admin/api-keys`
-- `GET /admin/api-keys`
+## Configuration
 
-## Built-in Web GUI
+All configuration is via environment variables (or `.env` file):
 
-The API serves a built-in control panel at `/` with:
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `POSTGRES_PASSWORD` | *(required)* | Database password |
+| `DATABASE_URL` | *(from compose)* | PostgreSQL connection string |
+| `API_PORT` | `8088` | Port the API listens on |
+| `LOG_LEVEL` | `info` | Logging level |
+| `EMBEDDING_PROVIDER` | `none` | `none`, `openai`, or `ollama` |
+| `EMBEDDING_DIM` | `1536` | Embedding vector dimension (must match model) |
+| `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama API URL |
+| `OLLAMA_EMBED_MODEL` | `nomic-embed-text` | Ollama embedding model name |
+| `OPENAI_API_KEY` | *(empty)* | OpenAI API key (if using OpenAI provider) |
+| `OPENAI_EMBED_MODEL` | `text-embedding-3-small` | OpenAI embedding model |
+| `LLM_PROVIDER` | `none` | `none`, `openai`, or `ollama` (for summarization) |
+| `OLLAMA_CHAT_MODEL` | `llama3.1` | Ollama chat model for summarization |
+| `OPENAI_CHAT_MODEL` | `gpt-4o-mini` | OpenAI chat model for summarization |
+| `RERANKER_PROVIDER` | `none` | `none` or `ollama` |
+| `OLLAMA_RERANKER_MODEL` | `dengcao/Qwen3-Reranker-8B:Q8_0` | Ollama reranker model |
+| `RERANKER_CANDIDATE_MULTIPLIER` | `3` | Fetch N*top_k candidates for reranking |
+| `COMPACTION_ENABLED` | `true` | Enable background session compaction |
+| `COMPACTION_INTERVAL_SECONDS` | `60` | Compaction loop interval |
+| `COMPACTION_EVENT_THRESHOLD` | `80` | Min events to trigger auto-compaction |
+| `COMPACTION_CHAR_THRESHOLD` | `24000` | Min total chars to trigger auto-compaction |
+| `ENABLE_HNSW_INDEX` | `false` | Create HNSW indexes on vector columns |
+| `DEFAULT_TOP_K` | `5` | Default number of recall results |
+| `MAX_SNIPPET_CHARS` | `900` | Max snippet length in query results |
+| `BOOTSTRAP_ADMIN_NAMESPACES` | `default` | Comma-separated namespaces for bootstrap admin key |
 
-- Connection/API key management
-- Ingest batch JSON submission
-- Query and vector recall tools
-- Manual summarize/clear trigger
-- Admin namespace and API key operations
+## Embedding & LLM Providers
 
-It calls the same API endpoints as external clients and still requires `X-API-Key` for protected routes.
+AgentSSOT supports three provider modes for both embeddings and LLM summarization:
 
-## LLM-Friendly Onboarding
+**`none`** (default) — No server-side embedding/summarization. Clients must provide their own embeddings for recall. Compaction is auto-disabled without an LLM provider.
 
-Agents can fetch a plaintext onboarding guide (includes their role/namespaces) via:
+**`ollama`** — Connect to a local [Ollama](https://ollama.ai) instance. The Docker Compose file maps `host.docker.internal` so containers can reach Ollama on the host. Make sure Ollama listens on a non-loopback interface.
 
-- `GET /onboarding` with `X-API-Key`
+**`openai`** — Use OpenAI's API. Set `OPENAI_API_KEY` in your `.env`.
 
-## Memory Scoping Pattern
+### Two-Stage Reranking
 
-For privacy-conscious multi-agent setups, use namespace isolation by default:
+When `RERANKER_PROVIDER=ollama`, recall uses a two-stage pipeline:
+1. Vector search fetches `top_k * RERANKER_CANDIDATE_MULTIPLIER` candidates
+2. A cross-encoder reranker rescores them for higher precision
 
-- Create one namespace per private context (e.g., `agent-a-private`, `finance-private`).
-- Create one or more explicit shared namespaces (e.g., `team-shared`).
-- Issue API keys with only the minimum allowed namespaces.
-- Ingest/query/recall against a specific namespace each time.
+If the reranker fails, results gracefully fall back to vector-only ranking.
 
-This creates siloed memory with explicit opt-in sharing instead of global recall across all data.
+## Security Model
 
-## Future: "Cousins" (Off-Field Remote Agents)
+- **API key authentication** on all endpoints except `/health`
+- Keys are **bcrypt-hashed** in the database (no plaintext storage)
+- **RBAC** with three roles: `reader`, `writer`, `admin`
+- **Namespace isolation** — each key is scoped to specific namespaces
+- Bootstrap admin key generated and logged once on first startup
 
-Goal: run agents on other home networks (parents/sister) with **limited** access that still allows agent-to-agent communication.
+### Recommended Namespace Pattern
 
-Recommended pattern (works with current system):
-- Create a dedicated shared communication namespace (example: `cousins-shared`).
-- Issue each remote agent its own API key with `reader`/`writer` access to **only** `cousins-shared` (and optionally its own private namespace like `cousin-parents-private`).
-- Do not grant those keys access to your internal namespaces.
+```
+team-shared          # Explicit shared namespace
+agent-a-private      # Per-agent private memory
+finance-private      # Per-domain private memory
+```
 
-Network exposure options (in order of preference):
-1. **VPN (WireGuard/Tailscale)**: remote devices join your private network and call hari-hive over LAN/private IP.
-2. **Secure tunnel / reverse proxy**: expose only the API (`:8088`) behind TLS, with strict auth; consider IP allowlists and rate limiting.
-3. **Separate infrastructure**: deploy a separate AgentSSOT instance per household and build a relay/federation layer (more work, but strongest isolation/offline independence).
+Issue API keys with the minimum required namespaces. This creates siloed memory with explicit opt-in sharing.
 
-If you mainly want a "social network" for the remote agents, option (1) or (2) plus a dedicated namespace is typically enough. Choose (3) only if you need independent admin control, offline operation, or hard isolation between households.
+## LLM Agent Integration
 
-## Provider configuration
+The killer feature: any LLM agent can use AgentSSOT as persistent memory in three steps:
 
-### Embeddings
+1. **Start of task** — recall relevant context:
+   ```bash
+   # Keyword search
+   curl -H "X-API-Key: $KEY" "http://localhost:8088/query?namespace=default&q=auth+setup"
 
-- `EMBEDDING_PROVIDER=none|openai|ollama`
-- If `none`, clients must send embeddings when needed (for recall query embeddings and vector ingest).
-- If configured but missing credentials, API still starts; embedding calls fail with clear errors.
+   # Semantic search
+   curl -H "X-API-Key: $KEY" -X POST http://localhost:8088/recall \
+     -d '{"namespace":"default","scope":"knowledge","query_text":"how is auth configured?","top_k":5}'
+   ```
 
-If you have Ollama on the host and want **server-side embeddings** (recommended for token optimization):
+2. **During task** — ingest decisions and facts:
+   ```bash
+   curl -H "X-API-Key: $KEY" -X POST http://localhost:8088/ingest \
+     -d '{"namespace":"default","knowledge_items":[{"content":"JWT auth uses RS256","tags":["auth","config"]}]}'
+   ```
 
-1. In `.env`:
-   - `EMBEDDING_PROVIDER=ollama`
-   - `OLLAMA_BASE_URL=http://host.docker.internal:11434`
-   - `OLLAMA_EMBED_MODEL=qwen3-embedding:latest` (or your preferred embedding model)
-2. Restart:
-   - `docker compose up -d --build`
-3. Backfill embeddings for existing rows (admin-only endpoint):
-   - `POST /admin/backfill-embeddings` with body like:
-     - `{"namespace":"claude-shared","scope":"knowledge","limit":5000,"batch_size":50,"dry_run":false}`
+3. **End of task** — summarize session events:
+   ```bash
+   curl -H "X-API-Key: $KEY" -X POST http://localhost:8088/summarize_clear \
+     -d '{"namespace":"default","session_id":"session-abc123"}'
+   ```
 
-Note: `EMBEDDING_DIM` must match the embedding model output dimension. If you change models and the dimension differs, you may need to re-initialize vector columns.
+See [`docs/ONBOARDING_FOR_LLMS.md`](docs/ONBOARDING_FOR_LLMS.md) for the full agent onboarding guide, or hit `GET /onboarding` with an API key for a version tailored to that key's permissions.
 
-### Summarizer
+## Contributing
 
-- `LLM_PROVIDER=none|openai|ollama`
-- If `none`, background compaction is disabled automatically.
-- Manual `/summarize_clear` remains available but returns a clear configuration error.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and PR guidelines.
 
-## Database port exposure
+## License
 
-Postgres is **not** exposed by default.
-
-If you explicitly need host access, set `EXPOSE_DB_PORT=true` and run with profile:
-
-- `docker compose --profile db-port up -d`
-
-## Optional pgAdmin
-
-- `docker compose --profile pgadmin up -d`
-- Connect to host `db`, port `5432`, database/user from `.env`.
-
-## Notes
-
-- `db/init/001_init.sql` is idempotent schema bootstrap.
-- `db/init/002_optional_hnsw.sql` installs a safe helper function; API executes it only when `ENABLE_HNSW_INDEX=true`.
-- Knowledge content is automatically chunked to max 800 chars per row.
+[MIT](LICENSE)

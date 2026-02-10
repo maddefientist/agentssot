@@ -1,192 +1,278 @@
-const el = (id) => document.getElementById(id);
+const $ = (id) => document.getElementById(id);
 
-const output = el("output");
-
-const defaultIngest = {
-  namespace: "default",
-  entities: [
-    {
-      slug: "project-alpha",
-      type: "project",
-      name: "Project Alpha",
-      description: "Primary project record",
-      metadata: { owner: "ops" }
-    }
-  ],
-  requirements: [],
-  knowledge_items: [
-    {
-      project_slug: "project-alpha",
-      content: "Project Alpha is prioritized for Q1 rollout.",
-      source: "dashboard",
-      source_ref: "manual-seed",
-      tags: ["seed"]
-    }
-  ],
-  events: []
-};
-
+// --- API helpers ---
 function apiBase() {
-  return (el("apiBase").value || window.location.origin).replace(/\/$/, "");
+  return (($("apiBase").value || "").trim() || window.location.origin).replace(/\/$/, "");
 }
+function apiKey() { return $("apiKey").value.trim(); }
 
-function apiKey() {
-  return el("apiKey").value.trim();
-}
-
-function print(value) {
-  if (typeof value === "string") {
-    output.textContent = value;
-    return;
-  }
-  output.textContent = JSON.stringify(value, null, 2);
-}
-
-function parseJsonMaybe(text, fallback = undefined) {
-  const clean = text.trim();
-  if (!clean) return fallback;
-  return JSON.parse(clean);
-}
-
-async function callApi(path, { method = "GET", body, useAuth = true } = {}) {
+async function api(path, { method = "GET", body } = {}) {
   const headers = { "Content-Type": "application/json" };
-  if (useAuth && apiKey()) headers["X-API-Key"] = apiKey();
-
+  if (apiKey()) headers["X-API-Key"] = apiKey();
   const res = await fetch(`${apiBase()}${path}`, {
-    method,
-    headers,
+    method, headers,
     body: body ? JSON.stringify(body) : undefined
   });
-
   const text = await res.text();
-  let parsed = text;
-  try {
-    parsed = text ? JSON.parse(text) : {};
-  } catch {
-    parsed = text;
-  }
-
-  if (!res.ok) {
-    const detail = parsed && parsed.detail ? parsed.detail : parsed;
-    throw new Error(`HTTP ${res.status}: ${typeof detail === "string" ? detail : JSON.stringify(detail)}`);
-  }
-
-  return parsed;
+  let data;
+  try { data = text ? JSON.parse(text) : {}; } catch { data = text; }
+  if (!res.ok) throw new Error(`${res.status}: ${data?.detail || data}`);
+  return data;
 }
 
+// --- State ---
+let allItems = [];
+let activeTag = null;
+
+// --- Sanitizer: all dynamic content goes through this ---
+function esc(s) {
+  if (!s) return "";
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// --- DOM builder helpers (avoid raw innerHTML for dynamic content) ---
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  if (attrs) Object.entries(attrs).forEach(([k, v]) => {
+    if (k === "className") node.className = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2).toLowerCase(), v);
+    else node.setAttribute(k, v);
+  });
+  children.forEach(c => {
+    if (typeof c === "string") node.appendChild(document.createTextNode(c));
+    else if (c) node.appendChild(c);
+  });
+  return node;
+}
+
+// --- Init ---
 function loadSaved() {
-  el("apiBase").value = localStorage.getItem("agentssot_api_base") || window.location.origin;
-  el("apiKey").value = localStorage.getItem("agentssot_api_key") || "";
-  el("ingestPayload").value = JSON.stringify(defaultIngest, null, 2);
+  $("apiBase").value = localStorage.getItem("hive_base") || window.location.origin;
+  $("apiKey").value = localStorage.getItem("hive_key") || "";
 }
 
-el("saveConn").addEventListener("click", () => {
-  localStorage.setItem("agentssot_api_base", apiBase());
-  localStorage.setItem("agentssot_api_key", apiKey());
-  print({ ok: true, message: "Connection settings saved locally." });
+function saveCreds() {
+  localStorage.setItem("hive_base", apiBase());
+  localStorage.setItem("hive_key", apiKey());
+}
+
+// --- Tab switching ---
+document.querySelectorAll(".tab").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".tab-content").forEach(t => t.classList.remove("active"));
+    btn.classList.add("active");
+    $(`tab-${btn.dataset.tab}`).classList.add("active");
+  });
 });
 
-el("healthBtn").addEventListener("click", async () => {
+// --- Settings drawer ---
+$("settingsToggle").addEventListener("click", () => {
+  $("settingsDrawer").classList.toggle("open");
+});
+$("saveConn").addEventListener("click", () => {
+  saveCreds();
+  $("settingsDrawer").classList.remove("open");
+  checkHealth();
+});
+
+// --- Health check ---
+async function checkHealth() {
+  const dot = $("healthDot");
   try {
-    print(await callApi("/health", { useAuth: false }));
-  } catch (err) {
-    print(String(err));
+    const h = await api("/health", { method: "GET" });
+    dot.className = "health-dot ok";
+    dot.title = `OK | ${h.embedding_provider || "no-embed"} | ${h.total_records || "?"} records`;
+    $("healthOutput").textContent = JSON.stringify(h, null, 2);
+    return h;
+  } catch (e) {
+    dot.className = "health-dot err";
+    dot.title = `Error: ${e.message}`;
+    $("healthOutput").textContent = e.message;
+    return null;
   }
-});
+}
 
-el("queryBtn").addEventListener("click", async () => {
+// --- Render a single item card ---
+function renderItem(item, container) {
+  const tags = (item.tags || []);
+  const title = item.title || item.kind || "item";
+  const date = item.created_at ? new Date(item.created_at).toLocaleDateString() : "";
+  const snippet = item.snippet || item.content || "";
+  const score = item.score;
+
+  const tagsEl = el("div", { className: "item-tags" },
+    ...tags.map(t => el("span", null, t))
+  );
+
+  const headerRight = el("span", { className: "item-date" });
+  if (score != null) {
+    const badge = el("span", { className: "score-badge" }, score.toFixed(3));
+    headerRight.appendChild(badge);
+    headerRight.appendChild(document.createTextNode(" "));
+  }
+  headerRight.appendChild(document.createTextNode(date));
+
+  const snippetEl = el("div", { className: "item-snippet" }, snippet);
+
+  const card = el("div", { className: "item-card", onClick: () => card.classList.toggle("expanded") },
+    el("div", { className: "item-header" },
+      el("span", { className: "item-title" }, title),
+      headerRight
+    ),
+    tagsEl,
+    snippetEl
+  );
+
+  container.appendChild(card);
+}
+
+// --- Browse tab ---
+async function loadBrowse() {
+  const ns = $("browseNamespace").value.trim() || "default";
+  const q = $("browseFilter").value.trim();
+  const limit = $("browseLimit").value || 30;
+  const params = new URLSearchParams({ namespace: ns, limit, q });
   try {
-    const params = new URLSearchParams({
-      namespace: el("queryNamespace").value.trim() || "default",
-      q: el("queryText").value,
-      limit: String(el("queryLimit").value || 20)
+    const data = await api(`/query?${params}`);
+    allItems = data.results || data.items || [];
+    updateStats(allItems);
+    updateTags(allItems);
+    renderBrowseItems(allItems);
+  } catch (e) {
+    $("itemsGrid").textContent = "";
+    $("itemsGrid").appendChild(el("p", { className: "hint" }, e.message));
+  }
+}
+
+function updateStats(items) {
+  const projects = new Set();
+  const devices = new Set();
+  const metaTags = new Set(["project-context", "legacy-memory", "entity-observation", "relation",
+    "core-config", "cross-llm", "agent-identity", "infrastructure", "seed",
+    "project", "context", "claude"]);
+  items.forEach(i => {
+    (i.tags || []).forEach(t => {
+      if (t.startsWith("device-")) devices.add(t.replace("device-", ""));
+      else if (!metaTags.has(t)) projects.add(t);
     });
+  });
 
-    const project = el("queryProject").value.trim();
-    const entity = el("queryEntity").value.trim();
-    if (project) params.set("project_slug", project);
-    if (entity) params.set("entity_slug", entity);
+  $("statItems").textContent = "";
+  const itemsStrong = el("strong", null, String(items.length));
+  $("statItems").appendChild(itemsStrong);
+  $("statItems").appendChild(document.createTextNode("items"));
 
-    print(await callApi(`/query?${params.toString()}`));
-  } catch (err) {
-    print(String(err));
+  $("statProjects").textContent = "";
+  const projStrong = el("strong", null, String(projects.size));
+  $("statProjects").appendChild(projStrong);
+  $("statProjects").appendChild(document.createTextNode("projects"));
+
+  $("statDevices").textContent = "";
+  const devStrong = el("strong", null, String(devices.size));
+  $("statDevices").appendChild(devStrong);
+  $("statDevices").appendChild(document.createTextNode("devices"));
+}
+
+function updateTags(items) {
+  const counts = {};
+  items.forEach(i => (i.tags || []).forEach(t => { counts[t] = (counts[t] || 0) + 1; }));
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 25);
+
+  const row = $("tagsRow");
+  row.textContent = "";
+  sorted.forEach(([tag, n]) => {
+    const chip = el("span", {
+      className: `tag-chip${activeTag === tag ? " active" : ""}`,
+      onClick: () => {
+        activeTag = activeTag === tag ? null : tag;
+        renderBrowseItems(allItems);
+        updateTags(allItems);
+      }
+    }, `${tag} (${n})`);
+    row.appendChild(chip);
+  });
+}
+
+function renderBrowseItems(items) {
+  const grid = $("itemsGrid");
+  grid.textContent = "";
+  let filtered = items;
+  if (activeTag) filtered = items.filter(i => (i.tags || []).includes(activeTag));
+  if (!filtered.length) {
+    grid.appendChild(el("p", { className: "hint" }, "No items found"));
+    return;
   }
-});
+  filtered.forEach(item => renderItem(item, grid));
+}
 
-el("recallBtn").addEventListener("click", async () => {
+$("browseBtn").addEventListener("click", loadBrowse);
+$("browseFilter").addEventListener("keydown", e => { if (e.key === "Enter") loadBrowse(); });
+
+// --- Search tab ---
+async function doSearch() {
+  const text = $("searchText").value.trim();
+  if (!text) return;
+  const ns = $("searchNamespace").value.trim() || "default";
+  const topK = Number($("searchTopK").value) || 10;
+  const grid = $("searchResults");
+  grid.textContent = "";
+  grid.appendChild(el("p", { className: "hint" }, "Searching..."));
   try {
-    const body = {
-      namespace: el("recallNamespace").value.trim() || "default",
-      scope: el("recallScope").value,
-      query_text: el("recallText").value.trim() || null,
-      query_embedding: parseJsonMaybe(el("recallEmbedding").value, null),
-      top_k: Number(el("recallTopK").value || 5),
-      project_slug: el("recallProject").value.trim() || null,
-      entity_slug: el("recallEntity").value.trim() || null
-    };
-
-    print(await callApi("/recall", { method: "POST", body }));
-  } catch (err) {
-    print(String(err));
+    const data = await api("/recall", {
+      method: "POST",
+      body: { namespace: ns, scope: "knowledge", query_text: text, top_k: topK }
+    });
+    const items = data.items || [];
+    grid.textContent = "";
+    if (!items.length) {
+      grid.appendChild(el("p", { className: "hint" }, "No results"));
+      return;
+    }
+    items.forEach(item => renderItem(item, grid));
+  } catch (e) {
+    grid.textContent = "";
+    grid.appendChild(el("p", { className: "hint" }, e.message));
   }
-});
+}
 
-el("ingestBtn").addEventListener("click", async () => {
+$("searchBtn").addEventListener("click", doSearch);
+$("searchText").addEventListener("keydown", e => { if (e.key === "Enter") doSearch(); });
+
+// --- Admin ---
+$("createNsBtn").addEventListener("click", async () => {
   try {
-    const body = parseJsonMaybe(el("ingestPayload").value);
-    print(await callApi("/ingest", { method: "POST", body }));
-  } catch (err) {
-    print(String(err));
-  }
+    const res = await api("/admin/namespaces", { method: "POST", body: { name: $("newNs").value.trim() } });
+    $("adminOutput").textContent = JSON.stringify(res, null, 2);
+  } catch (e) { $("adminOutput").textContent = e.message; }
 });
 
-el("sumBtn").addEventListener("click", async () => {
+$("createKeyBtn").addEventListener("click", async () => {
   try {
-    const body = {
-      namespace: el("sumNamespace").value.trim() || "default",
-      session_id: el("sumSession").value.trim(),
-      project_slug: el("sumProject").value.trim() || null,
-      max_events: Number(el("sumMaxEvents").value || 500)
-    };
-    print(await callApi("/summarize_clear", { method: "POST", body }));
-  } catch (err) {
-    print(String(err));
-  }
+    const namespaces = $("keyNs").value.split(",").map(s => s.trim()).filter(Boolean);
+    const res = await api("/admin/api-keys", {
+      method: "POST",
+      body: { name: $("keyName").value.trim(), role: $("keyRole").value, namespaces }
+    });
+    $("adminOutput").textContent = JSON.stringify(res, null, 2);
+  } catch (e) { $("adminOutput").textContent = e.message; }
 });
 
-el("createNsBtn").addEventListener("click", async () => {
+$("listKeysBtn").addEventListener("click", async () => {
   try {
-    const body = { name: el("newNamespace").value.trim() };
-    print(await callApi("/admin/namespaces", { method: "POST", body }));
-  } catch (err) {
-    print(String(err));
-  }
+    const res = await api("/admin/api-keys");
+    $("keysOutput").textContent = JSON.stringify(res, null, 2);
+  } catch (e) { $("keysOutput").textContent = e.message; }
 });
 
-el("createKeyBtn").addEventListener("click", async () => {
+$("ingestBtn").addEventListener("click", async () => {
   try {
-    const namespaces = el("newKeyNamespaces")
-      .value.split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    const body = {
-      name: el("newKeyName").value.trim(),
-      role: el("newKeyRole").value,
-      namespaces
-    };
-    print(await callApi("/admin/api-keys", { method: "POST", body }));
-  } catch (err) {
-    print(String(err));
-  }
+    const body = JSON.parse($("ingestPayload").value);
+    const res = await api("/ingest", { method: "POST", body });
+    $("adminOutput").textContent = JSON.stringify(res, null, 2);
+  } catch (e) { $("adminOutput").textContent = e.message; }
 });
 
-el("listKeysBtn").addEventListener("click", async () => {
-  try {
-    print(await callApi("/admin/api-keys"));
-  } catch (err) {
-    print(String(err));
-  }
-});
-
+// --- Boot ---
 loadSaved();
+checkHealth();

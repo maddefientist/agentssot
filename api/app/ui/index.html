@@ -3,111 +3,110 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>hari-hive Control Panel</title>
+    <title>AgentSSOT</title>
     <link rel="stylesheet" href="/ui/assets/styles.css" />
   </head>
   <body>
-    <div class="bg-shape bg-shape-a" aria-hidden="true"></div>
-    <div class="bg-shape bg-shape-b" aria-hidden="true"></div>
-
-    <header class="hero">
-      <h1>hari-hive Control Panel</h1>
-      <p>Operate memory ingestion, retrieval, recall, compaction, and admin controls from one UI.</p>
+    <header>
+      <div class="header-left">
+        <h1>AgentSSOT</h1>
+        <span class="health-dot" id="healthDot" title="checking..."></span>
+      </div>
+      <nav>
+        <button class="tab active" data-tab="browse">Browse</button>
+        <button class="tab" data-tab="search">Search</button>
+        <button class="tab" data-tab="admin">Admin</button>
+      </nav>
+      <div class="header-right">
+        <button class="icon-btn" id="settingsToggle" title="Connection settings">&#9881;</button>
+      </div>
     </header>
 
-    <main class="layout">
-      <section class="card">
-        <h2>Connection</h2>
-        <label>API Base URL
-          <input id="apiBase" type="text" value="" placeholder="http://localhost:8088" />
-        </label>
-        <label>API Key
-          <input id="apiKey" type="password" placeholder="ssot_..." />
-        </label>
-        <div class="row">
-          <button id="saveConn">Save</button>
-          <button id="healthBtn" class="secondary">Check Health</button>
+    <div class="settings-drawer" id="settingsDrawer">
+      <label>API URL <input id="apiBase" type="text" placeholder="http://localhost:8088" /></label>
+      <label>API Key <input id="apiKey" type="password" placeholder="ssot_..." /></label>
+      <button id="saveConn" class="sm">Save</button>
+    </div>
+
+    <!-- BROWSE TAB -->
+    <main id="tab-browse" class="tab-content active">
+      <div class="stats-bar" id="statsBar">
+        <div class="stat" id="statItems">--</div>
+        <div class="stat" id="statProjects">--</div>
+        <div class="stat" id="statDevices">--</div>
+      </div>
+
+      <div class="filter-row">
+        <select id="browseNamespace">
+          <option value="default">default</option>
+        </select>
+        <input id="browseFilter" type="text" placeholder="Filter by text..." />
+        <input id="browseLimit" type="number" value="30" min="1" max="200" />
+        <button id="browseBtn">Load</button>
+      </div>
+
+      <div class="tags-row" id="tagsRow"></div>
+
+      <div class="items-grid" id="itemsGrid">
+        <p class="hint">Click Load to browse knowledge items</p>
+      </div>
+    </main>
+
+    <!-- SEARCH TAB -->
+    <main id="tab-search" class="tab-content">
+      <div class="search-box">
+        <input id="searchText" type="text" placeholder="Natural language search across all memory..." />
+        <select id="searchNamespace">
+          <option value="default">default</option>
+        </select>
+        <input id="searchTopK" type="number" value="10" min="1" max="50" />
+        <button id="searchBtn">Recall</button>
+      </div>
+      <div class="items-grid" id="searchResults">
+        <p class="hint">Semantic search across your unified memory</p>
+      </div>
+    </main>
+
+    <!-- ADMIN TAB -->
+    <main id="tab-admin" class="tab-content">
+      <div class="admin-grid">
+        <div class="card">
+          <h3>Health</h3>
+          <pre id="healthOutput">--</pre>
         </div>
-      </section>
-
-      <section class="card">
-        <h2>Query</h2>
-        <label>Namespace <input id="queryNamespace" type="text" value="default" /></label>
-        <label>Text <input id="queryText" type="text" placeholder="search terms" /></label>
-        <label>Project Slug <input id="queryProject" type="text" placeholder="optional" /></label>
-        <label>Entity Slug <input id="queryEntity" type="text" placeholder="optional" /></label>
-        <label>Limit <input id="queryLimit" type="number" value="20" min="1" max="100" /></label>
-        <button id="queryBtn">Run Query</button>
-      </section>
-
-      <section class="card">
-        <h2>Recall</h2>
-        <label>Namespace <input id="recallNamespace" type="text" value="default" /></label>
-        <label>Scope
-          <select id="recallScope">
-            <option value="knowledge">knowledge</option>
-            <option value="requirements">requirements</option>
-            <option value="events">events</option>
-          </select>
-        </label>
-        <label>Query Text
-          <textarea id="recallText" rows="3" placeholder="natural language recall query"></textarea>
-        </label>
-        <label>Query Embedding JSON (optional)
-          <textarea id="recallEmbedding" rows="3" placeholder="[0.01, 0.02, ...]"></textarea>
-        </label>
-        <label>Top K <input id="recallTopK" type="number" value="5" min="1" max="50" /></label>
-        <label>Project Slug <input id="recallProject" type="text" placeholder="optional" /></label>
-        <label>Entity Slug <input id="recallEntity" type="text" placeholder="optional" /></label>
-        <button id="recallBtn">Run Recall</button>
-      </section>
-
-      <section class="card wide">
-        <h2>Ingest Batch</h2>
-        <label>Payload JSON
-          <textarea id="ingestPayload" rows="12"></textarea>
-        </label>
-        <button id="ingestBtn">Ingest</button>
-      </section>
-
-      <section class="card">
-        <h2>Summarize + Archive</h2>
-        <label>Namespace <input id="sumNamespace" type="text" value="default" /></label>
-        <label>Session ID <input id="sumSession" type="text" placeholder="session-123" /></label>
-        <label>Project Slug <input id="sumProject" type="text" placeholder="optional" /></label>
-        <label>Max Events <input id="sumMaxEvents" type="number" value="500" min="1" max="2000" /></label>
-        <button id="sumBtn">Summarize & Clear</button>
-      </section>
-
-      <section class="card">
-        <h2>Admin: Namespace</h2>
-        <label>New Namespace <input id="newNamespace" type="text" placeholder="team-private" /></label>
-        <button id="createNsBtn">Create Namespace</button>
-      </section>
-
-      <section class="card">
-        <h2>Admin: API Keys</h2>
-        <label>Name <input id="newKeyName" type="text" placeholder="agent-worker-a" /></label>
-        <label>Role
-          <select id="newKeyRole">
-            <option value="reader">reader</option>
-            <option value="writer">writer</option>
-            <option value="admin">admin</option>
-          </select>
-        </label>
-        <label>Namespaces (comma-separated)
-          <input id="newKeyNamespaces" type="text" value="default" />
-        </label>
-        <div class="row">
-          <button id="createKeyBtn">Create API Key</button>
-          <button id="listKeysBtn" class="secondary">List API Keys</button>
+        <div class="card">
+          <h3>Create Namespace</h3>
+          <label>Name <input id="newNs" type="text" placeholder="team-private" /></label>
+          <button id="createNsBtn">Create</button>
         </div>
-      </section>
-
-      <section class="card wide">
-        <h2>Response</h2>
-        <pre id="output">Ready.</pre>
-      </section>
+        <div class="card">
+          <h3>Create API Key</h3>
+          <label>Name <input id="keyName" type="text" placeholder="device-name-writer" /></label>
+          <label>Role
+            <select id="keyRole">
+              <option value="writer">writer</option>
+              <option value="reader">reader</option>
+              <option value="admin">admin</option>
+            </select>
+          </label>
+          <label>Namespaces <input id="keyNs" type="text" value="default" placeholder="comma-separated" /></label>
+          <button id="createKeyBtn">Create Key</button>
+        </div>
+        <div class="card">
+          <h3>API Keys</h3>
+          <button id="listKeysBtn" class="secondary">List Keys</button>
+          <pre id="keysOutput">--</pre>
+        </div>
+        <div class="card wide">
+          <h3>Raw Ingest</h3>
+          <textarea id="ingestPayload" rows="6" placeholder='{"namespace":"default","knowledge_items":[...]}'></textarea>
+          <button id="ingestBtn">Ingest</button>
+        </div>
+        <div class="card wide">
+          <h3>Response</h3>
+          <pre id="adminOutput">--</pre>
+        </div>
+      </div>
     </main>
 
     <script src="/ui/assets/app.js"></script>

@@ -1,10 +1,10 @@
-# hari-hive (AgentSSOT) Onboarding For LLM Agents
+# AgentSSOT Onboarding For LLM Agents
 
-This is a short, copy/paste-friendly guide you can provide to any LLM agent so it can use hari-hive as its primary long-term memory system.
+This is a short, copy/paste-friendly guide you can provide to any LLM agent so it can use AgentSSOT as its primary long-term memory system.
 
 ## Connection
 
-- Base URL: `http://192.168.1.225:8088`
+- Base URL: `http://your-host:8088`
 - Auth header: `X-API-Key: <your-key>`
 - Web GUI: `/`
 - Docs: `/docs`
@@ -16,8 +16,8 @@ Note: `GET /onboarding` returns a plaintext onboarding guide tailored to the API
 **Always specify the namespace.** Namespaces are the privacy boundary.
 
 Examples:
-- Shared: `hari-hive` (or `team-shared`)
-- Private: `device-macbook-private`, `finance-private`
+- Shared: `team-shared`
+- Private: `device-laptop-private`, `finance-private`
 
 If you query the wrong namespace, you either leak data or miss the relevant context.
 
@@ -50,8 +50,8 @@ Admin only:
 
 - Prefer Top-K recall (default 5).
 - Keep knowledge items atomic.
-- Don’t dump transcripts as knowledge unless explicitly requested.
-- Let compaction produce “summary” knowledge for long sessions.
+- Don't dump transcripts as knowledge unless explicitly requested.
+- Let compaction produce "summary" knowledge for long sessions.
 
 ## Embeddings
 
@@ -63,4 +63,3 @@ Admin only:
 - **knowledge_items**: facts, configs, stable decisions, canonical project context.
 - **events**: decisions/actions/results per work session; use `session_id`.
 - **requirements**: goals/backlog items with status/priority.
-
