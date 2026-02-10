@@ -124,29 +124,67 @@ def ui_home():
 
 
 @app.get("/onboarding", response_class=PlainTextResponse, include_in_schema=False)
-def onboarding(auth: AuthContext = Depends(require_api_key)) -> str:
-    s = app.state.settings
-    base_url_hint = "http://<agentssot-host>:8088"
-
-    namespaces = ", ".join(auth.namespaces) if auth.namespaces else "(none)"
-    role = auth.role
-
-    # Intentionally plaintext and LLM-friendly.
+def onboarding_public() -> str:
+    """Public onboarding page — no auth required. Tells new agents what this service is and how to enroll."""
     return "\n".join(
         [
-            "AgentSSOT Onboarding (LLM-Friendly)",
+            "AgentSSOT — Cross-LLM Shared Memory Service",
             "",
-            "Purpose:",
-            "- AgentSSOT is a cross-LLM shared memory service backed by PostgreSQL + pgvector.",
-            "- Use it to reduce prompt bloat by retrieving only the top relevant facts/events, then writing back durable memory.",
+            "What is this?",
+            "- AgentSSOT stores durable knowledge, events, and requirements for AI agents.",
+            "- It provides keyword search (GET /query) and semantic vector recall (POST /recall).",
+            "- Multiple agents share memory through namespace-based isolation.",
             "",
-            "Getting an API key:",
-            "- This page requires an API key; it cannot be used to obtain one.",
-            "- Ask an operator (admin) to issue you a key via the dashboard (/ -> Admin: API Keys) or POST /admin/api-keys.",
-            "- Keys should be distributed out-of-band (secret manager / config sync secrets), never committed to git.",
+            "How to get an API key:",
+            "",
+            "  Option A — Enrollment token (self-service):",
+            "    If you have been given an enrollment token (starts with ssot_enroll_),",
+            "    call POST /enroll with your token to receive an API key:",
+            "",
+            '    curl -X POST http://<this-host>:8088/enroll \\',
+            "      -H 'Content-Type: application/json' \\",
+            '      -d \'{"token":"ssot_enroll_...", "name":"my-agent-name"}\'',
+            "",
+            "    The response contains your API key (starts with ssot_). Save it — it is shown once.",
+            "",
+            "  Option B — Ask an admin:",
+            "    Request a key via the dashboard (/ -> Admin: API Keys) or POST /admin/api-keys.",
+            "",
+            "Once you have a key:",
+            "- Set header: X-API-Key: <your-key>",
+            "- Visit GET /onboarding/me for a personalized guide showing your role and namespaces.",
+            "",
+            "Endpoints (public):",
+            "- GET  /health",
+            "- GET  /onboarding",
+            "- POST /enroll (requires enrollment token in body)",
+            "",
+            "Endpoints (authenticated):",
+            "- GET  /onboarding/me (personalized guide)",
+            "- GET  /query",
+            "- POST /recall",
+            "- POST /ingest (writer/admin)",
+            "- POST /summarize_clear (writer/admin)",
+            "",
+            "Full API docs: GET /docs",
+            "",
+        ]
+    )
+
+
+@app.get("/onboarding/me", response_class=PlainTextResponse, include_in_schema=False)
+def onboarding_me(auth: AuthContext = Depends(require_api_key)) -> str:
+    """Personalized onboarding — requires API key. Shows role, namespaces, and operational guide."""
+    s = app.state.settings
+    base_url_hint = "http://<agentssot-host>:8088"
+    namespaces = ", ".join(auth.namespaces) if auth.namespaces else "(none)"
+
+    return "\n".join(
+        [
+            "AgentSSOT — Your Personalized Guide",
             "",
             "Auth Context (your key):",
-            f"- role: {role}",
+            f"- role: {auth.role}",
             f"- namespaces: {namespaces}",
             "",
             "Connection:",
@@ -154,43 +192,25 @@ def onboarding(auth: AuthContext = Depends(require_api_key)) -> str:
             "- Header: X-API-Key: <your-key>",
             "",
             "Core Rules:",
-            "- Always set namespace explicitly on every request (default is 'default' only if omitted).",
+            "- Always set namespace explicitly on every request.",
             "- Never read/write namespaces your key does not allow.",
-            "- Prefer private namespaces by default; use shared namespaces only for intentional sharing.",
-            "- Scoped additional silos can be created on demand (new namespaces), but require an admin to provision access.",
-            "- Keep memory atomic and tagged. Do not dump full transcripts unless explicitly needed.",
+            "- Prefer private namespaces; use shared namespaces only for intentional sharing.",
+            "- Keep memory atomic and tagged. Do not dump full transcripts.",
             "",
             "Recommended Loop (every task):",
             "1) Start: GET /query and POST /recall in the relevant namespace(s).",
-            "2) During: POST /ingest events for decisions/directives/results; knowledge_items for durable facts.",
-            "3) End: POST /summarize_clear for the session_id (if enabled) to store a summary knowledge_item and archive events.",
-            "",
-            "Endpoints:",
-            "- GET  /health (no auth)",
-            "- GET  /query (auth)",
-            "- POST /recall (auth)",
-            "- POST /ingest (writer/admin)",
-            "- POST /summarize_clear (writer/admin)",
-            "- POST /admin/namespaces (admin)",
-            "- POST /admin/api-keys (admin)",
-            "- GET  /admin/api-keys (admin)",
+            "2) During: POST /ingest events for decisions/directives/results.",
+            "3) End: POST /summarize_clear to archive events and store a summary.",
             "",
             "Recall Notes:",
-            f"- EMBEDDING_PROVIDER={s.embedding_provider}. If 'none', clients must provide query_embedding.",
+            f"- EMBEDDING_PROVIDER={s.embedding_provider}. If 'none', provide query_embedding.",
             f"- DEFAULT_TOP_K={s.default_top_k}. Keep Top-K small to stay token-efficient.",
             "",
             "Ingest Notes:",
-            "- Knowledge items are auto-chunked server-side to max ~800 chars per row.",
-            "- If you provide an embedding in the request, the server will not recompute it.",
+            "- Knowledge items are auto-chunked to max ~800 chars per row.",
+            "- If you provide an embedding, the server will not recompute it.",
             "",
-            "Migration Guidance (high level):",
-            "- Migrate durable facts first (knowledge_items).",
-            "- Migrate project context files next (PROJECT.md/CONTEXT.md/etc) as knowledge_items tagged 'project-context'.",
-            "- Migrate sessions by storing decisions/results as events and letting compaction create summaries.",
-            "",
-            "Web UI:",
-            "- Dashboard: GET /",
-            "- Swagger docs: GET /docs",
+            "Full API docs: GET /docs",
             "",
         ]
     )
@@ -379,3 +399,70 @@ def admin_backfill_embeddings(
         dry_run=payload.dry_run,
     )
     return schemas.BackfillEmbeddingsResponse(**result)
+
+
+# ── Enrollment ─────────────────────────────────────────────────────
+
+
+@app.post("/admin/enrollment-tokens", response_model=schemas.EnrollmentTokenCreateResponse)
+def admin_create_enrollment_token(
+    payload: schemas.EnrollmentTokenCreateRequest,
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    require_admin(auth)
+
+    from datetime import UTC, datetime, timedelta
+
+    expires_at = None
+    if payload.expires_in_hours is not None:
+        expires_at = datetime.now(UTC) + timedelta(hours=payload.expires_in_hours)
+
+    token_record, plaintext = crud.create_enrollment_token(
+        session=session,
+        role=payload.role,
+        namespaces=payload.namespaces,
+        name_hint=payload.name_hint,
+        max_uses=payload.max_uses,
+        expires_at=expires_at,
+    )
+
+    return schemas.EnrollmentTokenCreateResponse(
+        id=str(token_record.id),
+        token=plaintext,
+        role=payload.role,
+        namespaces=list(token_record.namespaces or []),
+        name_hint=token_record.name_hint,
+        max_uses=token_record.max_uses,
+        expires_at=token_record.expires_at,
+    )
+
+
+@app.get("/admin/enrollment-tokens", response_model=list[schemas.EnrollmentTokenListItem])
+def admin_list_enrollment_tokens(
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    require_admin(auth)
+    rows = crud.list_enrollment_tokens(session)
+    return [schemas.EnrollmentTokenListItem(**row) for row in rows]
+
+
+@app.post("/enroll", response_model=schemas.EnrollResponse)
+def enroll(
+    payload: schemas.EnrollRequest,
+    session: Session = Depends(get_session),
+):
+    """Redeem an enrollment token to receive an API key. No auth required — the token IS the auth."""
+    record, api_key_plaintext = crud.redeem_enrollment_token(
+        session=session,
+        plaintext_token=payload.token,
+        key_name=payload.name,
+    )
+
+    return schemas.EnrollResponse(
+        api_key=api_key_plaintext,
+        name=record.name,
+        role=record.role.value if hasattr(record.role, "value") else str(record.role),
+        namespaces=list(record.namespaces or []),
+    )

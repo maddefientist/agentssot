@@ -35,6 +35,19 @@ CREATE TABLE IF NOT EXISTS api_keys (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS enrollment_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token_hash TEXT NOT NULL,
+    role api_role NOT NULL,
+    namespaces TEXT[] NOT NULL DEFAULT ARRAY['default']::TEXT[],
+    name_hint TEXT,
+    max_uses INTEGER NOT NULL DEFAULT 1,
+    times_used INTEGER NOT NULL DEFAULT 0,
+    expires_at TIMESTAMPTZ,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS entities (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     namespace TEXT NOT NULL REFERENCES namespaces(name) ON DELETE CASCADE,

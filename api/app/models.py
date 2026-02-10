@@ -137,6 +137,23 @@ class KnowledgeItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class EnrollmentToken(Base):
+    __tablename__ = "enrollment_tokens"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[ApiRole] = mapped_column(Enum(ApiRole, name="api_role", create_type=False), nullable=False)
+    namespaces: Mapped[list[str]] = mapped_column(
+        ARRAY(Text), nullable=False, default=list, server_default=text("ARRAY['default']::TEXT[]")
+    )
+    name_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    max_uses: Mapped[int] = mapped_column(nullable=False, default=1, server_default=text("1"))
+    times_used: Mapped[int] = mapped_column(nullable=False, default=0, server_default=text("0"))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class Event(Base):
     __tablename__ = "events"
 
