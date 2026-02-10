@@ -236,6 +236,8 @@ nav { display: flex; gap: 2px; }
   padding: 1rem;
 }
 .card.wide { grid-column: 1 / -1; }
+.inline-row { display: flex; gap: 0.4rem; align-items: center; margin-bottom: 0.4rem; }
+.inline-row input { flex: 1; }
 .card h3 {
   font-size: 0.85rem;
   text-transform: uppercase;

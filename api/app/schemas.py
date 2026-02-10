@@ -216,3 +216,28 @@ class BackfillEmbeddingsResponse(BaseModel):
     updated: int
     skipped: int
     dry_run: bool
+
+
+class DedupRequest(BaseModel):
+    namespace: str = "default"
+    dry_run: bool = True
+
+
+class DedupResponse(BaseModel):
+    namespace: str
+    duplicate_groups: int
+    deleted: int
+    dry_run: bool
+
+
+class ItemCountDetail(BaseModel):
+    total: int
+    embedded: int
+
+
+class NamespaceStatsResponse(BaseModel):
+    namespace: str
+    entities: int
+    knowledge_items: ItemCountDetail
+    requirements: ItemCountDetail
+    events: ItemCountDetail

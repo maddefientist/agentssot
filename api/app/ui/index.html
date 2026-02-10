@@ -75,6 +75,23 @@
           <pre id="healthOutput">--</pre>
         </div>
         <div class="card">
+          <h3>Namespace Stats</h3>
+          <div class="inline-row">
+            <input id="statsNamespace" type="text" value="default" placeholder="namespace" />
+            <button id="statsBtn" class="secondary">Load Stats</button>
+          </div>
+          <pre id="statsOutput">--</pre>
+        </div>
+        <div class="card">
+          <h3>Dedup</h3>
+          <div class="inline-row">
+            <input id="dedupNamespace" type="text" value="default" placeholder="namespace" />
+            <button id="dedupScanBtn" class="secondary">Scan</button>
+            <button id="dedupRunBtn">Clean</button>
+          </div>
+          <pre id="dedupOutput">--</pre>
+        </div>
+        <div class="card">
           <h3>Create Namespace</h3>
           <label>Name <input id="newNs" type="text" placeholder="team-private" /></label>
           <button id="createNsBtn">Create</button>

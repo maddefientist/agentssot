@@ -63,7 +63,17 @@ services:
         mkdir -p /backups
         while true; do
           ts="$(date +%Y%m%d_%H%M%S)"
-          pg_dump -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -f "/backups/ssot_$${ts}.dump"
+          outfile="/backups/ssot_$${ts}.dump"
+          pg_dump -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -f "$$outfile"
+          fsize="$(stat -c%s "$$outfile" 2>/dev/null || echo 0)"
+          if [ "$$fsize" -le 0 ]; then
+            echo "[WARN] backup $$outfile is empty ($$fsize bytes), retrying in 60s..."
+            sleep 60
+            pg_dump -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -f "$$outfile" || true
+          else
+            echo "[OK] backup $$outfile ($$fsize bytes)"
+          fi
+          find /backups -type f -name '*.dump' -size 0 -delete || true
           find /backups -type f -name '*.dump' -mtime +"$BACKUP_RETENTION_DAYS" -delete || true
           sleep 86400
         done
