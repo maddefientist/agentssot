@@ -38,6 +38,10 @@ def generate_api_key() -> str:
     return f"ssot_{secrets.token_urlsafe(32)}"
 
 
+def generate_enrollment_token() -> str:
+    return f"ssot_enroll_{secrets.token_urlsafe(32)}"
+
+
 def require_role(auth: AuthContext, allowed_roles: set[str]) -> None:
     if auth.role not in ROLE_ORDER:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid key role")

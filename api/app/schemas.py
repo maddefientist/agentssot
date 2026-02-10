@@ -160,6 +160,48 @@ class DeleteItemsResponse(BaseModel):
     deleted: int
 
 
+class EnrollmentTokenCreateRequest(BaseModel):
+    role: Literal["reader", "writer"] = "writer"
+    namespaces: list[str] = Field(default_factory=lambda: ["default"])
+    name_hint: str | None = None
+    max_uses: int = Field(default=1, ge=1, le=100)
+    expires_in_hours: int | None = Field(default=72, ge=1, le=8760)
+
+
+class EnrollmentTokenCreateResponse(BaseModel):
+    id: str
+    token: str
+    role: Literal["reader", "writer"]
+    namespaces: list[str]
+    name_hint: str | None
+    max_uses: int
+    expires_at: datetime | None
+
+
+class EnrollmentTokenListItem(BaseModel):
+    id: str
+    role: Literal["reader", "writer"]
+    namespaces: list[str]
+    name_hint: str | None
+    max_uses: int
+    times_used: int
+    expires_at: datetime | None
+    is_active: bool
+    created_at: datetime
+
+
+class EnrollRequest(BaseModel):
+    token: str
+    name: str = Field(min_length=1, max_length=100)
+
+
+class EnrollResponse(BaseModel):
+    api_key: str
+    name: str
+    role: Literal["reader", "writer", "admin"]
+    namespaces: list[str]
+
+
 class BackfillEmbeddingsRequest(BaseModel):
     namespace: str = "default"
     scope: Literal["knowledge", "requirements", "events"] = "knowledge"

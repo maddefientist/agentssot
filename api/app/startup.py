@@ -11,10 +11,34 @@ logger = logging.getLogger("agentssot.startup")
 
 def initialize_system(settings) -> None:
     with SessionLocal() as session:
+        _ensure_enrollment_tokens_table(session)
         _bootstrap_namespaces(session, settings)
         _bootstrap_admin_key_if_needed(session, settings)
         _ensure_embedding_dim(session, settings)
         _maybe_enable_hnsw_indexes(session, settings)
+
+
+def _ensure_enrollment_tokens_table(session) -> None:
+    """Create enrollment_tokens table if it doesn't exist (migration for existing DBs)."""
+    try:
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS enrollment_tokens (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                token_hash TEXT NOT NULL,
+                role api_role NOT NULL,
+                namespaces TEXT[] NOT NULL DEFAULT ARRAY['default']::TEXT[],
+                name_hint TEXT,
+                max_uses INTEGER NOT NULL DEFAULT 1,
+                times_used INTEGER NOT NULL DEFAULT 0,
+                expires_at TIMESTAMPTZ,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        session.commit()
+    except Exception as exc:
+        session.rollback()
+        logger.warning("enrollment_tokens table creation skipped: %s", exc)
 
 
 def _bootstrap_namespaces(session, settings) -> None:

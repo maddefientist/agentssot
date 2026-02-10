@@ -10,9 +10,9 @@ from .chunking import chunk_text_semantic
 from .embeddings import EmbeddingProvider, EmbeddingProviderError
 from .llm import LLMProvider, LLMProviderError
 from .reranker import RerankerProvider, RerankerProviderError
-from .models import ApiKey, ApiRole, Entity, EntityType, Event, EventType, KnowledgeItem, Namespace, Requirement
+from .models import ApiKey, ApiRole, EnrollmentToken, Entity, EntityType, Event, EventType, KnowledgeItem, Namespace, Requirement
 from .schemas import IngestRequest, RecallRequest
-from .security import generate_api_key, hash_api_key
+from .security import generate_api_key, generate_enrollment_token, hash_api_key, verify_api_key
 
 logger = logging.getLogger("agentssot.crud")
 
@@ -801,3 +801,111 @@ def delete_items(session: Session, namespace: str, ids: list[str]) -> int:
             deleted += 1
     session.commit()
     return deleted
+
+
+# ── Enrollment tokens ──────────────────────────────────────────────
+
+
+def create_enrollment_token(
+    session: Session,
+    role: str,
+    namespaces: list[str],
+    name_hint: str | None,
+    max_uses: int,
+    expires_at: datetime | None,
+) -> tuple[EnrollmentToken, str]:
+    normalized = sorted(set(ns.strip() for ns in namespaces if ns.strip()))
+    if not normalized:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one namespace is required")
+
+    # Enrollment tokens cannot grant admin role
+    if role == "admin":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Enrollment tokens cannot grant admin role")
+
+    # Validate namespaces exist
+    ns_to_check = [ns for ns in normalized if ns != "*"]
+    existing_ns = set(session.scalars(select(Namespace.name).where(Namespace.name.in_(ns_to_check))).all())
+    missing = [ns for ns in ns_to_check if ns not in existing_ns]
+    if missing:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown namespaces: {', '.join(missing)}")
+
+    plaintext = generate_enrollment_token()
+    token = EnrollmentToken(
+        token_hash=hash_api_key(plaintext),
+        role=ApiRole(role),
+        namespaces=normalized,
+        name_hint=name_hint,
+        max_uses=max_uses,
+        expires_at=expires_at,
+        is_active=True,
+    )
+    session.add(token)
+    session.commit()
+    session.refresh(token)
+    return token, plaintext
+
+
+def list_enrollment_tokens(session: Session) -> list[dict]:
+    rows = session.scalars(select(EnrollmentToken).order_by(EnrollmentToken.created_at.desc())).all()
+    return [
+        {
+            "id": str(t.id),
+            "role": t.role.value if isinstance(t.role, ApiRole) else str(t.role),
+            "namespaces": list(t.namespaces or []),
+            "name_hint": t.name_hint,
+            "max_uses": t.max_uses,
+            "times_used": t.times_used,
+            "expires_at": t.expires_at,
+            "is_active": t.is_active,
+            "created_at": t.created_at,
+        }
+        for t in rows
+    ]
+
+
+def redeem_enrollment_token(session: Session, plaintext_token: str, key_name: str) -> tuple[ApiKey, str]:
+    """Validate an enrollment token and create a new API key."""
+    active_tokens = session.scalars(
+        select(EnrollmentToken).where(EnrollmentToken.is_active.is_(True))
+    ).all()
+
+    matched_token: EnrollmentToken | None = None
+    for token in active_tokens:
+        if verify_api_key(plaintext_token, token.token_hash):
+            matched_token = token
+            break
+
+    if not matched_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired enrollment token")
+
+    # Check expiry
+    if matched_token.expires_at and matched_token.expires_at < datetime.now(UTC):
+        matched_token.is_active = False
+        session.commit()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Enrollment token has expired")
+
+    # Check usage limit
+    if matched_token.times_used >= matched_token.max_uses:
+        matched_token.is_active = False
+        session.commit()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Enrollment token has been fully used")
+
+    # Create the API key
+    name = key_name.strip()
+    if matched_token.name_hint:
+        name = f"{matched_token.name_hint}-{name}"
+
+    record, api_key_plaintext = create_api_key_record(
+        session=session,
+        name=name,
+        role=matched_token.role.value if isinstance(matched_token.role, ApiRole) else str(matched_token.role),
+        namespaces=list(matched_token.namespaces or []),
+    )
+
+    # Increment usage
+    matched_token.times_used += 1
+    if matched_token.times_used >= matched_token.max_uses:
+        matched_token.is_active = False
+
+    session.commit()
+    return record, api_key_plaintext
