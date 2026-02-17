@@ -1022,3 +1022,43 @@ def redeem_enrollment_token(session: Session, plaintext_token: str, key_name: st
 
     session.commit()
     return record, api_key_plaintext
+
+
+def auto_enroll(session: Session, name: str, passphrase: str, settings) -> tuple[ApiKey, str, dict]:
+    """Open enrollment: create namespace + writer key for a new device. Returns (ApiKey, plaintext_key, agent_config_dict)."""
+    expected = settings.enrollment_passphrase
+    if expected and passphrase != expected:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid enrollment passphrase")
+
+    # Sanitize device name for namespace
+    safe_name = name.strip().lower().replace(" ", "-")
+    if not safe_name:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Device name is required")
+
+    private_ns = f"device-{safe_name}-private"
+    shared_ns = "claude-shared"
+
+    # Ensure both namespaces exist
+    for ns in [shared_ns, private_ns]:
+        create_namespace(session, ns)
+
+    # Create writer key scoped to shared + private
+    namespaces = [shared_ns, private_ns]
+    key_name = f"enroll-{safe_name}"
+    record, plaintext = create_api_key_record(
+        session=session,
+        name=key_name,
+        role="writer",
+        namespaces=namespaces,
+    )
+
+    agent_config = {
+        "base_url": f"http://YOUR_HOST:{settings.api_port}",
+        "api_key": plaintext,
+        "device_name": safe_name,
+        "default_namespace": shared_ns,
+        "default_scope": "knowledge",
+        "namespaces": namespaces,
+    }
+
+    return record, plaintext, agent_config
