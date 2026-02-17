@@ -241,3 +241,25 @@ class NamespaceStatsResponse(BaseModel):
     knowledge_items: ItemCountDetail
     requirements: ItemCountDetail
     events: ItemCountDetail
+
+
+class AutoEnrollRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    passphrase: str = ""
+
+
+class AgentConfig(BaseModel):
+    base_url: str
+    api_key: str
+    device_name: str
+    default_namespace: str
+    default_scope: str
+    namespaces: list[str]
+
+
+class AutoEnrollResponse(BaseModel):
+    api_key: str
+    name: str
+    role: Literal["reader", "writer", "admin"]
+    namespaces: list[str]
+    agent_config: AgentConfig
