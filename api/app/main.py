@@ -612,7 +612,7 @@ if echo "$HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d
     echo ""
     echo "    API Key:    $API_KEY"
     echo "    Config:     $AGENT_JSON"
-    echo "    Namespaces: claude-shared, device-${{DEVICE_NAME,,}}-private"
+    echo "    Namespaces: claude-shared, device-$DEVICE_NAME-private"
     echo ""
     echo "    Next: Start a Claude session. The SessionStart hook will auto-recall context."
 else
