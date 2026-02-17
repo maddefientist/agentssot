@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     compaction_interval_seconds: int = Field(default=60, alias="COMPACTION_INTERVAL_SECONDS")
 
     enable_hnsw_index: bool = Field(default=False, alias="ENABLE_HNSW_INDEX")
+
+    # Open enrollment passphrase (empty = no passphrase required)
+    enrollment_passphrase: str = Field(default="", alias="ENROLLMENT_PASSPHRASE")
     expose_db_port: bool = Field(default=False, alias="EXPOSE_DB_PORT")
 
     bootstrap_admin_namespaces: str = Field(default="default", alias="BOOTSTRAP_ADMIN_NAMESPACES")
