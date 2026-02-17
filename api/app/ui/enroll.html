@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AgentSSOT - Device Enrollment</title>
+    <style>
+      :root {
+        --bg: #0d1117;
+        --surface: #161b22;
+        --surface-2: #1c2333;
+        --border: #30363d;
+        --text: #e6edf3;
+        --text-muted: #8b949e;
+        --accent: #58a6ff;
+        --accent-dim: #1f3a5f;
+        --green: #3fb950;
+        --red: #f85149;
+        --radius: 8px;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem 1rem;
+      }
+
+      .brand {
+        text-align: center;
+        margin-bottom: 2rem;
+      }
+
+      .brand h1 {
+        font-size: 1.6rem;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        color: var(--text);
+      }
+
+      .brand p {
+        color: var(--text-muted);
+        font-size: 0.9rem;
+        margin-top: 0.3rem;
+      }
+
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 1.8rem;
+        width: 100%;
+        max-width: 480px;
+      }
+
+      .form-group {
+        margin-bottom: 1.2rem;
+      }
+
+      .form-group label {
+        display: block;
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: var(--text-muted);
+        margin-bottom: 0.4rem;
+      }
+
+      .form-group input {
+        width: 100%;
+        padding: 0.6rem 0.8rem;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        color: var(--text);
+        font: inherit;
+        font-size: 0.9rem;
+        outline: none;
+        transition: border-color 150ms;
+      }
+
+      .form-group input:focus {
+        border-color: var(--accent);
+      }
+
+      .form-group input::placeholder {
+        color: var(--text-muted);
+        opacity: 0.6;
+      }
+
+      .form-group .hint {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        margin-top: 0.3rem;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.6rem 1.4rem;
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        border-radius: var(--radius);
+        font: inherit;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: opacity 150ms;
+        width: 100%;
+      }
+
+      .btn:hover { opacity: 0.9; }
+      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      .error-msg {
+        background: rgba(248, 81, 73, 0.1);
+        border: 1px solid var(--red);
+        border-radius: var(--radius);
+        color: var(--red);
+        padding: 0.6rem 0.8rem;
+        font-size: 0.85rem;
+        margin-top: 1rem;
+        display: none;
+      }
+
+      .error-msg.visible { display: block; }
+
+      /* Results */
+      .success-header {
+        display: flex;
+        align-items: center;
+        gap: 0.6rem;
+        margin-bottom: 1.4rem;
+      }
+
+      .success-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--green);
+        flex-shrink: 0;
+      }
+
+      .success-header h2 {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: var(--green);
+      }
+
+      .result-section {
+        margin-bottom: 1.2rem;
+      }
+
+      .result-section .label {
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-bottom: 0.4rem;
+      }
+
+      .result-section .warning {
+        font-size: 0.75rem;
+        color: var(--red);
+        margin-bottom: 0.4rem;
+      }
+
+      .copyable {
+        position: relative;
+      }
+
+      .copyable pre {
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 0.7rem 2.8rem 0.7rem 0.8rem;
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 0.8rem;
+        color: var(--text);
+        white-space: pre-wrap;
+        word-break: break-all;
+        overflow-x: auto;
+        margin: 0;
+      }
+
+      .copy-btn {
+        position: absolute;
+        top: 0.4rem;
+        right: 0.4rem;
+        background: var(--border);
+        border: none;
+        border-radius: 4px;
+        color: var(--text-muted);
+        padding: 0.25rem 0.5rem;
+        font-size: 0.7rem;
+        cursor: pointer;
+        transition: all 150ms;
+      }
+
+      .copy-btn:hover { background: var(--accent-dim); color: var(--text); }
+      .copy-btn.copied { background: var(--green); color: #fff; }
+
+      .back-link {
+        display: inline-block;
+        margin-top: 1rem;
+        color: var(--accent);
+        text-decoration: none;
+        font-size: 0.85rem;
+      }
+
+      .back-link:hover { text-decoration: underline; }
+    </style>
+  </head>
+  <body>
+    <div class="brand">
+      <h1>AgentSSOT</h1>
+      <p>Device Enrollment</p>
+    </div>
+
+    <!-- Enrollment Form -->
+    <div class="card" id="formCard">
+      <form id="enrollForm" autocomplete="off">
+        <div class="form-group">
+          <label for="deviceName">Device Name</label>
+          <input type="text" id="deviceName" name="name" required placeholder="e.g. macbook-pro" />
+        </div>
+        <div class="form-group">
+          <label for="passphrase">Passphrase</label>
+          <input type="password" id="passphrase" name="passphrase" placeholder="Optional" />
+          <div class="hint">Leave blank if no enrollment passphrase is configured.</div>
+        </div>
+        <button type="submit" class="btn" id="enrollBtn">Enroll</button>
+      </form>
+      <div class="error-msg" id="errorMsg"></div>
+    </div>
+
+    <!-- Results (hidden initially) -->
+    <div class="card" id="resultCard" style="display:none;">
+      <div class="success-header">
+        <div class="success-dot"></div>
+        <h2>Enrollment Successful</h2>
+      </div>
+
+      <div class="result-section">
+        <div class="label">API Key</div>
+        <div class="warning">Shown once. Save it now.</div>
+        <div class="copyable">
+          <pre id="apiKeyValue"></pre>
+          <button class="copy-btn" data-target="apiKeyValue">Copy</button>
+        </div>
+      </div>
+
+      <div class="result-section">
+        <div class="label">agent.json</div>
+        <div class="copyable">
+          <pre id="agentJsonValue"></pre>
+          <button class="copy-btn" data-target="agentJsonValue">Copy</button>
+        </div>
+      </div>
+
+      <div class="result-section">
+        <div class="label">Bootstrap Command</div>
+        <div class="copyable">
+          <pre id="bootstrapCmd"></pre>
+          <button class="copy-btn" data-target="bootstrapCmd">Copy</button>
+        </div>
+      </div>
+
+      <a href="/" class="back-link">&larr; Back to main dashboard</a>
+    </div>
+
+    <script>
+      (function () {
+        var form = document.getElementById("enrollForm");
+        var formCard = document.getElementById("formCard");
+        var resultCard = document.getElementById("resultCard");
+        var errorMsg = document.getElementById("errorMsg");
+        var enrollBtn = document.getElementById("enrollBtn");
+
+        form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          errorMsg.classList.remove("visible");
+          enrollBtn.disabled = true;
+          enrollBtn.textContent = "Enrolling...";
+
+          var name = document.getElementById("deviceName").value.trim();
+          var passphrase = document.getElementById("passphrase").value;
+
+          var body = { name: name };
+          if (passphrase) {
+            body.passphrase = passphrase;
+          }
+
+          fetch("/enroll/auto", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          })
+            .then(function (res) {
+              return res.json().then(function (data) {
+                return { ok: res.ok, status: res.status, data: data };
+              });
+            })
+            .then(function (result) {
+              if (!result.ok) {
+                throw new Error(result.data.detail || result.data.error || "Enrollment failed (HTTP " + result.status + ")");
+              }
+              showResults(result.data);
+            })
+            .catch(function (err) {
+              errorMsg.textContent = err.message || "Network error. Check your connection.";
+              errorMsg.classList.add("visible");
+              enrollBtn.disabled = false;
+              enrollBtn.textContent = "Enroll";
+            });
+        });
+
+        function showResults(data) {
+          formCard.style.display = "none";
+          resultCard.style.display = "block";
+
+          var apiKey = data.api_key || data.apiKey || "";
+          document.getElementById("apiKeyValue").textContent = apiKey;
+
+          var agentJson = data.agent_json || data.agentJson || data;
+          var jsonStr = typeof agentJson === "string" ? agentJson : JSON.stringify(agentJson, null, 2);
+          document.getElementById("agentJsonValue").textContent = jsonStr;
+
+          var baseUrl = window.location.origin;
+          var bootstrap = data.bootstrap_command || "curl -sS " + baseUrl + "/enroll/bootstrap | sh";
+          document.getElementById("bootstrapCmd").textContent = bootstrap;
+        }
+
+        // Copy buttons
+        document.addEventListener("click", function (e) {
+          if (!e.target.classList.contains("copy-btn")) return;
+          var targetId = e.target.getAttribute("data-target");
+          var el = document.getElementById(targetId);
+          if (!el) return;
+
+          var text = el.textContent;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function () {
+              flashCopied(e.target);
+            });
+          } else {
+            var ta = document.createElement("textarea");
+            ta.value = text;
+            ta.style.position = "fixed";
+            ta.style.opacity = "0";
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+            flashCopied(e.target);
+          }
+        });
+
+        function flashCopied(btn) {
+          btn.classList.add("copied");
+          btn.textContent = "Copied!";
+          setTimeout(function () {
+            btn.classList.remove("copied");
+            btn.textContent = "Copy";
+          }, 1500);
+        }
+      })();
+    </script>
+  </body>
+</html>
