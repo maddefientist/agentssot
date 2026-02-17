@@ -492,3 +492,131 @@ def enroll(
         role=record.role.value if hasattr(record.role, "value") else str(record.role),
         namespaces=list(record.namespaces or []),
     )
+
+
+
+# ── Open Enrollment (LAN trust) ───────────────────────────────────
+
+
+@app.post("/enroll/auto", response_model=schemas.AutoEnrollResponse)
+def enroll_auto(
+    payload: schemas.AutoEnrollRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    """Self-service enrollment. No auth required — LAN trust + optional passphrase."""
+    record, plaintext, agent_config = crud.auto_enroll(
+        session=session,
+        name=payload.name,
+        passphrase=payload.passphrase,
+        settings=app.state.settings,
+    )
+
+    return schemas.AutoEnrollResponse(
+        api_key=plaintext,
+        name=record.name,
+        role=record.role.value if hasattr(record.role, "value") else str(record.role),
+        namespaces=list(record.namespaces or []),
+        agent_config=schemas.AgentConfig(**agent_config),
+    )
+
+
+@app.get("/enroll/portal", include_in_schema=False)
+def enroll_portal():
+    """Serve the enrollment portal HTML page."""
+    portal_file = UI_DIR / "enroll.html"
+    if not portal_file.exists():
+        raise HTTPException(status_code=404, detail="Enrollment portal not found")
+    return FileResponse(portal_file)
+
+
+@app.get("/enroll/bootstrap.sh", response_class=PlainTextResponse, include_in_schema=False)
+def enroll_bootstrap_script(request: Request):
+    """Serve a curl-pipeable bootstrap script for CLI enrollment."""
+    server_host = request.headers.get("host", "YOUR_HOST:8088")
+    base_url = f"http://{server_host}"
+
+    return f'''#!/usr/bin/env bash
+set -euo pipefail
+
+# AgentSSOT Bootstrap Enrollment Script
+# Usage: curl -s {base_url}/enroll/bootstrap.sh | bash -s -- "my-device-name"
+#   or:  curl -s {base_url}/enroll/bootstrap.sh | bash -s -- "my-device-name" --passphrase "secret"
+
+DEVICE_NAME=""
+PASSPHRASE=""
+FORCE=false
+BASE_URL="{base_url}"
+CLAUDE_DIR="$HOME/.claude"
+AGENT_JSON="$CLAUDE_DIR/agentssot/local/agent.json"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --passphrase) PASSPHRASE="$2"; shift 2 ;;
+        --force) FORCE=true; shift ;;
+        -*) echo "Unknown option: $1" >&2; exit 1 ;;
+        *) DEVICE_NAME="$1"; shift ;;
+    esac
+done
+
+if [[ -z "$DEVICE_NAME" ]]; then
+    echo "Usage: curl -s $BASE_URL/enroll/bootstrap.sh | bash -s -- \"device-name\" [--passphrase \"secret\"] [--force]"
+    exit 1
+fi
+
+echo "==> Enrolling device: $DEVICE_NAME"
+
+if [[ -f "$AGENT_JSON" && "$FORCE" != "true" ]]; then
+    echo "WARNING: $AGENT_JSON already exists."
+    echo "Use --force to overwrite, or remove it manually."
+    exit 1
+fi
+
+if [[ ! -d "$CLAUDE_DIR" ]]; then
+    echo "==> ~/.claude not found, cloning claude-config..."
+    if command -v git &>/dev/null; then
+        git clone YOUR_CLAUDE_CONFIG_REPO "$CLAUDE_DIR"
+    else
+        echo "ERROR: git not installed. Install git and retry, or clone claude-config manually."
+        exit 1
+    fi
+fi
+
+mkdir -p "$CLAUDE_DIR/agentssot/local"
+
+echo "==> Calling enrollment API..."
+RESPONSE=$(curl -sf -X POST "$BASE_URL/enroll/auto" \
+    -H "Content-Type: application/json" \
+    -d "{{\\"name\\":\\"$DEVICE_NAME\\",\\"passphrase\\":\\"$PASSPHRASE\\"}}")
+
+if [[ $? -ne 0 || -z "$RESPONSE" ]]; then
+    echo "ERROR: Enrollment failed. Is $BASE_URL reachable?"
+    exit 1
+fi
+
+echo "$RESPONSE" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+config = data['agent_config']
+print(json.dumps(config, indent=2))
+" > "$AGENT_JSON"
+
+echo "==> Wrote $AGENT_JSON"
+
+echo "==> Verifying enrollment..."
+API_KEY=$(python3 -c "import sys,json; print(json.load(sys.stdin)['api_key'])" <<< "$RESPONSE")
+HEALTH=$(curl -sf -H "X-API-Key: $API_KEY" "$BASE_URL/health" 2>/dev/null || echo "FAIL")
+
+if echo "$HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'])" 2>/dev/null | grep -q "ok"; then
+    echo "==> Enrollment successful! Device '$DEVICE_NAME' is now connected to AgentSSOT."
+    echo ""
+    echo "    API Key:    $API_KEY"
+    echo "    Config:     $AGENT_JSON"
+    echo "    Namespaces: claude-shared, device-${{DEVICE_NAME,,}}-private"
+    echo ""
+    echo "    Next: Start a Claude session. The SessionStart hook will auto-recall context."
+else
+    echo "WARNING: Enrollment completed but health check failed. Config was still written."
+    echo "    Check connectivity to $BASE_URL"
+fi
+'''
