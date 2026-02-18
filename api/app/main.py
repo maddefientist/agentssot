@@ -728,6 +728,117 @@ echo "    Slash command: /hive [query]"
 '''
 
 
+@app.get("/enroll/install-plugin.sh", response_class=PlainTextResponse, include_in_schema=False)
+def enroll_install_plugin_script(request: Request):
+    """Plugin-only install script for already-enrolled agents."""
+    server_host = request.headers.get("host", "YOUR_HOST:8088")
+    base_url = f"http://{server_host}"
+
+    return f'''#!/usr/bin/env bash
+set -euo pipefail
+
+# hari-hive MCP Plugin Installer (plugin-only, no re-enrollment)
+# For agents that already have ~/.claude/agentssot/local/agent.json
+# Usage: curl -s {base_url}/enroll/install-plugin.sh | bash
+
+CLAUDE_DIR="$HOME/.claude"
+AGENT_JSON="$CLAUDE_DIR/agentssot/local/agent.json"
+PLUGIN_DIR="$CLAUDE_DIR/plugins/hari-hive"
+BASE_URL="{base_url}"
+
+# Verify agent.json exists (must be enrolled first)
+if [[ ! -f "$AGENT_JSON" ]]; then
+    echo "ERROR: $AGENT_JSON not found."
+    echo "    You must enroll first:"
+    echo "    curl -s $BASE_URL/enroll/bootstrap.sh | bash -s -- \\"my-device-name\\""
+    exit 1
+fi
+
+echo "==> Found agent config at $AGENT_JSON"
+
+# Check uv
+if ! command -v uv &>/dev/null; then
+    echo "ERROR: uv not found. Install it first: https://docs.astral.sh/uv/"
+    exit 1
+fi
+
+# Download plugin bundle
+echo "==> Downloading plugin bundle..."
+BUNDLE=$(curl -sf "$BASE_URL/enroll/plugin-bundle" 2>/dev/null)
+if [[ $? -ne 0 || -z "$BUNDLE" ]]; then
+    echo "ERROR: Could not download plugin bundle from $BASE_URL/enroll/plugin-bundle"
+    exit 1
+fi
+
+# Create plugin directory structure
+mkdir -p "$PLUGIN_DIR/hooks" "$PLUGIN_DIR/skills/hive"
+
+# Write plugin files
+echo "$BUNDLE" | python3 -c "
+import sys, json, os
+bundle = json.load(sys.stdin)
+plugin_dir = os.environ.get('PLUGIN_DIR', os.path.expanduser('~/.claude/plugins/hari-hive'))
+for rel_path, content in bundle.items():
+    full_path = os.path.join(plugin_dir, rel_path)
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content)
+    print(f'    Wrote {{rel_path}}')
+"
+
+echo "==> Plugin installed at $PLUGIN_DIR"
+
+# Enable plugin in settings.json
+SETTINGS_FILE="$CLAUDE_DIR/settings.json"
+if [[ -f "$SETTINGS_FILE" ]]; then
+    python3 -c "
+import json, sys
+settings_file = sys.argv[1]
+with open(settings_file) as f:
+    settings = json.load(f)
+
+changed = False
+plugins = settings.setdefault('enabledPlugins', {{}})
+if 'hari-hive' not in plugins:
+    plugins['hari-hive'] = True
+    changed = True
+
+# Remove old hive hooks
+hooks = settings.get('hooks', {{}})
+start_hooks = hooks.get('SessionStart', [])
+new_start = [h for h in start_hooks if 'session-recall' not in json.dumps(h) and 'hive-session-start' not in json.dumps(h)]
+if len(new_start) != len(start_hooks):
+    if new_start:
+        hooks['SessionStart'] = new_start
+    else:
+        hooks.pop('SessionStart', None)
+    changed = True
+
+end_hooks = hooks.get('SessionEnd', [])
+new_end = [h for h in end_hooks if 'extract_and_ingest' not in json.dumps(h)]
+if len(new_end) != len(end_hooks):
+    hooks['SessionEnd'] = new_end
+    changed = True
+
+if changed:
+    with open(settings_file, 'w') as f:
+        json.dump(settings, f, indent=2)
+        f.write('\\n')
+    print('==> Updated settings.json (enabled plugin, removed old hooks)')
+else:
+    print('==> settings.json already up to date')
+" "$SETTINGS_FILE"
+else
+    echo "    NOTE: No settings.json found. Plugin installed but not auto-enabled."
+fi
+
+echo ""
+echo "==> Done! Restart Claude Code to activate MCP tools."
+echo "    Tools: hive_recall, hive_query, hive_ingest, hive_stats, + 6 more"
+echo "    Slash command: /hive [query]"
+'''
+
+
 @app.get("/enroll/plugin-bundle", include_in_schema=False)
 def enroll_plugin_bundle():
     """Serve MCP plugin files as a JSON bundle for bootstrap installation."""
