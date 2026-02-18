@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "hari-hive": {
+      "command": "uv",
+      "args": ["run", "${CLAUDE_PLUGIN_ROOT}/mcp_server.py"],
+      "env": {
+        "HIVE_AGENT_JSON": "${HOME}/.claude/agentssot/local/agent.json"
+      }
+    }
+  }
+}

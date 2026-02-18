@@ -27,6 +27,7 @@ configure_logging(settings.log_level)
 logger = logging.getLogger("agentssot.api")
 BASE_DIR = Path(__file__).resolve().parent
 UI_DIR = BASE_DIR / "ui"
+PLUGIN_DIR = BASE_DIR / "plugin"
 
 
 @asynccontextmanager
@@ -613,10 +614,137 @@ if echo "$HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d
     echo "    API Key:    $API_KEY"
     echo "    Config:     $AGENT_JSON"
     echo "    Namespaces: claude-shared, device-$DEVICE_NAME-private"
-    echo ""
-    echo "    Next: Start a Claude session. The SessionStart hook will auto-recall context."
 else
     echo "WARNING: Enrollment completed but health check failed. Config was still written."
     echo "    Check connectivity to $BASE_URL"
 fi
+
+# --- MCP Plugin Installation ---
+echo ""
+echo "==> Installing hari-hive MCP plugin..."
+
+PLUGIN_DIR="$CLAUDE_DIR/plugins/hari-hive"
+
+# Check if uv is available (required for MCP server)
+if ! command -v uv &>/dev/null; then
+    echo "WARNING: uv not found. MCP plugin requires uv (https://docs.astral.sh/uv/)."
+    echo "    Install uv first, then re-run with --force to install plugin."
+    echo "    Enrollment succeeded but MCP tools will not be available."
+    exit 0
+fi
+
+# Download plugin bundle from API
+BUNDLE=$(curl -sf "$BASE_URL/enroll/plugin-bundle" 2>/dev/null)
+if [[ $? -ne 0 || -z "$BUNDLE" ]]; then
+    echo "WARNING: Could not download plugin bundle from $BASE_URL/enroll/plugin-bundle"
+    echo "    Enrollment succeeded but MCP plugin was not installed."
+    exit 0
+fi
+
+# Create plugin directory structure
+mkdir -p "$PLUGIN_DIR/hooks" "$PLUGIN_DIR/skills/hive"
+
+# Write each plugin file from the bundle
+echo "$BUNDLE" | python3 -c "
+import sys, json, os
+bundle = json.load(sys.stdin)
+plugin_dir = os.environ['PLUGIN_DIR']
+for rel_path, content in bundle.items():
+    full_path = os.path.join(plugin_dir, rel_path)
+    os.makedirs(os.path.dirname(full_path), exist_ok=True)
+    with open(full_path, 'w') as f:
+        f.write(content)
+    print(f'    Wrote {{rel_path}}')
+"
+
+echo "==> Plugin installed at $PLUGIN_DIR"
+
+# Enable plugin in settings.json if not already
+SETTINGS_FILE="$CLAUDE_DIR/settings.json"
+if [[ -f "$SETTINGS_FILE" ]]; then
+    python3 -c "
+import json, sys
+
+settings_file = sys.argv[1]
+with open(settings_file) as f:
+    settings = json.load(f)
+
+plugins = settings.setdefault('enabledPlugins', {{}})
+if 'hari-hive' not in plugins:
+    plugins['hari-hive'] = True
+    with open(settings_file, 'w') as f:
+        json.dump(settings, f, indent=2)
+        f.write('\\n')
+    print('==> Enabled hari-hive plugin in settings.json')
+else:
+    print('==> hari-hive plugin already enabled in settings.json')
+" "$SETTINGS_FILE"
+else
+    echo "    NOTE: No settings.json found. Plugin installed but not auto-enabled."
+    echo "    Enable manually or start Claude Code to auto-detect it."
+fi
+
+# Remove old hive hooks from settings.json if present
+if [[ -f "$SETTINGS_FILE" ]]; then
+    python3 -c "
+import json, sys
+
+settings_file = sys.argv[1]
+with open(settings_file) as f:
+    settings = json.load(f)
+
+hooks = settings.get('hooks', {{}})
+changed = False
+
+# Remove old SessionStart hive hook
+start_hooks = hooks.get('SessionStart', [])
+new_start = [h for h in start_hooks if 'session-recall' not in json.dumps(h) and 'hive-session-start' not in json.dumps(h)]
+if len(new_start) != len(start_hooks):
+    if new_start:
+        hooks['SessionStart'] = new_start
+    else:
+        hooks.pop('SessionStart', None)
+    changed = True
+
+# Remove old SessionEnd extract_and_ingest hook
+end_hooks = hooks.get('SessionEnd', [])
+new_end = [h for h in end_hooks if 'extract_and_ingest' not in json.dumps(h)]
+if len(new_end) != len(end_hooks):
+    hooks['SessionEnd'] = new_end
+    changed = True
+
+if changed:
+    with open(settings_file, 'w') as f:
+        json.dump(settings, f, indent=2)
+        f.write('\\n')
+    print('==> Removed old hive shell hooks from settings.json (replaced by plugin)')
+" "$SETTINGS_FILE" 2>/dev/null
+fi
+
+echo ""
+echo "==> Setup complete! Start a new Claude Code session to activate."
+echo "    MCP tools available: hive_recall, hive_query, hive_ingest, hive_stats, + 6 more"
+echo "    Slash command: /hive [query]"
 '''
+
+
+@app.get("/enroll/plugin-bundle", include_in_schema=False)
+def enroll_plugin_bundle():
+    """Serve MCP plugin files as a JSON bundle for bootstrap installation."""
+    if not PLUGIN_DIR.exists():
+        raise HTTPException(status_code=404, detail="Plugin bundle not found")
+
+    bundle: dict[str, str] = {}
+    for rel_path in [
+        "mcp_server.py",
+        "plugin.json",
+        ".mcp.json",
+        "hooks/SessionStart.md",
+        "hooks/SessionEnd.md",
+        "skills/hive/SKILL.md",
+    ]:
+        fp = PLUGIN_DIR / rel_path
+        if fp.exists():
+            bundle[rel_path] = fp.read_text()
+
+    return bundle

@@ -1,0 +1,23 @@
+{
+  "name": "hari-hive",
+  "version": "1.0.0",
+  "description": "AgentSSOT (hari-hive) unified memory -- MCP tools for recall, query, ingest, and admin",
+  "author": "MadDefientist",
+  "hooks": ["SessionStart", "SessionEnd"],
+  "commands": ["hive"],
+  "dependencies": {
+    "uv": "required"
+  },
+  "settings": {
+    "baseUrl": {
+      "type": "string",
+      "default": "http://YOUR_HOST:8088",
+      "description": "AgentSSOT API base URL"
+    },
+    "defaultNamespace": {
+      "type": "string",
+      "default": "claude-shared",
+      "description": "Default namespace for recall/query/ingest"
+    }
+  }
+}
