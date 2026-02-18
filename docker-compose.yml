@@ -11,7 +11,7 @@ services:
       - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
+      interval: 30s
       timeout: 5s
       retries: 10
       start_period: 10s
@@ -36,7 +36,7 @@ services:
       - "${API_PORT:-8088}:8000"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()\""]
-      interval: 15s
+      interval: 30s
       timeout: 5s
       retries: 10
       start_period: 20s
