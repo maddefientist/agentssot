@@ -100,6 +100,53 @@ def _find_related_concepts(
     return [c for _, c in scored[:max_related]]
 
 
+def _build_agent_profiles(session: Session, namespace: str, llm_provider, settings) -> int:
+    """Analyze recall patterns per agent to update strength topics. Returns profiles updated."""
+    from ..models import AgentProfile, RecallEvent
+    import json as _json
+
+    profiles = session.scalars(
+        select(AgentProfile).where(AgentProfile.namespace == namespace)
+    ).all()
+
+    updated = 0
+    for profile in profiles:
+        recent_queries = session.scalars(
+            select(RecallEvent.query_text)
+            .where(RecallEvent.agent_key == profile.agent_key)
+            .where(RecallEvent.query_text.is_not(None))
+            .where(RecallEvent.created_at > datetime.now(UTC) - timedelta(days=30))
+            .order_by(RecallEvent.created_at.desc())
+            .limit(100)
+        ).all()
+
+        if len(recent_queries) < 5:
+            continue
+
+        queries_text = "\n".join(q for q in recent_queries if q)
+        prompt = (
+            f"Given these search queries from agent '{profile.device_name}':\n"
+            f"{queries_text}\n\n"
+            "Extract the top 5 topic areas as a JSON array of strings. "
+            'Example: ["docker", "python", "networking"]\n'
+            "Output ONLY the JSON array, nothing else."
+        )
+
+        try:
+            result = llm_provider.summarize(prompt, model=settings.synthesis_fallback_model)
+            topics = _json.loads(result.strip())
+            if isinstance(topics, list):
+                profile.strengths = [str(t).lower() for t in topics[:10]]
+                updated += 1
+        except Exception:
+            logger.debug("profile topic extraction failed", extra={"agent": profile.agent_key})
+            continue
+
+    if updated:
+        session.flush()
+    return updated
+
+
 def _run_synthesis_for_namespace(
     namespace: str,
     settings,
@@ -196,6 +243,14 @@ def _run_synthesis_for_namespace(
                 protected_ids=protected_ids,
             )
             stats["decayed"] = decayed
+
+        # --- Agent profile building (Layer 4) ---
+        try:
+            profiles_updated = _build_agent_profiles(session, namespace, llm_provider, settings)
+            if profiles_updated:
+                logger.info("agent profiles updated", extra={"namespace": namespace, "count": profiles_updated})
+        except Exception:
+            logger.exception("agent profile building failed", extra={"namespace": namespace})
 
         session.commit()
 

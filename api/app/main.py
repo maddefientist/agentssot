@@ -247,6 +247,18 @@ def session_complete(
     )
 
 
+@app.get("/agent-profile/{agent_key}", response_model=schemas.AgentProfileResponse)
+def get_agent_profile_endpoint(
+    agent_key: str,
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    profile = crud.get_agent_profile(session, agent_key)
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return profile
+
+
 @app.get("/onboarding", response_class=PlainTextResponse, include_in_schema=False)
 def onboarding_public() -> str:
     """Public onboarding page — no auth required. Tells new agents what this service is and how to enroll."""

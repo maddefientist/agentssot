@@ -10,7 +10,7 @@ from .chunking import chunk_text_semantic
 from .embeddings import EmbeddingProvider, EmbeddingProviderError
 from .llm import LLMProvider, LLMProviderError
 from .reranker import RerankerProvider, RerankerProviderError
-from .models import ApiKey, ApiRole, Concept, ConceptFeedback, ConceptScope, ConceptType, EnrollmentToken, Entity, EntityType, Event, EventType, FeedbackSignal, KnowledgeItem, Namespace, RecallEvent, Requirement
+from .models import AgentProfile, ApiKey, ApiRole, Concept, ConceptFeedback, ConceptScope, ConceptType, EnrollmentToken, Entity, EntityType, Event, EventType, FeedbackSignal, KnowledgeItem, Namespace, RecallEvent, Requirement
 from .schemas import IngestRequest, RecallRequest
 from .security import generate_api_key, generate_enrollment_token, hash_api_key, verify_api_key
 
@@ -390,6 +390,32 @@ def recall(
     project_id = _resolve_entity_id(session, payload.namespace, payload.project_slug, "project_slug") if payload.project_slug else None
     entity_id = _resolve_entity_id(session, payload.namespace, payload.entity_slug, "entity_slug") if payload.entity_slug else None
 
+    def _concept_to_recall(item, score_value):
+        if item.type.value == "skill":
+            parts = [f"[SKILL] {item.title}"]
+            if item.trigger:
+                parts.append(f"  When: {item.trigger}")
+            if item.action:
+                parts.append(f"  Do: {item.action}")
+            if item.success_hint:
+                parts.append(f"  Verify: {item.success_hint}")
+            snippet = _clip("\n".join(parts), settings.max_snippet_chars)
+        else:
+            snippet = _clip(f"[{item.type.value}] {item.title}: {item.content}", settings.max_snippet_chars)
+        return {
+            "id": str(item.id),
+            "scope": "concepts",
+            "score": float(score_value),
+            "snippet": snippet,
+            "tags": list(item.tags or []),
+            "created_at": item.created_at,
+            "concept_type": item.type.value,
+            "confidence": item.confidence,
+            "trigger": item.trigger,
+            "action": item.action,
+            "success_hint": item.success_hint,
+        }
+
     if payload.scope == "knowledge":
         score = KnowledgeItem.embedding.cosine_distance(query_embedding).label("score")
         stmt = (
@@ -487,34 +513,10 @@ def recall(
 
         rows = session.execute(stmt).all()
 
-        def _concept_to_recall(item, score_value):
-            if item.type.value == "skill":
-                parts = [f"[SKILL] {item.title}"]
-                if item.trigger:
-                    parts.append(f"  When: {item.trigger}")
-                if item.action:
-                    parts.append(f"  Do: {item.action}")
-                if item.success_hint:
-                    parts.append(f"  Verify: {item.success_hint}")
-                snippet = _clip("\n".join(parts), settings.max_snippet_chars)
-            else:
-                snippet = _clip(f"[{item.type.value}] {item.title}: {item.content}", settings.max_snippet_chars)
-            return {
-                "id": str(item.id),
-                "scope": "concepts",
-                "score": float(score_value),
-                "snippet": snippet,
-                "tags": list(item.tags or []),
-                "created_at": item.created_at,
-                "concept_type": item.type.value,
-                "confidence": item.confidence,
-                "trigger": item.trigger,
-                "action": item.action,
-                "success_hint": item.success_hint,
-            }
-
         items = [_concept_to_recall(item, score_value) for item, score_value in rows]
         items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        if payload.agent_key:
+            items = _boost_by_agent_profile(session, items, payload.agent_key, payload.namespace)
         # Log recall events for concepts that were surfaced
         if payload.session_id:
             concept_items = [item for item in items if item.get("scope") == "concepts"]
@@ -531,6 +533,7 @@ def recall(
                     query_text=payload.query_text or "",
                     scores=scores_map,
                 )
+        update_profile_from_recall(session, payload.agent_key or "unknown", payload.namespace)
         return items
 
     if payload.scope == "all":
@@ -580,6 +583,8 @@ def recall(
         items = items[:candidate_k]
 
         items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        if payload.agent_key:
+            items = _boost_by_agent_profile(session, items, payload.agent_key, payload.namespace)
         # Log recall events for concepts that were surfaced
         if payload.session_id:
             concept_items = [item for item in items if item.get("scope") == "concepts"]
@@ -596,6 +601,7 @@ def recall(
                     query_text=payload.query_text or "",
                     scores=scores_map,
                 )
+        update_profile_from_recall(session, payload.agent_key or "unknown", payload.namespace)
         return items
 
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown scope '{payload.scope}'")
@@ -1303,6 +1309,96 @@ def auto_enroll(session: Session, name: str, passphrase: str, settings) -> tuple
     return record, plaintext, agent_config
 
 
+# ── Agent Profiles (Layer 4: Personalization) ─────────────────────
+
+
+def get_or_create_profile(session: Session, agent_key: str, namespace: str) -> AgentProfile:
+    """Get existing profile or create one, extracting device_name from key."""
+    profile = session.get(AgentProfile, agent_key)
+    if profile:
+        return profile
+    # Extract device name: "device-hari-writer" -> "hari"
+    parts = agent_key.split("-")
+    device_name = parts[1] if len(parts) >= 3 and parts[0] == "device" else agent_key
+    profile = AgentProfile(
+        agent_key=agent_key,
+        namespace=namespace,
+        device_name=device_name,
+    )
+    session.add(profile)
+    session.flush()
+    return profile
+
+
+def update_profile_from_recall(session: Session, agent_key: str, namespace: str) -> None:
+    """Increment recall counter on profile."""
+    if not agent_key:
+        return
+    profile = get_or_create_profile(session, agent_key, namespace)
+    profile.total_recalls = (profile.total_recalls or 0) + 1
+    session.flush()
+
+
+def update_profile_from_feedback(session: Session, agent_key: str, namespace: str) -> None:
+    """Increment feedback counter on profile."""
+    if not agent_key:
+        return
+    profile = get_or_create_profile(session, agent_key, namespace)
+    profile.total_feedback = (profile.total_feedback or 0) + 1
+    session.flush()
+
+
+def get_agent_profile(session: Session, agent_key: str) -> dict | None:
+    """Return profile as dict, or None if not found."""
+    profile = session.get(AgentProfile, agent_key)
+    if not profile:
+        return None
+    return {
+        "agent_key": profile.agent_key,
+        "namespace": profile.namespace,
+        "device_name": profile.device_name,
+        "model_hint": profile.model_hint,
+        "strengths": list(profile.strengths or []),
+        "preferences": dict(profile.preferences or {}),
+        "total_recalls": profile.total_recalls,
+        "total_feedback": profile.total_feedback,
+        "created_at": profile.created_at,
+        "updated_at": profile.updated_at,
+    }
+
+
+def _boost_by_agent_profile(
+    session: Session, items: list[dict], agent_key: str, namespace: str
+) -> list[dict]:
+    """Lightly boost recall results matching agent's strength topics.
+
+    Handles both scoring modes:
+    - If reranker_score is present: higher = better, boost increases it.
+    - If only cosine distance score: lower = better, boost decreases it.
+    """
+    profile = get_or_create_profile(session, agent_key, namespace)
+    strengths = set(s.lower() for s in (profile.strengths or []))
+    if not strengths:
+        return items
+    for item in items:
+        snippet_lower = item.get("snippet", "").lower()
+        matches = sum(1 for s in strengths if s in snippet_lower)
+        if matches > 0:
+            boost = min(matches * 0.10, 0.30)
+            if "reranker_score" in item and item["reranker_score"] is not None:
+                # Reranker score: higher = better
+                item["reranker_score"] = item["reranker_score"] * (1 + boost)
+            else:
+                # Cosine distance: lower = better
+                item["score"] = item["score"] * (1 - boost)
+    # Re-sort based on which scoring mode is active
+    if items and items[0].get("reranker_score") is not None:
+        items.sort(key=lambda x: x.get("reranker_score", 0), reverse=True)
+    else:
+        items.sort(key=lambda x: x["score"])
+    return items
+
+
 # ── Feedback loop ──────────────────────────────────────────────────
 
 
@@ -1394,6 +1490,8 @@ def create_concept_feedback(
         concept = session.get(Concept, concept_id)  # refresh after resurrection
 
     session.flush()
+
+    update_profile_from_feedback(session, agent_key, namespace)
 
     return {
         "concept_id": str(concept_id),
