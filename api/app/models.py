@@ -54,6 +54,7 @@ class ConceptType(str, enum.Enum):
     mental_model = "mental_model"
     relationship = "relationship"
     principle = "principle"
+    skill = "skill"
 
 
 class ConceptScope(str, enum.Enum):
@@ -215,6 +216,12 @@ class Concept(Base):
         PG_UUID(as_uuid=True), ForeignKey("concepts.id", ondelete="SET NULL"), nullable=True
     )
     tags: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list, server_default=text("ARRAY[]::TEXT[]"))
+    # Layer 3: Skill fields (NULL for non-skill concepts)
+    trigger: Mapped[str | None] = mapped_column(Text, nullable=True)
+    action: Mapped[str | None] = mapped_column(Text, nullable=True)
+    success_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Layer 5: Cross-agent confirmation
+    confirming_agents: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list, server_default=text("ARRAY[]::TEXT[]"))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(settings.embedding_dim), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
@@ -255,3 +262,18 @@ class ConceptFeedback(Base):
     session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class AgentProfile(Base):
+    __tablename__ = "agent_profiles"
+
+    agent_key: Mapped[str] = mapped_column(Text, primary_key=True)
+    namespace: Mapped[str] = mapped_column(Text, ForeignKey("namespaces.name", ondelete="CASCADE"), nullable=False)
+    device_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model_hint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strengths: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list, server_default=text("ARRAY[]::TEXT[]"))
+    preferences: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb"))
+    total_recalls: Mapped[int] = mapped_column(nullable=False, default=0, server_default=text("0"))
+    total_feedback: Mapped[int] = mapped_column(nullable=False, default=0, server_default=text("0"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

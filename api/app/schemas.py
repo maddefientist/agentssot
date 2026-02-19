@@ -94,8 +94,11 @@ class RecallItem(BaseModel):
     snippet: str
     tags: list[str] = Field(default_factory=list)
     created_at: datetime | None = None
-    concept_type: Literal["mental_model", "relationship", "principle"] | None = None
+    concept_type: Literal["mental_model", "relationship", "principle", "skill"] | None = None
     confidence: float | None = None
+    trigger: str | None = None
+    action: str | None = None
+    success_hint: str | None = None
 
 
 class RecallResponse(BaseModel):
@@ -237,7 +240,7 @@ class DedupResponse(BaseModel):
 class ConceptOut(BaseModel):
     id: str
     namespace: str
-    type: Literal["mental_model", "relationship", "principle"]
+    type: Literal["mental_model", "relationship", "principle", "skill"]
     scope: Literal["global", "project", "device"]
     scope_ref: str | None = None
     title: str
@@ -247,6 +250,10 @@ class ConceptOut(BaseModel):
     version: int
     parent_id: str | None = None
     tags: list[str] = Field(default_factory=list)
+    trigger: str | None = None
+    action: str | None = None
+    success_hint: str | None = None
+    confirming_agents: list[str] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -303,6 +310,19 @@ class AutoEnrollResponse(BaseModel):
     role: Literal["reader", "writer", "admin"]
     namespaces: list[str]
     agent_config: AgentConfig
+
+
+class AgentProfileResponse(BaseModel):
+    agent_key: str
+    namespace: str
+    device_name: str | None = None
+    model_hint: str | None = None
+    strengths: list[str] = Field(default_factory=list)
+    preferences: dict[str, Any] = Field(default_factory=dict)
+    total_recalls: int = 0
+    total_feedback: int = 0
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class FeedbackRequest(BaseModel):
