@@ -1376,6 +1376,12 @@ def create_concept_feedback(
             embedding=embedding_provider.embed_text(note),
         ))
 
+    # Resurrect dormant concepts on positive feedback
+    if signal in ("useful", "noted") and concept.confidence < 0.5:
+        from app.synthesis.reconciler import resurrect_concept
+        resurrect_concept(session, concept_id)
+        concept = session.get(Concept, concept_id)  # refresh after resurrection
+
     session.flush()
 
     return {
