@@ -442,7 +442,10 @@ def recall(
             }
             for item, score_value in rows
         ]
-        return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        if payload.agent_key:
+            update_profile_from_recall(session, payload.agent_key, payload.namespace)
+        return items
 
     if payload.scope == "requirements":
         score = Requirement.embedding.cosine_distance(query_embedding).label("score")
@@ -470,7 +473,10 @@ def recall(
             }
             for item, score_value in rows
         ]
-        return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        if payload.agent_key:
+            update_profile_from_recall(session, payload.agent_key, payload.namespace)
+        return items
 
     if payload.scope == "events":
         score = Event.embedding.cosine_distance(query_embedding).label("score")
@@ -498,7 +504,10 @@ def recall(
             }
             for item, score_value in rows
         ]
-        return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        if payload.agent_key:
+            update_profile_from_recall(session, payload.agent_key, payload.namespace)
+        return items
 
     if payload.scope == "concepts":
         score = Concept.embedding.cosine_distance(query_embedding).label("score")

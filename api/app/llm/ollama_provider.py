@@ -18,12 +18,12 @@ class OllamaLLMProvider(LLMProvider):
             unavailable_reason=None if (base_url and model) else "OLLAMA_BASE_URL or OLLAMA_CHAT_MODEL missing",
         )
 
-    def summarize(self, transcript: str) -> str:
+    def summarize(self, transcript: str, model: str | None = None) -> str:
         if not self.is_available:
             raise LLMProviderError(self.unavailable_reason or "Ollama LLM provider unavailable")
 
         payload = {
-            "model": self.model,
+            "model": model or self.model,
             "stream": False,
             "messages": [
                 {

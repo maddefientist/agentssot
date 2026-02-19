@@ -14,7 +14,7 @@ class LLMProvider(ABC):
         self.unavailable_reason = unavailable_reason
 
     @abstractmethod
-    def summarize(self, transcript: str) -> str:
+    def summarize(self, transcript: str, model: str | None = None) -> str:
         raise NotImplementedError
 
     def synthesize_concepts(self, facts: str, existing_concepts: str, model_override: str | None = None, fallback_model: str | None = None) -> str:

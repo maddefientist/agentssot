@@ -331,6 +331,7 @@ class FeedbackRequest(BaseModel):
     query: str | None = None
     note: str | None = None
     session_id: str | None = None
+    agent_key: str | None = None
 
 
 class FeedbackResponse(BaseModel):

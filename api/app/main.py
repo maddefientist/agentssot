@@ -181,7 +181,7 @@ def submit_feedback(
             session=session,
             namespace=namespace,
             signal=payload.signal,
-            agent_key=auth.key_name,
+            agent_key=payload.agent_key or auth.key_name,
             embedding_provider=app.state.embedding_provider,
             concept_id=UUID(payload.concept_id) if payload.concept_id else None,
             query=payload.query,
@@ -235,6 +235,7 @@ def session_complete(
         session.add(_models.KnowledgeItem(
             namespace=namespace,
             content=fact,
+            source=auth.key_name or f"device-{device_name}-writer",
             tags=["session-extract", f"device-{device_name}", "auto-extracted"],
             embedding=embedding,
         ))

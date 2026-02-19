@@ -31,6 +31,11 @@ def reconcile_concepts(
     updated_count = 0
 
     for proposal in proposals:
+        proposal_type = proposal.get("type", "")
+        if proposal_type not in _TYPE_MAP:
+            logger.warning("skipping proposal with unknown type: %s", proposal_type)
+            continue
+
         matched_id = proposal.get("matches_existing_id")
         is_contradiction = proposal.get("is_contradiction", False)
 

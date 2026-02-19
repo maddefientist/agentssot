@@ -47,7 +47,7 @@ def _parse_synthesis_response(raw: str) -> list[dict]:
             if not all(k in obj for k in ("type", "title", "content", "confidence")):
                 logger.warning("skipping concept missing required fields: %s", list(obj.keys()))
                 continue
-            if obj["type"] not in ("mental_model", "relationship", "principle"):
+            if obj["type"] not in ("mental_model", "relationship", "principle", "skill"):
                 logger.warning("skipping concept with unknown type: %s", obj["type"])
                 continue
             results.append(obj)

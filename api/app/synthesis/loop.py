@@ -187,6 +187,18 @@ def _run_synthesis_for_namespace(
             similarity_threshold=settings.synthesis_similarity_threshold,
             min_cluster_size=settings.synthesis_min_cluster_size,
         )
+
+        # Fast-track: skill-tagged items that didn't cluster get their own single-item cluster
+        clustered_ids = {item["id"] for cluster in clusters for item in cluster}
+        skill_orphans = [
+            item for item in items
+            if item["id"] not in clustered_ids
+            and any(t in ("skill", "operator-taught") for t in item.get("tags", []))
+        ]
+        if skill_orphans:
+            clusters.append(skill_orphans)
+            logger.info("fast-tracked %d skill-tagged items to synthesis", len(skill_orphans))
+
         stats["clusters"] = len(clusters)
 
         if not clusters:
