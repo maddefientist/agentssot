@@ -3,14 +3,14 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, delete as sa_delete, func, or_, select, text as sa_text
+from sqlalchemy import and_, delete as sa_delete, func, or_, select, text as sa_text, update
 from sqlalchemy.orm import Session
 
 from .chunking import chunk_text_semantic
 from .embeddings import EmbeddingProvider, EmbeddingProviderError
 from .llm import LLMProvider, LLMProviderError
 from .reranker import RerankerProvider, RerankerProviderError
-from .models import ApiKey, ApiRole, Concept, ConceptScope, ConceptType, EnrollmentToken, Entity, EntityType, Event, EventType, KnowledgeItem, Namespace, Requirement
+from .models import ApiKey, ApiRole, Concept, ConceptFeedback, ConceptScope, ConceptType, EnrollmentToken, Entity, EntityType, Event, EventType, FeedbackSignal, KnowledgeItem, Namespace, RecallEvent, Requirement
 from .schemas import IngestRequest, RecallRequest
 from .security import generate_api_key, generate_enrollment_token, hash_api_key, verify_api_key
 
@@ -1037,7 +1037,7 @@ def list_concepts(
         stmt = stmt.where(Concept.type == ConceptType(concept_type))
     if scope:
         stmt = stmt.where(Concept.scope == ConceptScope(scope))
-    stmt = stmt.order_by(Concept.confidence.desc()).limit(min(max(limit, 1), 200))
+    stmt = stmt.order_by(Concept.confidence.desc()).limit(min(max(limit, 1), 1000))
 
     rows = session.scalars(stmt).all()
     return [
@@ -1256,3 +1256,149 @@ def auto_enroll(session: Session, name: str, passphrase: str, settings) -> tuple
     }
 
     return record, plaintext, agent_config
+
+
+# ── Feedback loop ──────────────────────────────────────────────────
+
+
+def log_recall_events(
+    session: Session,
+    namespace: str,
+    concept_ids: list[UUID],
+    session_id: str,
+    agent_key: str,
+    query_text: str,
+    scores: dict[UUID, float],
+) -> int:
+    """Log recall events for concepts that were surfaced. Returns count logged."""
+    count = 0
+    for cid in concept_ids:
+        session.add(RecallEvent(
+            concept_id=cid,
+            namespace=namespace,
+            session_id=session_id,
+            agent_key=agent_key,
+            query_text=query_text,
+            score=scores.get(cid, 0.0),
+        ))
+        count += 1
+    session.flush()
+    return count
+
+
+def create_concept_feedback(
+    session: Session,
+    namespace: str,
+    signal: str,
+    agent_key: str,
+    embedding_provider,
+    concept_id: UUID | None = None,
+    query: str | None = None,
+    session_id: str | None = None,
+    note: str | None = None,
+) -> dict:
+    """Create feedback for a concept. Resolves by ID or fuzzy semantic match."""
+    if not concept_id and not query:
+        raise ValueError("Must provide concept_id or query")
+
+    if concept_id:
+        concept = session.get(Concept, concept_id)
+        if not concept or concept.namespace != namespace:
+            raise ValueError(f"Concept {concept_id} not found in namespace {namespace}")
+    else:
+        # Fuzzy match: embed query, find closest concept
+        query_embedding = embedding_provider.embed(query)
+        score_col = Concept.embedding.cosine_distance(query_embedding).label("score")
+        stmt = (
+            select(Concept, score_col)
+            .where(Concept.namespace == namespace)
+            .where(Concept.embedding.is_not(None))
+            .where(~Concept.tags.any("superseded"))
+            .order_by(score_col)
+            .limit(1)
+        )
+        row = session.execute(stmt).first()
+        if not row:
+            raise ValueError("No concepts found to match query")
+        concept, _match_score = row
+        concept_id = concept.id
+
+    fb = ConceptFeedback(
+        concept_id=concept_id,
+        namespace=namespace,
+        signal=FeedbackSignal(signal),
+        agent_key=agent_key,
+        session_id=session_id,
+        note=note,
+    )
+    session.add(fb)
+
+    # If "wrong" signal with a note, also ingest the correction as knowledge
+    if signal == "wrong" and note:
+        session.add(KnowledgeItem(
+            namespace=namespace,
+            content=f"Correction: {note} (re: concept '{concept.title}')",
+            tags=["correction", "operator-feedback"],
+            embedding=embedding_provider.embed(note),
+        ))
+
+    session.flush()
+
+    return {
+        "concept_id": str(concept_id),
+        "concept_title": concept.title,
+        "signal": signal,
+        "confidence": concept.confidence,
+    }
+
+
+def get_feedback_summary(
+    session: Session,
+    namespace: str,
+    since: datetime,
+) -> dict[UUID, dict]:
+    """Get aggregated feedback per concept since a timestamp.
+    Returns {concept_id: {"useful": N, "noted": N, "wrong": N, "implicit_recalls": N, "wrong_notes": [...]}}
+    """
+    from collections import defaultdict
+
+    summary: dict[UUID, dict] = defaultdict(lambda: {
+        "useful": 0, "noted": 0, "wrong": 0, "implicit_recalls": 0, "wrong_notes": []
+    })
+
+    # Explicit feedback
+    fb_stmt = (
+        select(ConceptFeedback)
+        .where(ConceptFeedback.namespace == namespace)
+        .where(ConceptFeedback.created_at >= since)
+    )
+    for fb in session.scalars(fb_stmt):
+        summary[fb.concept_id][fb.signal.value] += 1
+        if fb.signal == FeedbackSignal.wrong and fb.note:
+            summary[fb.concept_id]["wrong_notes"].append(fb.note)
+
+    # Implicit recalls (session completed)
+    re_stmt = (
+        select(RecallEvent.concept_id, func.count(func.distinct(RecallEvent.session_id)))
+        .where(RecallEvent.namespace == namespace)
+        .where(RecallEvent.session_completed == True)
+        .where(RecallEvent.created_at >= since)
+        .group_by(RecallEvent.concept_id)
+    )
+    for cid, count in session.execute(re_stmt):
+        summary[cid]["implicit_recalls"] = count
+
+    return dict(summary)
+
+
+def mark_session_completed(session: Session, session_id: str) -> int:
+    """Mark all recall events for a session as completed. Returns count updated."""
+    stmt = (
+        update(RecallEvent)
+        .where(RecallEvent.session_id == session_id)
+        .where(RecallEvent.session_completed == False)
+        .values(session_completed=True)
+    )
+    result = session.execute(stmt)
+    session.flush()
+    return result.rowcount
