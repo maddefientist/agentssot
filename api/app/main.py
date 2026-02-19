@@ -167,6 +167,111 @@ def cortex_data(
     }
 
 
+@app.get("/cortex/system-info", include_in_schema=False)
+def cortex_system_info(
+    namespace: str = Query(default="claude-shared"),
+    session: Session = Depends(get_session),
+):
+    """Public read-only endpoint for cortex drawer. Returns config, health, agents."""
+    settings = app.state.settings
+
+    health = {
+        "status": "ok",
+        "embedding_available": app.state.embedding_provider.is_available,
+        "llm_available": app.state.llm_provider.is_available,
+        "reranker_available": app.state.reranker_provider.is_available,
+        "synthesis_enabled": settings.effective_synthesis_enabled,
+    }
+
+    config = {
+        "namespace": namespace,
+        "embedding_model": settings.ollama_embed_model,
+        "embedding_dim": settings.embedding_dim,
+        "llm_model": settings.ollama_chat_model,
+        "reranker_model": settings.ollama_reranker_model,
+        "synthesis_model": settings.synthesis_model,
+        "synthesis_schedule_hour": settings.synthesis_schedule_hour,
+        "synthesis_similarity_threshold": settings.synthesis_similarity_threshold,
+        "synthesis_min_cluster_size": settings.synthesis_min_cluster_size,
+        "synthesis_confidence_decay": settings.synthesis_confidence_decay,
+        "synthesis_decay_floor": settings.synthesis_decay_floor,
+        "synthesis_decay_grace_days": settings.synthesis_decay_grace_days,
+    }
+
+    from .models import AgentProfile
+    profiles = session.scalars(
+        select(AgentProfile).where(AgentProfile.namespace == namespace)
+    ).all()
+    agents = [
+        {
+            "agent_key": p.agent_key,
+            "device_name": p.device_name,
+            "strengths": list(p.strengths or []),
+            "total_recalls": p.total_recalls,
+            "total_feedback": p.total_feedback,
+            "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+        }
+        for p in profiles
+    ]
+
+    from .models import Namespace as NsModel
+    ns_names = [ns.name for ns in session.scalars(select(NsModel)).all()]
+
+    return {
+        "health": health,
+        "config": config,
+        "agents": agents,
+        "namespaces": ns_names,
+    }
+
+
+@app.get("/cortex/activity", include_in_schema=False)
+def cortex_activity(
+    namespace: str = Query(default="claude-shared"),
+    limit: int = Query(default=50, le=100),
+    session: Session = Depends(get_session),
+):
+    """Public read-only endpoint for cortex activity ticker. Returns recent events."""
+    from .models import RecallEvent, ConceptFeedback, Concept
+
+    events = []
+
+    recalls = session.execute(
+        select(RecallEvent.agent_key, RecallEvent.query_text, RecallEvent.created_at, Concept.title)
+        .join(Concept, RecallEvent.concept_id == Concept.id)
+        .where(RecallEvent.namespace == namespace)
+        .order_by(RecallEvent.created_at.desc())
+        .limit(limit)
+    ).all()
+    for r in recalls:
+        events.append({
+            "type": "recall",
+            "agent": r.agent_key,
+            "detail": (r.query_text or "")[:80],
+            "concept": r.title,
+            "at": r.created_at.isoformat(),
+        })
+
+    feedbacks = session.execute(
+        select(ConceptFeedback.agent_key, ConceptFeedback.signal, ConceptFeedback.created_at, Concept.title)
+        .join(Concept, ConceptFeedback.concept_id == Concept.id)
+        .where(ConceptFeedback.namespace == namespace)
+        .order_by(ConceptFeedback.created_at.desc())
+        .limit(limit)
+    ).all()
+    for f in feedbacks:
+        events.append({
+            "type": "feedback",
+            "agent": f.agent_key,
+            "detail": f.signal.value if hasattr(f.signal, 'value') else str(f.signal),
+            "concept": f.title,
+            "at": f.created_at.isoformat(),
+        })
+
+    events.sort(key=lambda e: e["at"], reverse=True)
+    return {"events": events[:limit]}
+
+
 @app.post("/feedback", response_model=schemas.FeedbackResponse)
 def submit_feedback(
     payload: schemas.FeedbackRequest,
