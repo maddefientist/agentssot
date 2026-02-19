@@ -266,6 +266,7 @@ class SynthesisRunResponse(BaseModel):
     new_concepts: int
     updated_concepts: int
     decayed_concepts: int
+    feedback_adjustments: int = 0
 
 
 class ItemCountDetail(BaseModel):

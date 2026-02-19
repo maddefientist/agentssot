@@ -401,6 +401,10 @@ def recall(
         settings=app.state.settings,
     )
 
+    # Commit recall events logged during recall (if session_id was provided)
+    if payload.session_id:
+        session.commit()
+
     top_k = payload.top_k if payload.top_k is not None else app.state.settings.default_top_k
     top_k = min(max(top_k, 1), 50)
 
@@ -612,6 +616,7 @@ def admin_trigger_synthesis(
         new_concepts=stats["new"],
         updated_concepts=stats["updated"],
         decayed_concepts=stats["decayed"],
+        feedback_adjustments=stats.get("feedback_adjustments", 0),
     )
 
 

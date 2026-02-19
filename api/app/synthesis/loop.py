@@ -197,6 +197,8 @@ def _run_synthesis_for_namespace(
             )
             stats["decayed"] = decayed
 
+        session.commit()
+
     return stats
 
 
