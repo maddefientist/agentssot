@@ -76,7 +76,7 @@ class QueryResponse(BaseModel):
 
 class RecallRequest(BaseModel):
     namespace: str = "default"
-    scope: Literal["knowledge", "requirements", "events"] = "knowledge"
+    scope: Literal["knowledge", "requirements", "events", "concepts"] = "knowledge"
     query_text: str | None = None
     query_embedding: list[float] | None = None
     top_k: int | None = None
@@ -86,17 +86,19 @@ class RecallRequest(BaseModel):
 
 class RecallItem(BaseModel):
     id: str
-    scope: Literal["knowledge", "requirements", "events"]
+    scope: Literal["knowledge", "requirements", "events", "concepts"]
     score: float
     reranker_score: float | None = None
     snippet: str
     tags: list[str] = Field(default_factory=list)
     created_at: datetime | None = None
+    concept_type: Literal["mental_model", "relationship", "principle"] | None = None
+    confidence: float | None = None
 
 
 class RecallResponse(BaseModel):
     namespace: str
-    scope: Literal["knowledge", "requirements", "events"]
+    scope: Literal["knowledge", "requirements", "events", "concepts"]
     top_k: int
     items: list[RecallItem]
 
@@ -230,6 +232,40 @@ class DedupResponse(BaseModel):
     dry_run: bool
 
 
+class ConceptOut(BaseModel):
+    id: str
+    namespace: str
+    type: Literal["mental_model", "relationship", "principle"]
+    scope: Literal["global", "project", "device"]
+    scope_ref: str | None = None
+    title: str
+    content: str
+    evidence_ids: list[str] = Field(default_factory=list)
+    confidence: float
+    version: int
+    parent_id: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class ConceptListResponse(BaseModel):
+    namespace: str
+    total: int
+    concepts: list[ConceptOut]
+
+
+class ConceptDetailResponse(ConceptOut):
+    history: list[ConceptOut] = Field(default_factory=list)
+
+
+class SynthesisRunResponse(BaseModel):
+    namespace: str
+    new_concepts: int
+    updated_concepts: int
+    decayed_concepts: int
+
+
 class ItemCountDetail(BaseModel):
     total: int
     embedded: int
@@ -241,6 +277,7 @@ class NamespaceStatsResponse(BaseModel):
     knowledge_items: ItemCountDetail
     requirements: ItemCountDetail
     events: ItemCountDetail
+    concepts: ItemCountDetail | None = None
 
 
 class AutoEnrollRequest(BaseModel):

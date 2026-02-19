@@ -5,13 +5,17 @@ from sqlalchemy import func, select, text
 from .db import SessionLocal
 from .models import ApiKey, ApiRole, Namespace
 from .security import generate_api_key, hash_api_key
+from .settings import get_settings
 
 logger = logging.getLogger("agentssot.startup")
+
+settings = get_settings()
 
 
 def initialize_system(settings) -> None:
     with SessionLocal() as session:
         _ensure_enrollment_tokens_table(session)
+        _ensure_concepts_table(session)
         _bootstrap_namespaces(session, settings)
         _bootstrap_admin_key_if_needed(session, settings)
         _ensure_embedding_dim(session, settings)
@@ -39,6 +43,60 @@ def _ensure_enrollment_tokens_table(session) -> None:
     except Exception as exc:
         session.rollback()
         logger.warning("enrollment_tokens table creation skipped: %s", exc)
+
+
+def _ensure_concepts_table(session) -> None:
+    """Create concepts table if it doesn't exist (migration for existing DBs)."""
+    try:
+        session.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'concept_type') THEN
+                    CREATE TYPE concept_type AS ENUM ('mental_model', 'relationship', 'principle');
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'concept_scope') THEN
+                    CREATE TYPE concept_scope AS ENUM ('global', 'project', 'device');
+                END IF;
+            END $$
+        """))
+        session.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS concepts (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                namespace TEXT NOT NULL REFERENCES namespaces(name) ON DELETE CASCADE,
+                type concept_type NOT NULL,
+                scope concept_scope NOT NULL DEFAULT 'global',
+                scope_ref TEXT,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                evidence_ids UUID[] NOT NULL DEFAULT ARRAY[]::UUID[],
+                confidence FLOAT NOT NULL DEFAULT 0.5,
+                version INTEGER NOT NULL DEFAULT 1,
+                parent_id UUID REFERENCES concepts(id) ON DELETE SET NULL,
+                tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+                embedding VECTOR({settings.embedding_dim}),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        session.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_concepts_namespace ON concepts(namespace);
+            CREATE INDEX IF NOT EXISTS idx_concepts_type ON concepts(type);
+            CREATE INDEX IF NOT EXISTS idx_concepts_scope ON concepts(scope, scope_ref);
+            CREATE INDEX IF NOT EXISTS idx_concepts_tags_gin ON concepts USING GIN(tags);
+            CREATE INDEX IF NOT EXISTS idx_concepts_parent ON concepts(parent_id);
+            CREATE INDEX IF NOT EXISTS idx_concepts_confidence ON concepts(confidence);
+        """))
+        session.execute(text("""
+            DROP TRIGGER IF EXISTS trg_concepts_set_updated_at ON concepts;
+            CREATE TRIGGER trg_concepts_set_updated_at
+            BEFORE UPDATE ON concepts
+            FOR EACH ROW
+            EXECUTE FUNCTION set_updated_at();
+        """))
+        session.commit()
+    except Exception as exc:
+        session.rollback()
+        logger.warning("concepts table creation skipped: %s", exc)
 
 
 def _bootstrap_namespaces(session, settings) -> None:

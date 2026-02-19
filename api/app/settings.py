@@ -40,6 +40,16 @@ class Settings(BaseSettings):
     compaction_char_threshold: int = Field(default=24000, alias="COMPACTION_CHAR_THRESHOLD")
     compaction_interval_seconds: int = Field(default=60, alias="COMPACTION_INTERVAL_SECONDS")
 
+    # Synthesis (conceptual memory)
+    synthesis_enabled: bool = Field(default=False, alias="SYNTHESIS_ENABLED")
+    synthesis_model: str = Field(default="qwen3.5:cloud", alias="SYNTHESIS_MODEL")
+    synthesis_fallback_model: str = Field(default="qwen3:latest", alias="SYNTHESIS_FALLBACK_MODEL")
+    synthesis_schedule_hour: int = Field(default=3, alias="SYNTHESIS_SCHEDULE_HOUR")
+    synthesis_batch_size: int = Field(default=20, alias="SYNTHESIS_BATCH_SIZE")
+    synthesis_similarity_threshold: float = Field(default=0.75, alias="SYNTHESIS_SIMILARITY_THRESHOLD")
+    synthesis_min_cluster_size: int = Field(default=3, alias="SYNTHESIS_MIN_CLUSTER_SIZE")
+    synthesis_confidence_decay: float = Field(default=0.05, alias="SYNTHESIS_CONFIDENCE_DECAY")
+
     enable_hnsw_index: bool = Field(default=False, alias="ENABLE_HNSW_INDEX")
 
     # Open enrollment passphrase (empty = no passphrase required)
@@ -57,6 +67,10 @@ class Settings(BaseSettings):
     def effective_compaction_enabled(self) -> bool:
         # Compaction is hard-disabled when no summarizer provider is configured.
         return self.compaction_enabled and self.llm_provider != "none"
+
+    @property
+    def effective_synthesis_enabled(self) -> bool:
+        return self.synthesis_enabled and self.llm_provider != "none"
 
 
 @lru_cache(maxsize=1)

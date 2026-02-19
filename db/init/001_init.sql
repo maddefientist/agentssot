@@ -148,6 +148,47 @@ BEFORE UPDATE ON requirements
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'concept_type') THEN
+        CREATE TYPE concept_type AS ENUM ('mental_model', 'relationship', 'principle');
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'concept_scope') THEN
+        CREATE TYPE concept_scope AS ENUM ('global', 'project', 'device');
+    END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS concepts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    namespace TEXT NOT NULL REFERENCES namespaces(name) ON DELETE CASCADE,
+    type concept_type NOT NULL,
+    scope concept_scope NOT NULL DEFAULT 'global',
+    scope_ref TEXT,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    evidence_ids UUID[] NOT NULL DEFAULT ARRAY[]::UUID[],
+    confidence FLOAT NOT NULL DEFAULT 0.5,
+    version INTEGER NOT NULL DEFAULT 1,
+    parent_id UUID REFERENCES concepts(id) ON DELETE SET NULL,
+    tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+    embedding VECTOR(1536),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_concepts_namespace ON concepts(namespace);
+CREATE INDEX IF NOT EXISTS idx_concepts_type ON concepts(type);
+CREATE INDEX IF NOT EXISTS idx_concepts_scope ON concepts(scope, scope_ref);
+CREATE INDEX IF NOT EXISTS idx_concepts_tags_gin ON concepts USING GIN(tags);
+CREATE INDEX IF NOT EXISTS idx_concepts_parent ON concepts(parent_id);
+CREATE INDEX IF NOT EXISTS idx_concepts_confidence ON concepts(confidence);
+
+DROP TRIGGER IF EXISTS trg_concepts_set_updated_at ON concepts;
+CREATE TRIGGER trg_concepts_set_updated_at
+BEFORE UPDATE ON concepts
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
 INSERT INTO namespaces(name)
 SELECT 'default'
 WHERE NOT EXISTS (SELECT 1 FROM namespaces WHERE name = 'default');

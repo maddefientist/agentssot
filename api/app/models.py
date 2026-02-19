@@ -50,6 +50,18 @@ class EventType(str, enum.Enum):
     error = "error"
 
 
+class ConceptType(str, enum.Enum):
+    mental_model = "mental_model"
+    relationship = "relationship"
+    principle = "principle"
+
+
+class ConceptScope(str, enum.Enum):
+    global_ = "global"
+    project = "project"
+    device = "device"
+
+
 class ApiRole(str, enum.Enum):
     reader = "reader"
     writer = "writer"
@@ -175,3 +187,34 @@ class Event(Base):
     tags: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list, server_default=text("ARRAY[]::TEXT[]"))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(settings.embedding_dim), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class Concept(Base):
+    __tablename__ = "concepts"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"))
+    namespace: Mapped[str] = mapped_column(Text, ForeignKey("namespaces.name", ondelete="CASCADE"), nullable=False)
+    type: Mapped[ConceptType] = mapped_column(
+        Enum(ConceptType, name="concept_type", create_type=False), nullable=False
+    )
+    scope: Mapped[ConceptScope] = mapped_column(
+        Enum(ConceptScope, name="concept_scope", create_type=False),
+        nullable=False,
+        default=ConceptScope.global_,
+        server_default="global",
+    )
+    scope_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_ids: Mapped[list[UUID]] = mapped_column(
+        ARRAY(PG_UUID(as_uuid=True)), nullable=False, default=list, server_default=text("ARRAY[]::UUID[]")
+    )
+    confidence: Mapped[float] = mapped_column(nullable=False, default=0.5, server_default=text("0.5"))
+    version: Mapped[int] = mapped_column(nullable=False, default=1, server_default=text("1"))
+    parent_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), ForeignKey("concepts.id", ondelete="SET NULL"), nullable=True
+    )
+    tags: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list, server_default=text("ARRAY[]::TEXT[]"))
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(settings.embedding_dim), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
