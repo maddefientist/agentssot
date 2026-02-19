@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import ARRAY, Boolean, DateTime, Enum, ForeignKey, Text, UniqueConstraint, func, text
@@ -218,3 +218,40 @@ class Concept(Base):
     embedding: Mapped[list[float] | None] = mapped_column(Vector(settings.embedding_dim), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class FeedbackSignal(str, enum.Enum):
+    useful = "useful"
+    noted = "noted"
+    wrong = "wrong"
+
+
+class RecallEvent(Base):
+    __tablename__ = "recall_events"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    concept_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False)
+    namespace: Mapped[str] = mapped_column(Text, nullable=False)
+    session_id: Mapped[str] = mapped_column(Text, nullable=False)
+    agent_key: Mapped[str] = mapped_column(Text, nullable=False)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    score: Mapped[float] = mapped_column(nullable=False)
+    session_completed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=text("false"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ConceptFeedback(Base):
+    __tablename__ = "concept_feedback"
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    concept_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False)
+    namespace: Mapped[str] = mapped_column(Text, nullable=False)
+    signal: Mapped[FeedbackSignal] = mapped_column(
+        Enum(FeedbackSignal, name="feedback_signal", create_type=False,
+             values_callable=lambda e: [x.value for x in e]),
+        nullable=False,
+    )
+    agent_key: Mapped[str] = mapped_column(Text, nullable=False)
+    session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
