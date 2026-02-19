@@ -148,7 +148,7 @@ def _ensure_concepts_table(session) -> None:
                 version INTEGER NOT NULL DEFAULT 1,
                 parent_id UUID REFERENCES concepts(id) ON DELETE SET NULL,
                 tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
-                embedding VECTOR(%(dim)s),
+                embedding VECTOR(:dim),
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
@@ -313,24 +313,14 @@ Add a property:
         return self.synthesis_enabled and self.llm_provider != "none"
 ```
 
-**Step 2: Add env vars to `docker-compose.yml`**
+**Step 2: No docker-compose.yml changes needed**
 
-In the `api` service environment section, add:
-
-```yaml
-      SYNTHESIS_ENABLED: ${SYNTHESIS_ENABLED:-false}
-      SYNTHESIS_MODEL: ${SYNTHESIS_MODEL:-qwen3:30b-a3b}
-      SYNTHESIS_SCHEDULE_HOUR: ${SYNTHESIS_SCHEDULE_HOUR:-3}
-      SYNTHESIS_BATCH_SIZE: ${SYNTHESIS_BATCH_SIZE:-20}
-      SYNTHESIS_SIMILARITY_THRESHOLD: ${SYNTHESIS_SIMILARITY_THRESHOLD:-0.75}
-      SYNTHESIS_MIN_CLUSTER_SIZE: ${SYNTHESIS_MIN_CLUSTER_SIZE:-3}
-      SYNTHESIS_CONFIDENCE_DECAY: ${SYNTHESIS_CONFIDENCE_DECAY:-0.05}
-```
+The `api` service already uses `env_file: .env` (see `docker-compose.yml:24`), so all `SYNTHESIS_*` env vars are automatically loaded from `.env` by pydantic-settings. No need to add them to the `environment:` block.
 
 **Step 3: Commit**
 
 ```bash
-git add api/app/settings.py docker-compose.yml
+git add api/app/settings.py
 git commit -m "feat: add synthesis configuration settings"
 ```
 
@@ -1167,7 +1157,21 @@ Add a new `scope == "concepts"` branch in the `recall` function, after the event
         return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
 ```
 
-**Important:** This block must be added BEFORE the existing events block, since the events block is currently the final `else` fallthrough. Restructure the recall function to handle all four scopes explicitly.
+**Important:** The events branch in `crud.py:recall()` (line ~449) is currently a bare fallthrough (no `if`/`elif`). You must:
+1. Change the events block from a bare fallthrough to `if payload.scope == "events":`
+2. Add the concepts block as `elif payload.scope == "concepts":` right after
+3. Add a final `else: raise HTTPException(400, "Unknown scope")` at the end
+
+Concrete edit — replace this (around line 449):
+```python
+    score = Event.embedding.cosine_distance(query_embedding).label("score")
+```
+With:
+```python
+    if payload.scope == "events":
+        score = Event.embedding.cosine_distance(query_embedding).label("score")
+```
+And indent the rest of the events block under that `if`. Then add the concepts elif block after the events return statement.
 
 **Step 2: Add concept CRUD functions**
 
@@ -1372,28 +1376,31 @@ git commit -m "feat: add concept list/detail/manual-synthesis endpoints"
 
 ---
 
-### Task 11: Docker Compose + .env Updates
+### Task 11: Dependencies + .env Updates
 
 **Files:**
-- Modify: `docker-compose.yml`
+- Modify: `api/requirements.txt` (add numpy)
+- Modify: `.env` (add synthesis vars — use `docker compose exec api env` to read current values, NOT the Read tool)
 
-**Step 1: Add numpy to requirements**
+**Step 1: Add numpy to `api/requirements.txt`**
 
-Check if there's a `requirements.txt` or `pyproject.toml` and add `numpy`:
-
-```bash
-# Check which dependency file exists
-ls api/requirements.txt api/pyproject.toml 2>/dev/null
+The file is at `/opt/agentssot/api/requirements.txt`. Append this line:
 ```
-
-Add `numpy` to the dependency list (it's used by clustering.py).
+numpy>=1.26.0,<2.0
+```
 
 **Step 2: Add synthesis env vars to `.env`**
 
-```
+IMPORTANT: The `.env` file cannot be read by the Read tool. Use `docker compose exec api env | grep -i synth` to check current state. Use the Bash tool with `echo` to append:
+
+```bash
+cat >> /opt/agentssot/.env << 'EOF'
+
+# Synthesis (conceptual memory / Hive Cortex)
 SYNTHESIS_ENABLED=true
 SYNTHESIS_MODEL=qwen3:30b-a3b
 SYNTHESIS_SCHEDULE_HOUR=3
+EOF
 ```
 
 **Step 3: Rebuild and test**
@@ -1402,17 +1409,21 @@ SYNTHESIS_SCHEDULE_HOUR=3
 cd /opt/agentssot && docker compose up -d --build api
 ```
 
-Verify health endpoint shows synthesis:
+Wait 20s for healthcheck, then verify:
 ```bash
 curl -s http://localhost:8088/health | python3 -m json.tool
 ```
 
+Expected: `"synthesis_enabled": true` in the response.
+
 **Step 4: Commit**
 
 ```bash
-git add docker-compose.yml api/
-git commit -m "feat: enable synthesis in docker compose"
+git add api/requirements.txt
+git commit -m "feat: add numpy dependency and enable synthesis"
 ```
+
+NOTE: Do NOT `git add .env` — it contains secrets.
 
 ---
 
