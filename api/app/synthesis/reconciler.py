@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import and_, select
@@ -107,41 +108,111 @@ def reconcile_concepts(
     return {"new": new_count, "updated": updated_count}
 
 
+def apply_feedback_signals(
+    session: Session,
+    namespace: str,
+    since: datetime,
+    feedback_protection_days: int = 180,
+) -> tuple[set[UUID], int]:
+    """Apply feedback signals to concept confidence. Returns (protected_ids, adjustments_made)."""
+    from app.crud import get_feedback_summary
+    from datetime import timedelta
+
+    summary = get_feedback_summary(session, namespace, since)
+    protection_cutoff = datetime.now(UTC) - timedelta(days=feedback_protection_days)
+    protected_ids: set[UUID] = set()
+    adjustments = 0
+
+    for concept_id, signals in summary.items():
+        concept = session.get(Concept, concept_id)
+        if not concept or "superseded" in (concept.tags or []):
+            continue
+
+        delta = 0.0
+        useful = min(signals["useful"], 2)  # cap +0.30/cycle
+        delta += useful * 0.15
+        noted = min(signals["noted"], 2)  # cap +0.10/cycle
+        delta += noted * 0.05
+        implicit = min(signals["implicit_recalls"], 5)  # cap +0.10/cycle
+        delta += implicit * 0.02
+
+        if delta > 0:
+            concept.confidence = min(1.0, concept.confidence + delta)
+            concept.updated_at = datetime.now(UTC)
+            adjustments += 1
+
+        if signals["useful"] > 0 or signals["noted"] > 0 or signals["implicit_recalls"] > 0:
+            protected_ids.add(concept_id)
+
+        if signals["wrong"] > 0 and "contested" not in (concept.tags or []):
+            concept.tags = list(concept.tags or []) + ["contested"]
+
+    # Also protect concepts with recent positive feedback in protection window
+    from app.models import ConceptFeedback, FeedbackSignal
+    recent_positive = (
+        select(ConceptFeedback.concept_id)
+        .where(ConceptFeedback.namespace == namespace)
+        .where(ConceptFeedback.signal.in_([FeedbackSignal.useful, FeedbackSignal.noted]))
+        .where(ConceptFeedback.created_at >= protection_cutoff)
+        .distinct()
+    )
+    for (cid,) in session.execute(recent_positive):
+        protected_ids.add(cid)
+
+    session.flush()
+    return protected_ids, adjustments
+
+
 def decay_stale_concepts(
     session: Session,
     namespace: str,
     active_concept_ids: set[UUID],
-    decay_rate: float = 0.05,
-    min_age_days: int = 7,
+    decay_rate: float = 0.02,
+    min_age_days: int = 90,
+    decay_floor: float = 0.15,
+    protected_ids: set[UUID] | None = None,
 ) -> int:
     """Reduce confidence of concepts not reinforced recently. Returns count decayed.
 
     Only decays concepts whose updated_at is older than min_age_days,
     preventing aggressive decay of recently-created or recently-reinforced concepts.
+    Concepts in protected_ids (from feedback signals) are skipped entirely.
+    Concepts that reach the floor are tagged dormant instead of superseded.
     """
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
     cutoff = datetime.now(UTC) - timedelta(days=min_age_days)
+    protected = protected_ids or set()
 
     stmt = (
         select(Concept)
         .where(Concept.namespace == namespace)
         .where(~Concept.tags.any("superseded"))
-        .where(Concept.confidence > 0.1)
+        .where(Concept.confidence > decay_floor)
         .where(Concept.updated_at < cutoff)
     )
-    all_active = session.scalars(stmt).all()
-
     decayed = 0
-    for concept in all_active:
-        if concept.id not in active_concept_ids:
-            concept.confidence = max(concept.confidence - decay_rate, 0.0)
-            decayed += 1
+    for concept in session.scalars(stmt):
+        if concept.id in active_concept_ids or concept.id in protected:
+            continue
+        concept.confidence = max(decay_floor, concept.confidence - decay_rate)
+        if concept.confidence <= decay_floor:
+            concept.tags = list(concept.tags or []) + ["dormant"]
+        decayed += 1
 
-            if concept.confidence <= 0.1:
-                concept.tags = list(set(concept.tags or []) | {"superseded"})
-                concept.embedding = None
-
-    if decayed:
-        session.commit()
+    session.flush()
     return decayed
+
+
+def resurrect_concept(session: Session, concept_id: UUID) -> bool:
+    """Revive a dormant concept to confidence 0.5."""
+    concept = session.get(Concept, concept_id)
+    if not concept:
+        return False
+    if concept.confidence < 0.5 and "dormant" in (concept.tags or []):
+        concept.confidence = 0.5
+        concept.tags = [t for t in concept.tags if t != "dormant"]
+        concept.updated_at = datetime.now(UTC)
+        session.flush()
+        return True
+    return False

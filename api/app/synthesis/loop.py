@@ -12,7 +12,7 @@ from ..embeddings import EmbeddingProvider
 from ..llm import LLMProvider
 from ..models import Concept, KnowledgeItem, Namespace
 from .clustering import cluster_items
-from .reconciler import decay_stale_concepts, reconcile_concepts
+from .reconciler import apply_feedback_signals, decay_stale_concepts, reconcile_concepts
 from .synthesizer import run_synthesis_batch
 
 logger = logging.getLogger("agentssot.synthesis.loop")
@@ -109,7 +109,7 @@ def _run_synthesis_for_namespace(
     skip_decay: bool = False,
 ) -> dict:
     """Run one synthesis cycle for a namespace. Returns stats dict."""
-    stats = {"namespace": namespace, "new": 0, "updated": 0, "decayed": 0, "clusters": 0}
+    stats = {"namespace": namespace, "new": 0, "updated": 0, "decayed": 0, "clusters": 0, "feedback_adjustments": 0}
 
     with SessionLocal() as session:
         if full_resynthesis:
@@ -179,9 +179,21 @@ def _run_synthesis_for_namespace(
                         except ValueError:
                             pass
 
+        # --- Feedback integration (Layer 2) ---
+        last_synthesis_time = datetime.now(UTC) - timedelta(days=1)
+        protected_ids, feedback_adjustments = apply_feedback_signals(
+            session, namespace, since=last_synthesis_time,
+            feedback_protection_days=settings.synthesis_feedback_protection_days,
+        )
+        stats["feedback_adjustments"] = feedback_adjustments
+
         if not skip_decay:
             decayed = decay_stale_concepts(
-                session, namespace, all_touched_ids, settings.synthesis_confidence_decay
+                session, namespace, all_touched_ids,
+                decay_rate=settings.synthesis_confidence_decay,
+                min_age_days=settings.synthesis_decay_grace_days,
+                decay_floor=settings.synthesis_decay_floor,
+                protected_ids=protected_ids,
             )
             stats["decayed"] = decayed
 

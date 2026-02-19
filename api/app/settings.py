@@ -47,7 +47,10 @@ class Settings(BaseSettings):
     synthesis_schedule_hour: int = Field(default=3, alias="SYNTHESIS_SCHEDULE_HOUR")
     synthesis_similarity_threshold: float = Field(default=0.65, alias="SYNTHESIS_SIMILARITY_THRESHOLD")
     synthesis_min_cluster_size: int = Field(default=2, alias="SYNTHESIS_MIN_CLUSTER_SIZE")
-    synthesis_confidence_decay: float = Field(default=0.05, alias="SYNTHESIS_CONFIDENCE_DECAY")
+    synthesis_confidence_decay: float = Field(default=0.02, alias="SYNTHESIS_CONFIDENCE_DECAY")
+    synthesis_decay_grace_days: int = Field(default=90, json_schema_extra={"env": "SYNTHESIS_DECAY_GRACE_DAYS"})
+    synthesis_decay_floor: float = Field(default=0.15, json_schema_extra={"env": "SYNTHESIS_DECAY_FLOOR"})
+    synthesis_feedback_protection_days: int = Field(default=180, json_schema_extra={"env": "SYNTHESIS_FEEDBACK_PROTECTION_DAYS"})
 
     enable_hnsw_index: bool = Field(default=False, alias="ENABLE_HNSW_INDEX")
 
