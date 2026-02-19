@@ -82,6 +82,8 @@ class RecallRequest(BaseModel):
     top_k: int | None = None
     project_slug: str | None = None
     entity_slug: str | None = None
+    session_id: str | None = None
+    agent_key: str | None = None
 
 
 class RecallItem(BaseModel):

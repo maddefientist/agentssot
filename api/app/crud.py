@@ -499,7 +499,24 @@ def recall(
             }
             for item, score_value in rows
         ]
-        return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        # Log recall events for concepts that were surfaced
+        if payload.session_id:
+            concept_items = [item for item in items if item.get("scope") == "concepts"]
+            if concept_items:
+                from uuid import UUID as _UUID
+                concept_ids = [_UUID(item["id"]) for item in concept_items]
+                scores_map = {_UUID(item["id"]): item.get("score", 0.0) for item in concept_items}
+                log_recall_events(
+                    session=session,
+                    namespace=payload.namespace,
+                    concept_ids=concept_ids,
+                    session_id=payload.session_id,
+                    agent_key=payload.agent_key or "unknown",
+                    query_text=payload.query_text or "",
+                    scores=scores_map,
+                )
+        return items
 
     if payload.scope == "all":
         # --- knowledge items ---
@@ -559,7 +576,24 @@ def recall(
         items.sort(key=lambda x: x["score"])
         items = items[:candidate_k]
 
-        return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        # Log recall events for concepts that were surfaced
+        if payload.session_id:
+            concept_items = [item for item in items if item.get("scope") == "concepts"]
+            if concept_items:
+                from uuid import UUID as _UUID
+                concept_ids = [_UUID(item["id"]) for item in concept_items]
+                scores_map = {_UUID(item["id"]): item.get("score", 0.0) for item in concept_items}
+                log_recall_events(
+                    session=session,
+                    namespace=payload.namespace,
+                    concept_ids=concept_ids,
+                    session_id=payload.session_id,
+                    agent_key=payload.agent_key or "unknown",
+                    query_text=payload.query_text or "",
+                    scores=scores_map,
+                )
+        return items
 
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown scope '{payload.scope}'")
 
