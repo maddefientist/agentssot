@@ -960,22 +960,32 @@ def _run_synthesis_for_namespace(
     settings,
     llm_provider: LLMProvider,
     embedding_provider: EmbeddingProvider,
+    full_resynthesis: bool = False,
 ) -> dict:
-    """Run one synthesis cycle for a namespace. Returns stats dict."""
+    """Run one synthesis cycle for a namespace. Returns stats dict.
+    When full_resynthesis=True, examines ALL knowledge (not just recent).
+    Useful after upgrading the synthesis model.
+    """
     stats = {"namespace": namespace, "new": 0, "updated": 0, "decayed": 0, "clusters": 0}
 
     with SessionLocal() as session:
-        # Determine time window: last 24 hours (or since last concept update)
-        latest_concept = session.scalar(
-            select(func.max(Concept.updated_at)).where(Concept.namespace == namespace)
-        )
-        since = latest_concept or (datetime.now(UTC) - timedelta(days=7))
-        # Always look back at least 24 hours
-        min_since = datetime.now(UTC) - timedelta(hours=24)
-        if since > min_since:
-            since = min_since
+        if full_resynthesis:
+            # Look at everything — epoch start
+            since = datetime(2020, 1, 1, tzinfo=UTC)
+            logger.info("full resynthesis requested", extra={"namespace": namespace})
+        else:
+            # Determine time window: last 24 hours (or since last concept update)
+            latest_concept = session.scalar(
+                select(func.max(Concept.updated_at)).where(Concept.namespace == namespace)
+            )
+            since = latest_concept or (datetime.now(UTC) - timedelta(days=7))
+            # Always look back at least 24 hours
+            min_since = datetime.now(UTC) - timedelta(hours=24)
+            if since > min_since:
+                since = min_since
 
-        items = _gather_recent_knowledge(session, namespace, since)
+        gather_limit = 5000 if full_resynthesis else 500
+        items = _gather_recent_knowledge(session, namespace, since, limit=gather_limit)
         if not items:
             logger.info("no new knowledge to synthesize", extra={"namespace": namespace})
             return stats
@@ -1367,10 +1377,14 @@ def get_concept(
 @app.post("/admin/synthesize", response_model=schemas.SynthesisRunResponse)
 def admin_trigger_synthesis(
     namespace: str = Query(default="default"),
+    full: bool = Query(default=False, description="Re-synthesize ALL knowledge, not just recent. Use after model upgrades."),
     auth: AuthContext = Depends(require_api_key),
     session: Session = Depends(get_session),
 ):
-    """Manually trigger a synthesis run for a namespace. Admin only."""
+    """Manually trigger a synthesis run for a namespace. Admin only.
+    Set full=true to re-examine all knowledge (useful after upgrading the synthesis model).
+    When full=true, existing concepts are kept but may be superseded by better versions.
+    """
     require_admin(auth)
     ensure_namespace_access(auth, namespace, {ApiRole.admin.value})
 
@@ -1381,6 +1395,7 @@ def admin_trigger_synthesis(
         settings=app.state.settings,
         llm_provider=app.state.llm_provider,
         embedding_provider=app.state.embedding_provider,
+        full_resynthesis=full,
     )
     return schemas.SynthesisRunResponse(
         namespace=namespace,
