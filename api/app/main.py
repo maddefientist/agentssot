@@ -224,7 +224,8 @@ def session_complete(
 
     # 3. Ingest extracted facts
     from . import models as _models
-    device_name = auth.key_name.replace("device-", "").replace("-writer", "") if auth.key_name else "unknown"
+    agent_key = payload.agent_key or auth.key_name
+    device_name = agent_key.replace("device-", "").replace("-writer", "") if agent_key else "unknown"
     for fact in facts:
         embedding = None
         if app.state.embedding_provider.is_available:
@@ -235,10 +236,15 @@ def session_complete(
         session.add(_models.KnowledgeItem(
             namespace=namespace,
             content=fact,
-            source=auth.key_name or f"device-{device_name}-writer",
+            source=agent_key,
             tags=["session-extract", f"device-{device_name}", "auto-extracted"],
             embedding=embedding,
         ))
+
+    # 4. Update agent profile from session activity
+    if agent_key:
+        crud.update_profile_from_recall(session, namespace, agent_key, payload.conversation_summary)
+
     session.commit()
 
     return schemas.SessionCompleteResponse(

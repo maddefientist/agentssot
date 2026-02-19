@@ -345,6 +345,7 @@ class SessionCompleteRequest(BaseModel):
     session_id: str
     conversation_summary: str
     recalled_concept_ids: list[str] = []
+    agent_key: str | None = None
 
 
 class SessionCompleteResponse(BaseModel):
