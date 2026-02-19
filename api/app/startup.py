@@ -174,7 +174,7 @@ def _ensure_embedding_dim(session, settings) -> None:
               JOIN pg_class c ON c.oid = a.attrelid
               JOIN pg_namespace n ON n.oid = c.relnamespace
              WHERE n.nspname = 'public'
-               AND c.relname IN ('knowledge_items', 'requirements', 'events')
+               AND c.relname IN ('knowledge_items', 'requirements', 'events', 'concepts')
                AND a.attname = 'embedding'
                AND a.attnum > 0
                AND NOT a.attisdropped
@@ -205,6 +205,7 @@ def _ensure_embedding_dim(session, settings) -> None:
         session.execute(text("DROP INDEX IF EXISTS idx_knowledge_items_embedding_hnsw"))
         session.execute(text("DROP INDEX IF EXISTS idx_requirements_embedding_hnsw"))
         session.execute(text("DROP INDEX IF EXISTS idx_events_embedding_hnsw"))
+        session.execute(text("DROP INDEX IF EXISTS idx_concepts_embedding_hnsw"))
         session.commit()
     except Exception:
         session.rollback()
@@ -216,6 +217,7 @@ def _ensure_embedding_dim(session, settings) -> None:
         session.execute(text(f"ALTER TABLE knowledge_items ALTER COLUMN embedding TYPE VECTOR({desired})"))
         session.execute(text(f"ALTER TABLE requirements ALTER COLUMN embedding TYPE VECTOR({desired})"))
         session.execute(text(f"ALTER TABLE events ALTER COLUMN embedding TYPE VECTOR({desired})"))
+        session.execute(text(f"ALTER TABLE concepts ALTER COLUMN embedding TYPE VECTOR({desired})"))
         session.commit()
         logger.info("ensured embedding vector dimension", extra={"embedding_dim": desired})
     except Exception as exc:

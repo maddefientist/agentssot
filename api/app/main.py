@@ -51,12 +51,30 @@ async def lifespan(app: FastAPI):
 
     app.state.compaction_task = task
 
+    from .synthesis import synthesis_loop as _synthesis_loop
+
+    synthesis_task = None
+    if settings.effective_synthesis_enabled:
+        synthesis_task = asyncio.create_task(_synthesis_loop(app), name="synthesis-loop")
+        logger.info("background synthesis loop started (hour=%d)", settings.synthesis_schedule_hour)
+    else:
+        logger.info("background synthesis loop disabled")
+
+    app.state.synthesis_task = synthesis_task
+
     yield
 
     if task:
         task.cancel()
         try:
             await task
+        except asyncio.CancelledError:
+            pass
+
+    if synthesis_task:
+        synthesis_task.cancel()
+        try:
+            await synthesis_task
         except asyncio.CancelledError:
             pass
 
@@ -113,6 +131,7 @@ def health() -> dict:
         "compaction_enabled": settings.effective_compaction_enabled,
         "reranker_provider": settings.reranker_provider,
         "reranker_available": app.state.reranker_provider.is_available,
+        "synthesis_enabled": settings.effective_synthesis_enabled,
     }
 
 
@@ -426,6 +445,69 @@ def admin_backfill_embeddings(
         dry_run=payload.dry_run,
     )
     return schemas.BackfillEmbeddingsResponse(**result)
+
+
+# ── Concepts ───────────────────────────────────────────────────────
+
+
+@app.get("/concepts", response_model=schemas.ConceptListResponse)
+def list_concepts_endpoint(
+    namespace: str = Query(default="default"),
+    concept_type: str | None = Query(default=None),
+    scope: str | None = Query(default=None),
+    include_superseded: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=200),
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    ensure_namespace_access(auth, namespace, {ApiRole.reader.value, ApiRole.writer.value, ApiRole.admin.value})
+    concepts = crud.list_concepts(
+        session, namespace, concept_type=concept_type, scope=scope,
+        include_superseded=include_superseded, limit=limit,
+    )
+    return schemas.ConceptListResponse(namespace=namespace, total=len(concepts), concepts=concepts)
+
+
+@app.get("/concepts/{concept_id}", response_model=schemas.ConceptDetailResponse)
+def get_concept(
+    concept_id: str,
+    namespace: str = Query(default="default"),
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    ensure_namespace_access(auth, namespace, {ApiRole.reader.value, ApiRole.writer.value, ApiRole.admin.value})
+    result = crud.get_concept_with_history(session, namespace, concept_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Concept not found")
+    return schemas.ConceptDetailResponse(**result)
+
+
+@app.post("/admin/synthesize", response_model=schemas.SynthesisRunResponse)
+def admin_trigger_synthesis(
+    namespace: str = Query(default="default"),
+    full: bool = Query(default=False, description="Re-synthesize ALL knowledge, not just recent."),
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    """Manually trigger a synthesis run. Set full=true after model upgrades."""
+    require_admin(auth)
+    ensure_namespace_access(auth, namespace, {ApiRole.admin.value})
+
+    from .synthesis.loop import _run_synthesis_for_namespace
+
+    stats = _run_synthesis_for_namespace(
+        namespace=namespace,
+        settings=app.state.settings,
+        llm_provider=app.state.llm_provider,
+        embedding_provider=app.state.embedding_provider,
+        full_resynthesis=full,
+    )
+    return schemas.SynthesisRunResponse(
+        namespace=namespace,
+        new_concepts=stats["new"],
+        updated_concepts=stats["updated"],
+        decayed_concepts=stats["decayed"],
+    )
 
 
 # ── Enrollment ─────────────────────────────────────────────────────

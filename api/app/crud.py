@@ -10,7 +10,7 @@ from .chunking import chunk_text_semantic
 from .embeddings import EmbeddingProvider, EmbeddingProviderError
 from .llm import LLMProvider, LLMProviderError
 from .reranker import RerankerProvider, RerankerProviderError
-from .models import ApiKey, ApiRole, EnrollmentToken, Entity, EntityType, Event, EventType, KnowledgeItem, Namespace, Requirement
+from .models import ApiKey, ApiRole, Concept, ConceptScope, ConceptType, EnrollmentToken, Entity, EntityType, Event, EventType, KnowledgeItem, Namespace, Requirement
 from .schemas import IngestRequest, RecallRequest
 from .security import generate_api_key, generate_enrollment_token, hash_api_key, verify_api_key
 
@@ -446,32 +446,62 @@ def recall(
         ]
         return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
 
-    score = Event.embedding.cosine_distance(query_embedding).label("score")
-    stmt = (
-        select(Event, score)
-        .where(Event.namespace == payload.namespace)
-        .where(Event.embedding.is_not(None))
-        .order_by(score)
-        .limit(candidate_k)
-    )
-    if project_id:
-        stmt = stmt.where(Event.project_id == project_id)
-    if entity_id:
-        stmt = stmt.where(Event.agent_id == entity_id)
+    if payload.scope == "events":
+        score = Event.embedding.cosine_distance(query_embedding).label("score")
+        stmt = (
+            select(Event, score)
+            .where(Event.namespace == payload.namespace)
+            .where(Event.embedding.is_not(None))
+            .order_by(score)
+            .limit(candidate_k)
+        )
+        if project_id:
+            stmt = stmt.where(Event.project_id == project_id)
+        if entity_id:
+            stmt = stmt.where(Event.agent_id == entity_id)
 
-    rows = session.execute(stmt).all()
-    items = [
-        {
-            "id": str(item.id),
-            "scope": "events",
-            "score": float(score_value),
-            "snippet": _clip(item.body or item.context_snippet or item.title, settings.max_snippet_chars),
-            "tags": list(item.tags or []),
-            "created_at": item.created_at,
-        }
-        for item, score_value in rows
-    ]
-    return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        rows = session.execute(stmt).all()
+        items = [
+            {
+                "id": str(item.id),
+                "scope": "events",
+                "score": float(score_value),
+                "snippet": _clip(item.body or item.context_snippet or item.title, settings.max_snippet_chars),
+                "tags": list(item.tags or []),
+                "created_at": item.created_at,
+            }
+            for item, score_value in rows
+        ]
+        return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+
+    if payload.scope == "concepts":
+        score = Concept.embedding.cosine_distance(query_embedding).label("score")
+        stmt = (
+            select(Concept, score)
+            .where(Concept.namespace == payload.namespace)
+            .where(Concept.embedding.is_not(None))
+            .where(~Concept.tags.any("superseded"))
+            .order_by(score)
+            .limit(candidate_k)
+        )
+
+        rows = session.execute(stmt).all()
+        items = [
+            {
+                "id": str(item.id),
+                "scope": "concepts",
+                "score": float(score_value),
+                "snippet": _clip(f"[{item.type.value}] {item.title}: {item.content}", settings.max_snippet_chars),
+                "tags": list(item.tags or []),
+                "created_at": item.created_at,
+                "concept_type": item.type.value,
+                "confidence": item.confidence,
+            }
+            for item, score_value in rows
+        ]
+        return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown scope '{payload.scope}'")
 
 
 def create_namespace(session: Session, name: str) -> Namespace:
@@ -907,13 +937,117 @@ def get_namespace_stats(session: Session, namespace: str) -> dict:
         select(func.count()).select_from(Entity).where(Entity.namespace == namespace)
     ) or 0
 
+    concept_total = session.scalar(
+        select(func.count()).select_from(Concept).where(Concept.namespace == namespace)
+    ) or 0
+    concept_embedded = session.scalar(
+        select(func.count()).select_from(Concept).where(
+            and_(Concept.namespace == namespace, Concept.embedding.is_not(None))
+        )
+    ) or 0
+
     return {
         "namespace": namespace,
         "entities": entity_total,
         "knowledge_items": {"total": ki_total, "embedded": ki_embedded},
         "requirements": {"total": req_total, "embedded": req_embedded},
         "events": {"total": ev_total, "embedded": ev_embedded},
+        "concepts": {"total": concept_total, "embedded": concept_embedded},
     }
+
+
+# ── Concepts ──────────────────────────────────────────────────────
+
+
+def list_concepts(
+    session: Session,
+    namespace: str,
+    concept_type: str | None = None,
+    scope: str | None = None,
+    include_superseded: bool = False,
+    limit: int = 50,
+) -> list[dict]:
+    """List concepts for a namespace with optional filters."""
+    ensure_namespace_exists(session, namespace)
+
+    stmt = select(Concept).where(Concept.namespace == namespace)
+    if not include_superseded:
+        stmt = stmt.where(~Concept.tags.any("superseded"))
+    if concept_type:
+        stmt = stmt.where(Concept.type == ConceptType(concept_type))
+    if scope:
+        stmt = stmt.where(Concept.scope == ConceptScope(scope))
+    stmt = stmt.order_by(Concept.confidence.desc()).limit(min(max(limit, 1), 200))
+
+    rows = session.scalars(stmt).all()
+    return [
+        {
+            "id": str(c.id),
+            "namespace": c.namespace,
+            "type": c.type.value,
+            "scope": c.scope.value if hasattr(c.scope, "value") else str(c.scope),
+            "scope_ref": c.scope_ref,
+            "title": c.title,
+            "content": c.content,
+            "evidence_ids": [str(eid) for eid in (c.evidence_ids or [])],
+            "confidence": c.confidence,
+            "version": c.version,
+            "parent_id": str(c.parent_id) if c.parent_id else None,
+            "tags": list(c.tags or []),
+            "created_at": c.created_at,
+            "updated_at": c.updated_at,
+        }
+        for c in rows
+    ]
+
+
+def get_concept_with_history(session: Session, namespace: str, concept_id: str) -> dict | None:
+    """Get a concept and its version history chain."""
+    ensure_namespace_exists(session, namespace)
+    try:
+        uid = UUID(concept_id)
+    except ValueError:
+        return None
+
+    concept = session.scalar(
+        select(Concept).where(and_(Concept.id == uid, Concept.namespace == namespace))
+    )
+    if not concept:
+        return None
+
+    def _to_dict(c):
+        return {
+            "id": str(c.id),
+            "namespace": c.namespace,
+            "type": c.type.value,
+            "scope": c.scope.value if hasattr(c.scope, "value") else str(c.scope),
+            "scope_ref": c.scope_ref,
+            "title": c.title,
+            "content": c.content,
+            "evidence_ids": [str(eid) for eid in (c.evidence_ids or [])],
+            "confidence": c.confidence,
+            "version": c.version,
+            "parent_id": str(c.parent_id) if c.parent_id else None,
+            "tags": list(c.tags or []),
+            "created_at": c.created_at,
+            "updated_at": c.updated_at,
+        }
+
+    result = _to_dict(concept)
+
+    history = []
+    current = concept
+    while current.parent_id:
+        parent = session.scalar(
+            select(Concept).where(Concept.id == current.parent_id)
+        )
+        if not parent:
+            break
+        history.append(_to_dict(parent))
+        current = parent
+
+    result["history"] = history
+    return result
 
 
 # ── Enrollment tokens ──────────────────────────────────────────────
