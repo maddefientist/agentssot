@@ -1489,6 +1489,13 @@ def create_concept_feedback(
         resurrect_concept(session, concept_id)
         concept = session.get(Concept, concept_id)  # refresh after resurrection
 
+    # Layer 5: Add agent to confirming_agents on positive feedback
+    if signal in ("useful", "noted") and concept and agent_key:
+        existing_agents = set(concept.confirming_agents or [])
+        if agent_key not in existing_agents:
+            existing_agents.add(agent_key)
+            concept.confirming_agents = list(existing_agents)
+
     session.flush()
 
     update_profile_from_feedback(session, agent_key, namespace)

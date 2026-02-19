@@ -207,6 +207,13 @@ def _run_synthesis_for_namespace(
                 fallback_model=settings.synthesis_fallback_model,
             )
 
+            # Layer 5: Extract agent attribution from cluster sources
+            cluster_agent_keys = set()
+            for item in cluster:
+                src = item.get("source", "")
+                if src and (src.startswith("device-") or src.startswith("enroll-") or src.startswith("agent-")):
+                    cluster_agent_keys.add(src)
+
             if proposals:
                 result = reconcile_concepts(
                     session=session,
@@ -215,6 +222,7 @@ def _run_synthesis_for_namespace(
                     embedding_provider=embedding_provider,
                     embedding_provider_kind=settings.embedding_provider,
                     embedding_dim=settings.embedding_dim,
+                    agent_keys=cluster_agent_keys or None,
                 )
                 stats["new"] += result["new"]
                 stats["updated"] += result["updated"]

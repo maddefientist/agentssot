@@ -106,6 +106,7 @@
   <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div> Skill</div>
   <div class="legend-item"><div class="legend-dot" style="background:#22c55e50"></div> Size = evidence</div>
   <div class="legend-item"><div class="legend-dot" style="background:rgba(255,255,255,0.3)"></div> Opacity = confidence</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ffd700; box-shadow: 0 0 6px #ffd700;"></div> Gold glow = consensus</div>
 </div>
 
 <div id="tooltip">
@@ -276,6 +277,15 @@ function drawNodes() {
     ctx.fillStyle = 'rgba(' + n.color.r + ',' + n.color.g + ',' + n.color.b + ',' + alpha + ')';
     ctx.fill();
 
+    // Layer 5: Consensus glow for concepts confirmed by 3+ agents
+    if (n.concept.confirming_agents && n.concept.confirming_agents.length >= 3) {
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, size + 4, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255, 215, 0, ' + (0.4 + 0.3 * Math.sin(time * 0.05)) + ')';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
     if (isHovered) {
       ctx.fillStyle = '#fff';
       ctx.font = '11px monospace';
@@ -315,6 +325,9 @@ function findHovered() {
       '  |  conf: ' + (c.confidence || 0).toFixed(2) +
       '  |  evidence: ' + evidenceCount +
       '  |  v' + (c.version || 1);
+    if (c.confirming_agents && c.confirming_agents.length > 0) {
+      document.getElementById('tt-meta').textContent += '\nconfirmed by: ' + c.confirming_agents.join(', ');
+    }
 
     tooltip.style.display = 'block';
     tooltip.style.left = Math.min(mouse.x + 16, W - 400) + 'px';

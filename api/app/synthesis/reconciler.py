@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from ..embeddings import EmbeddingProvider, EmbeddingProviderError
@@ -21,6 +21,7 @@ def reconcile_concepts(
     embedding_provider: EmbeddingProvider,
     embedding_provider_kind: str,
     embedding_dim: int,
+    agent_keys: set[str] | None = None,
 ) -> dict:
     """Reconcile synthesis proposals against existing concepts.
 
@@ -68,6 +69,13 @@ def reconcile_concepts(
                         existing.action = proposal["action"]
                     if proposal.get("success_hint"):
                         existing.success_hint = proposal["success_hint"]
+                # Layer 5: Track confirming agents
+                if agent_keys:
+                    existing_agents = set(existing.confirming_agents or [])
+                    new_agents = agent_keys - existing_agents
+                    if new_agents:
+                        existing.confirming_agents = list(existing_agents | new_agents)
+                        existing.confidence = min(1.0, existing.confidence + len(new_agents) * 0.05)
                 updated_count += 1
                 continue
 
@@ -92,6 +100,7 @@ def reconcile_concepts(
                     action=proposal.get("action"),
                     success_hint=proposal.get("success_hint"),
                     embedding=concept_embedding,
+                    confirming_agents=list(agent_keys) if agent_keys else [],
                 )
                 session.add(new_concept)
                 new_count += 1
@@ -113,6 +122,7 @@ def reconcile_concepts(
             action=proposal.get("action"),
             success_hint=proposal.get("success_hint"),
             embedding=concept_embedding,
+            confirming_agents=list(agent_keys) if agent_keys else [],
         )
         session.add(new_concept)
         new_count += 1
@@ -171,6 +181,22 @@ def apply_feedback_signals(
     )
     for (cid,) in session.execute(recent_positive):
         protected_ids.add(cid)
+
+    # Layer 5: Tag concepts with 3+ confirming agents as "consensus"
+    consensus_candidates = session.scalars(
+        select(Concept)
+        .where(Concept.namespace == namespace)
+        .where(~Concept.tags.any("superseded"))
+        .where(func.array_length(Concept.confirming_agents, 1) >= 3)
+    ).all()
+
+    for concept in consensus_candidates:
+        if "consensus" not in (concept.tags or []):
+            concept.tags = list(concept.tags or []) + ["consensus"]
+            logger.info("concept reached consensus", extra={
+                "concept_id": str(concept.id),
+                "agents": list(concept.confirming_agents or []),
+            })
 
     session.flush()
     return protected_ids, adjustments
