@@ -143,6 +143,110 @@ def ui_home():
     return RedirectResponse(url="/docs")
 
 
+@app.get("/cortex", include_in_schema=False)
+def ui_cortex():
+    cortex_file = UI_DIR / "cortex.html"
+    if cortex_file.exists():
+        return FileResponse(cortex_file)
+    return RedirectResponse(url="/")
+
+
+@app.get("/cortex/data", include_in_schema=False)
+def cortex_data(
+    namespace: str = Query(default="claude-shared"),
+    session: Session = Depends(get_session),
+):
+    """Public read-only endpoint for the cortex visualization. Returns concept metadata only."""
+    concepts = crud.list_concepts(session, namespace, limit=1000)
+    # Also grab knowledge count for the HUD
+    stats = crud.get_namespace_stats(session, namespace)
+    return {
+        "concepts": concepts,
+        "total": len(concepts),
+        "knowledge_count": stats.get("knowledge_items", {}).get("total", 0),
+    }
+
+
+@app.post("/feedback", response_model=schemas.FeedbackResponse)
+def submit_feedback(
+    payload: schemas.FeedbackRequest,
+    namespace: str = Query(default="claude-shared"),
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    ensure_namespace_access(auth, namespace, {ApiRole.reader.value, ApiRole.writer.value, ApiRole.admin.value})
+    from uuid import UUID
+    try:
+        result = crud.create_concept_feedback(
+            session=session,
+            namespace=namespace,
+            signal=payload.signal,
+            agent_key=auth.key_name,
+            embedding_provider=app.state.embedding_provider,
+            concept_id=UUID(payload.concept_id) if payload.concept_id else None,
+            query=payload.query,
+            session_id=payload.session_id,
+            note=payload.note,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    session.commit()
+    return schemas.FeedbackResponse(**result)
+
+
+@app.post("/session-complete", response_model=schemas.SessionCompleteResponse)
+def session_complete(
+    payload: schemas.SessionCompleteRequest,
+    namespace: str = Query(default="claude-shared"),
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    ensure_namespace_access(auth, namespace, {ApiRole.writer.value, ApiRole.admin.value})
+
+    # 1. Mark recall events as session completed
+    completed_count = crud.mark_session_completed(session, payload.session_id)
+
+    # 2. Extract facts via Ollama (zero Claude tokens)
+    llm = app.state.llm_provider
+    extraction_prompt = (
+        "Extract 3-5 key facts from this conversation summary. "
+        "Return each fact on its own line. Focus on: decisions made, bugs fixed, "
+        "patterns learned, architecture changes. Skip routine actions.\n\n"
+        f"Summary:\n{payload.conversation_summary}"
+    )
+    facts: list[str] = []
+    if llm.is_available:
+        try:
+            raw = llm.summarize(extraction_prompt)
+            facts = [line.strip() for line in raw.strip().split("\n") if line.strip() and len(line.strip()) > 10]
+        except Exception:
+            facts = []
+
+    # 3. Ingest extracted facts
+    from . import models as _models
+    device_name = auth.key_name.replace("device-", "").replace("-writer", "") if auth.key_name else "unknown"
+    for fact in facts:
+        embedding = None
+        if app.state.embedding_provider.is_available:
+            try:
+                embedding = app.state.embedding_provider.embed_text(fact)
+            except Exception:
+                embedding = None
+        session.add(_models.KnowledgeItem(
+            namespace=namespace,
+            content=fact,
+            tags=["session-extract", f"device-{device_name}", "auto-extracted"],
+            embedding=embedding,
+        ))
+    session.commit()
+
+    return schemas.SessionCompleteResponse(
+        session_id=payload.session_id,
+        facts_extracted=len(facts),
+        recall_events_completed=completed_count,
+    )
+
+
 @app.get("/onboarding", response_class=PlainTextResponse, include_in_schema=False)
 def onboarding_public() -> str:
     """Public onboarding page — no auth required. Tells new agents what this service is and how to enroll."""
@@ -456,7 +560,7 @@ def list_concepts_endpoint(
     concept_type: str | None = Query(default=None),
     scope: str | None = Query(default=None),
     include_superseded: bool = Query(default=False),
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=50, ge=1, le=1000),
     auth: AuthContext = Depends(require_api_key),
     session: Session = Depends(get_session),
 ):

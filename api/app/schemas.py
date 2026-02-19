@@ -302,3 +302,30 @@ class AutoEnrollResponse(BaseModel):
     role: Literal["reader", "writer", "admin"]
     namespaces: list[str]
     agent_config: AgentConfig
+
+
+class FeedbackRequest(BaseModel):
+    signal: Literal["useful", "noted", "wrong"]
+    concept_id: str | None = None
+    query: str | None = None
+    note: str | None = None
+    session_id: str | None = None
+
+
+class FeedbackResponse(BaseModel):
+    concept_id: str
+    concept_title: str
+    signal: str
+    confidence: float
+
+
+class SessionCompleteRequest(BaseModel):
+    session_id: str
+    conversation_summary: str
+    recalled_concept_ids: list[str] = []
+
+
+class SessionCompleteResponse(BaseModel):
+    session_id: str
+    facts_extracted: int
+    recall_events_completed: int

@@ -1341,7 +1341,7 @@ def create_concept_feedback(
             raise ValueError(f"Concept {concept_id} not found in namespace {namespace}")
     else:
         # Fuzzy match: embed query, find closest concept
-        query_embedding = embedding_provider.embed(query)
+        query_embedding = embedding_provider.embed_text(query)
         score_col = Concept.embedding.cosine_distance(query_embedding).label("score")
         stmt = (
             select(Concept, score_col)
@@ -1373,7 +1373,7 @@ def create_concept_feedback(
             namespace=namespace,
             content=f"Correction: {note} (re: concept '{concept.title}')",
             tags=["correction", "operator-feedback"],
-            embedding=embedding_provider.embed(note),
+            embedding=embedding_provider.embed_text(note),
         ))
 
     session.flush()
