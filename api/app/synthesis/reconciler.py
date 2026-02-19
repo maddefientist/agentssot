@@ -112,13 +112,23 @@ def decay_stale_concepts(
     namespace: str,
     active_concept_ids: set[UUID],
     decay_rate: float = 0.05,
+    min_age_days: int = 7,
 ) -> int:
-    """Reduce confidence of concepts not reinforced this cycle. Returns count decayed."""
+    """Reduce confidence of concepts not reinforced recently. Returns count decayed.
+
+    Only decays concepts whose updated_at is older than min_age_days,
+    preventing aggressive decay of recently-created or recently-reinforced concepts.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    cutoff = datetime.now(UTC) - timedelta(days=min_age_days)
+
     stmt = (
         select(Concept)
         .where(Concept.namespace == namespace)
         .where(~Concept.tags.any("superseded"))
         .where(Concept.confidence > 0.1)
+        .where(Concept.updated_at < cutoff)
     )
     all_active = session.scalars(stmt).all()
 

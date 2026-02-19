@@ -106,6 +106,7 @@ def _run_synthesis_for_namespace(
     llm_provider: LLMProvider,
     embedding_provider: EmbeddingProvider,
     full_resynthesis: bool = False,
+    skip_decay: bool = False,
 ) -> dict:
     """Run one synthesis cycle for a namespace. Returns stats dict."""
     stats = {"namespace": namespace, "new": 0, "updated": 0, "decayed": 0, "clusters": 0}
@@ -178,10 +179,11 @@ def _run_synthesis_for_namespace(
                         except ValueError:
                             pass
 
-        decayed = decay_stale_concepts(
-            session, namespace, all_touched_ids, settings.synthesis_confidence_decay
-        )
-        stats["decayed"] = decayed
+        if not skip_decay:
+            decayed = decay_stale_concepts(
+                session, namespace, all_touched_ids, settings.synthesis_confidence_decay
+            )
+            stats["decayed"] = decayed
 
     return stats
 

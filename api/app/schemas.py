@@ -76,7 +76,7 @@ class QueryResponse(BaseModel):
 
 class RecallRequest(BaseModel):
     namespace: str = "default"
-    scope: Literal["knowledge", "requirements", "events", "concepts"] = "knowledge"
+    scope: Literal["knowledge", "requirements", "events", "concepts", "all"] = "knowledge"
     query_text: str | None = None
     query_embedding: list[float] | None = None
     top_k: int | None = None
@@ -98,7 +98,7 @@ class RecallItem(BaseModel):
 
 class RecallResponse(BaseModel):
     namespace: str
-    scope: Literal["knowledge", "requirements", "events", "concepts"]
+    scope: Literal["knowledge", "requirements", "events", "concepts", "all"]
     top_k: int
     items: list[RecallItem]
 

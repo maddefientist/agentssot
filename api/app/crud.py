@@ -501,6 +501,66 @@ def recall(
         ]
         return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
 
+    if payload.scope == "all":
+        # --- knowledge items ---
+        ki_score = KnowledgeItem.embedding.cosine_distance(query_embedding).label("score")
+        ki_stmt = (
+            select(KnowledgeItem, ki_score)
+            .where(KnowledgeItem.namespace == payload.namespace)
+            .where(KnowledgeItem.embedding.is_not(None))
+            .order_by(ki_score)
+            .limit(candidate_k)
+        )
+        if project_id:
+            ki_stmt = ki_stmt.where(KnowledgeItem.project_id == project_id)
+        if entity_id:
+            ki_stmt = ki_stmt.where(KnowledgeItem.entity_id == entity_id)
+
+        ki_rows = session.execute(ki_stmt).all()
+        items = [
+            {
+                "id": str(item.id),
+                "scope": "knowledge",
+                "score": float(score_value),
+                "snippet": _clip(item.content, settings.max_snippet_chars),
+                "tags": list(item.tags or []),
+                "created_at": item.created_at,
+            }
+            for item, score_value in ki_rows
+        ]
+
+        # --- concepts ---
+        c_score = Concept.embedding.cosine_distance(query_embedding).label("score")
+        c_stmt = (
+            select(Concept, c_score)
+            .where(Concept.namespace == payload.namespace)
+            .where(Concept.embedding.is_not(None))
+            .where(~Concept.tags.any("superseded"))
+            .order_by(c_score)
+            .limit(candidate_k)
+        )
+
+        c_rows = session.execute(c_stmt).all()
+        items.extend([
+            {
+                "id": str(item.id),
+                "scope": "concepts",
+                "score": float(score_value),
+                "snippet": _clip(f"[{item.type.value}] {item.title}: {item.content}", settings.max_snippet_chars),
+                "tags": list(item.tags or []),
+                "created_at": item.created_at,
+                "concept_type": item.type.value,
+                "confidence": item.confidence,
+            }
+            for item, score_value in c_rows
+        ])
+
+        # merge by vector score (lower = closer for cosine_distance)
+        items.sort(key=lambda x: x["score"])
+        items = items[:candidate_k]
+
+        return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown scope '{payload.scope}'")
 
 

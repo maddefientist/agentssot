@@ -501,6 +501,7 @@ def admin_trigger_synthesis(
         llm_provider=app.state.llm_provider,
         embedding_provider=app.state.embedding_provider,
         full_resynthesis=full,
+        skip_decay=True,
     )
     return schemas.SynthesisRunResponse(
         namespace=namespace,
