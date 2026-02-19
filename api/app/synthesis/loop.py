@@ -38,7 +38,7 @@ def _gather_recent_knowledge(
         {
             "id": item.id,
             "content": item.content,
-            "embedding": list(item.embedding) if item.embedding else None,
+            "embedding": list(item.embedding) if item.embedding is not None else None,
             "tags": list(item.tags or []),
             "source": item.source,
             "created_at": item.created_at,
@@ -63,7 +63,7 @@ def _get_active_concepts(session: Session, namespace: str) -> list[dict]:
             "title": c.title,
             "content": c.content,
             "confidence": c.confidence,
-            "embedding": list(c.embedding) if c.embedding else None,
+            "embedding": list(c.embedding) if c.embedding is not None else None,
         }
         for c in rows
     ]

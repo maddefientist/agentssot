@@ -198,7 +198,7 @@ class Concept(Base):
         Enum(ConceptType, name="concept_type", create_type=False), nullable=False
     )
     scope: Mapped[ConceptScope] = mapped_column(
-        Enum(ConceptScope, name="concept_scope", create_type=False),
+        Enum(ConceptScope, name="concept_scope", create_type=False, values_callable=lambda e: [x.value for x in e]),
         nullable=False,
         default=ConceptScope.global_,
         server_default="global",
