@@ -298,7 +298,8 @@ Add after the compaction settings (around line 41):
 ```python
     # Synthesis (conceptual memory)
     synthesis_enabled: bool = Field(default=False, alias="SYNTHESIS_ENABLED")
-    synthesis_model: str = Field(default="qwen3:30b-a3b", alias="SYNTHESIS_MODEL")
+    synthesis_model: str = Field(default="qwen3.5:cloud", alias="SYNTHESIS_MODEL")
+    synthesis_fallback_model: str = Field(default="qwen3:latest", alias="SYNTHESIS_FALLBACK_MODEL")
     synthesis_schedule_hour: int = Field(default=3, alias="SYNTHESIS_SCHEDULE_HOUR")
     synthesis_batch_size: int = Field(default=20, alias="SYNTHESIS_BATCH_SIZE")
     synthesis_similarity_threshold: float = Field(default=0.75, alias="SYNTHESIS_SIMILARITY_THRESHOLD")
@@ -338,9 +339,9 @@ git commit -m "feat: add synthesis configuration settings"
 In `api/app/llm/base.py`, add a new method to `LLMProvider`:
 
 ```python
-    def synthesize_concepts(self, facts: str, existing_concepts: str) -> str:
-        """Synthesize conceptual knowledge from facts. Override for custom behavior.
-        Default: delegates to the same model as summarize but with a different prompt."""
+    def synthesize_concepts(self, facts: str, existing_concepts: str, model_override: str | None = None, fallback_model: str | None = None) -> str:
+        """Synthesize conceptual knowledge from facts. Uses model_override if set,
+        falls back to fallback_model if primary fails, then to self.model."""
         raise NotImplementedError
 ```
 
@@ -349,7 +350,13 @@ In `api/app/llm/base.py`, add a new method to `LLMProvider`:
 In `api/app/llm/ollama_provider.py`, add a `model_override` parameter support and the `synthesize_concepts` method. The synthesis method needs a longer timeout (120s) since the 30B model is slower:
 
 ```python
-    def synthesize_concepts(self, facts: str, existing_concepts: str, model_override: str | None = None) -> str:
+    def synthesize_concepts(
+        self,
+        facts: str,
+        existing_concepts: str,
+        model_override: str | None = None,
+        fallback_model: str | None = None,
+    ) -> str:
         if not self.is_available:
             raise LLMProviderError(self.unavailable_reason or "Ollama LLM provider unavailable")
 
@@ -395,11 +402,24 @@ Rules:
 
         try:
             response = httpx.post(url, json=payload, timeout=120)
+            if response.status_code >= 400:
+                raise LLMProviderError(f"Ollama synthesis failed with {response.status_code}: {response.text[:400]}")
         except Exception as exc:
-            raise LLMProviderError(f"Ollama synthesis request failed: {exc}") from exc
-
-        if response.status_code >= 400:
-            raise LLMProviderError(f"Ollama synthesis failed with {response.status_code}: {response.text[:400]}")
+            # Fallback to local model if cloud model fails
+            if fallback_model and model != fallback_model:
+                import logging
+                logging.getLogger("agentssot.llm").warning(
+                    "synthesis model %s failed, falling back to %s: %s", model, fallback_model, exc
+                )
+                payload["model"] = fallback_model
+                try:
+                    response = httpx.post(url, json=payload, timeout=120)
+                    if response.status_code >= 400:
+                        raise LLMProviderError(f"Fallback model also failed: {response.status_code}")
+                except Exception as fallback_exc:
+                    raise LLMProviderError(f"Both {model} and {fallback_model} failed: {fallback_exc}") from fallback_exc
+            else:
+                raise LLMProviderError(f"Ollama synthesis request failed: {exc}") from exc
 
         data = response.json()
         content = data.get("message", {}).get("content")
@@ -412,7 +432,7 @@ Rules:
 
 Add the method override:
 ```python
-    def synthesize_concepts(self, facts: str, existing_concepts: str, model_override: str | None = None) -> str:
+    def synthesize_concepts(self, facts: str, existing_concepts: str, model_override: str | None = None, fallback_model: str | None = None) -> str:
         raise LLMProviderError(self.unavailable_reason or "LLM provider disabled")
 ```
 
@@ -612,6 +632,7 @@ def run_synthesis_batch(
     existing_concepts: list[dict],
     llm_provider: LLMProvider,
     synthesis_model: str,
+    fallback_model: str | None = None,
 ) -> list[dict]:
     """Run synthesis on a cluster of items, returning parsed concept proposals.
 
@@ -626,6 +647,7 @@ def run_synthesis_batch(
             facts=facts_text,
             existing_concepts=concepts_text,
             model_override=synthesis_model,
+            fallback_model=fallback_model,
         )
     except LLMProviderError:
         logger.warning("synthesis LLM call failed for cluster", exc_info=True)
@@ -988,6 +1010,7 @@ def _run_synthesis_for_namespace(
                 existing_concepts=related,
                 llm_provider=llm_provider,
                 synthesis_model=settings.synthesis_model,
+                fallback_model=settings.synthesis_fallback_model,
             )
 
             if proposals:
@@ -1398,7 +1421,8 @@ cat >> /opt/agentssot/.env << 'EOF'
 
 # Synthesis (conceptual memory / Hive Cortex)
 SYNTHESIS_ENABLED=true
-SYNTHESIS_MODEL=qwen3:30b-a3b
+SYNTHESIS_MODEL=qwen3.5:cloud
+SYNTHESIS_FALLBACK_MODEL=qwen3:latest
 SYNTHESIS_SCHEDULE_HOUR=3
 EOF
 ```
@@ -1427,28 +1451,40 @@ NOTE: Do NOT `git add .env` — it contains secrets.
 
 ---
 
-### Task 12: Pull Qwen3 30B-A3B Model
+### Task 12: Verify Synthesis Models in Ollama
 
-**Step 1: Pull the model into Ollama**
+**Step 1: Verify qwen3.5:cloud is available**
+
+`qwen3.5:cloud` is an Ollama cloud-routed model. Test it:
 
 ```bash
-ollama pull qwen3:30b-a3b
+curl -s http://localhost:11434/api/chat -d '{
+  "model": "qwen3.5:cloud",
+  "stream": false,
+  "messages": [{"role": "user", "content": "Say hello in one word"}]
+}' | python3 -m json.tool
 ```
 
-This may take a while depending on download speed. Verify it loaded:
+If this fails (e.g. model not found), pull it:
+```bash
+ollama pull qwen3.5:cloud
+```
 
+**Step 2: Verify fallback model (qwen3:latest) is available**
+
+This should already be loaded (it's the existing compaction model):
 ```bash
 ollama list | grep qwen3
 ```
 
-**Step 2: Test synthesis model responds**
+**Step 3: Test both models respond**
 
 ```bash
-curl -s http://localhost:11434/api/chat -d '{
-  "model": "qwen3:30b-a3b",
-  "stream": false,
-  "messages": [{"role": "user", "content": "Say hello in one word"}]
-}' | python3 -m json.tool
+# Primary (cloud)
+curl -s http://localhost:11434/api/chat -d '{"model":"qwen3.5:cloud","stream":false,"messages":[{"role":"user","content":"Reply OK"}]}' | python3 -c "import sys,json; print(json.load(sys.stdin)['message']['content'][:50])"
+
+# Fallback (local)
+curl -s http://localhost:11434/api/chat -d '{"model":"qwen3:latest","stream":false,"messages":[{"role":"user","content":"Reply OK"}]}' | python3 -c "import sys,json; print(json.load(sys.stdin)['message']['content'][:50])"
 ```
 
 ---
