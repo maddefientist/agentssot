@@ -486,19 +486,34 @@ def recall(
         )
 
         rows = session.execute(stmt).all()
-        items = [
-            {
+
+        def _concept_to_recall(item, score_value):
+            if item.type.value == "skill":
+                parts = [f"[SKILL] {item.title}"]
+                if item.trigger:
+                    parts.append(f"  When: {item.trigger}")
+                if item.action:
+                    parts.append(f"  Do: {item.action}")
+                if item.success_hint:
+                    parts.append(f"  Verify: {item.success_hint}")
+                snippet = _clip("\n".join(parts), settings.max_snippet_chars)
+            else:
+                snippet = _clip(f"[{item.type.value}] {item.title}: {item.content}", settings.max_snippet_chars)
+            return {
                 "id": str(item.id),
                 "scope": "concepts",
                 "score": float(score_value),
-                "snippet": _clip(f"[{item.type.value}] {item.title}: {item.content}", settings.max_snippet_chars),
+                "snippet": snippet,
                 "tags": list(item.tags or []),
                 "created_at": item.created_at,
                 "concept_type": item.type.value,
                 "confidence": item.confidence,
+                "trigger": item.trigger,
+                "action": item.action,
+                "success_hint": item.success_hint,
             }
-            for item, score_value in rows
-        ]
+
+        items = [_concept_to_recall(item, score_value) for item, score_value in rows]
         items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
         # Log recall events for concepts that were surfaced
         if payload.session_id:
@@ -558,19 +573,7 @@ def recall(
         )
 
         c_rows = session.execute(c_stmt).all()
-        items.extend([
-            {
-                "id": str(item.id),
-                "scope": "concepts",
-                "score": float(score_value),
-                "snippet": _clip(f"[{item.type.value}] {item.title}: {item.content}", settings.max_snippet_chars),
-                "tags": list(item.tags or []),
-                "created_at": item.created_at,
-                "concept_type": item.type.value,
-                "confidence": item.confidence,
-            }
-            for item, score_value in c_rows
-        ])
+        items.extend([_concept_to_recall(item, score_value) for item, score_value in c_rows])
 
         # merge by vector score (lower = closer for cosine_distance)
         items.sort(key=lambda x: x["score"])
@@ -1088,6 +1091,10 @@ def list_concepts(
             "version": c.version,
             "parent_id": str(c.parent_id) if c.parent_id else None,
             "tags": list(c.tags or []),
+            "trigger": c.trigger,
+            "action": c.action,
+            "success_hint": c.success_hint,
+            "confirming_agents": list(c.confirming_agents or []),
             "created_at": c.created_at,
             "updated_at": c.updated_at,
         }
@@ -1123,6 +1130,10 @@ def get_concept_with_history(session: Session, namespace: str, concept_id: str) 
             "version": c.version,
             "parent_id": str(c.parent_id) if c.parent_id else None,
             "tags": list(c.tags or []),
+            "trigger": c.trigger,
+            "action": c.action,
+            "success_hint": c.success_hint,
+            "confirming_agents": list(c.confirming_agents or []),
             "created_at": c.created_at,
             "updated_at": c.updated_at,
         }

@@ -11,7 +11,7 @@ from ..models import Concept, ConceptScope, ConceptType
 logger = logging.getLogger("agentssot.synthesis.reconciler")
 
 _SCOPE_MAP = {"global": ConceptScope.global_, "project": ConceptScope.project, "device": ConceptScope.device}
-_TYPE_MAP = {"mental_model": ConceptType.mental_model, "relationship": ConceptType.relationship, "principle": ConceptType.principle}
+_TYPE_MAP = {"mental_model": ConceptType.mental_model, "relationship": ConceptType.relationship, "principle": ConceptType.principle, "skill": ConceptType.skill}
 
 
 def reconcile_concepts(
@@ -61,6 +61,13 @@ def reconcile_concepts(
                     existing.title = proposal.get("title", existing.title)
                     if concept_embedding:
                         existing.embedding = concept_embedding
+                    # Update skill fields if present in proposal
+                    if proposal.get("trigger"):
+                        existing.trigger = proposal["trigger"]
+                    if proposal.get("action"):
+                        existing.action = proposal["action"]
+                    if proposal.get("success_hint"):
+                        existing.success_hint = proposal["success_hint"]
                 updated_count += 1
                 continue
 
@@ -81,6 +88,9 @@ def reconcile_concepts(
                     version=existing.version + 1,
                     parent_id=existing.id,
                     tags=list(proposal.get("tags", [])),
+                    trigger=proposal.get("trigger"),
+                    action=proposal.get("action"),
+                    success_hint=proposal.get("success_hint"),
                     embedding=concept_embedding,
                 )
                 session.add(new_concept)
@@ -99,6 +109,9 @@ def reconcile_concepts(
             version=1,
             parent_id=None,
             tags=list(proposal.get("tags", [])),
+            trigger=proposal.get("trigger"),
+            action=proposal.get("action"),
+            success_hint=proposal.get("success_hint"),
             embedding=concept_embedding,
         )
         session.add(new_concept)

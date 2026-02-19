@@ -69,14 +69,17 @@ class OllamaLLMProvider(LLMProvider):
         system_prompt = (
             "You are a knowledge synthesis engine. Review the provided facts and identify conceptual patterns.\n\n"
             "For each concept you identify, output a JSON object on its own line with these fields:\n"
-            '- type: "mental_model" | "relationship" | "principle"\n'
+            '- type: "mental_model" | "relationship" | "principle" | "skill"\n'
             '- scope: "global" | "project" | "device"\n'
             "- scope_ref: project slug or device name if scoped, null if global\n"
             "- title: concise label (under 80 chars)\n"
             "- content: full description (2-5 sentences)\n"
             "- confidence: 0.0-1.0 based on evidence strength\n"
             "- matches_existing_id: UUID of existing concept if this reinforces/contradicts one, null otherwise\n"
-            "- is_contradiction: true if this contradicts the matched existing concept, false if reinforcement\n\n"
+            "- is_contradiction: true if this contradicts the matched existing concept, false if reinforcement\n"
+            "- trigger: when this skill activates (situation description) — only for type \"skill\", null otherwise\n"
+            "- action: what to do (specific steps) — only for type \"skill\", null otherwise\n"
+            "- success_hint: how to verify it worked — only for type \"skill\", null otherwise\n\n"
             "Output ONLY valid JSON lines (one JSON object per line, no markdown, no commentary).\n"
             "If no meaningful concepts can be extracted, output an empty line.\n\n"
             "Rules:\n"
@@ -84,7 +87,9 @@ class OllamaLLMProvider(LLMProvider):
             "- Prefer specific, actionable knowledge over vague generalizations\n"
             "- Relationships should name specific entities (projects, hosts, tools)\n"
             "- Principles should be testable and falsifiable\n"
-            "- Mental models should describe observable patterns"
+            "- Mental models should describe observable patterns\n"
+            "- If you see repeated action patterns across the facts (same action in similar situations 3+ times), propose a skill with type \"skill\" plus trigger, action, and success_hint\n"
+            "- Skills should be prescriptive (\"when X happens, do Y\") not descriptive"
         )
 
         user_content = f"=== NEW FACTS ===\n{facts}"
