@@ -67,6 +67,92 @@
   }
   #search:focus { border-color: #8b5cf6; }
   #search::placeholder { color: #444; }
+
+  /* Drawer */
+  .drawer-toggle {
+    position: fixed; bottom: 20px; left: 20px; z-index: 10;
+    width: 36px; height: 36px; border-radius: 50%;
+    background: rgba(20,20,30,0.9); border: 1px solid #333;
+    color: #8b5cf6; font-size: 18px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.2s;
+  }
+  .drawer-toggle:hover { border-color: #8b5cf6; background: rgba(139,92,246,0.15); }
+
+  #drawer {
+    position: fixed; top: 0; right: -400px; width: 400px; height: 100vh; z-index: 30;
+    background: rgba(10,10,15,0.97); border-left: 1px solid #222;
+    transition: right 0.3s ease; display: flex; flex-direction: row;
+    font-size: 12px;
+  }
+  #drawer.open { right: 0; }
+
+  .drawer-tabs {
+    width: 48px; background: rgba(5,5,10,0.8); border-right: 1px solid #1a1a1a;
+    display: flex; flex-direction: column; padding-top: 12px; gap: 4px;
+  }
+  .drawer-tab {
+    width: 48px; height: 48px; border: none; background: transparent;
+    color: #555; font-size: 16px; cursor: pointer; display: flex;
+    align-items: center; justify-content: center; transition: all 0.2s;
+    border-left: 2px solid transparent;
+  }
+  .drawer-tab:hover { color: #aaa; background: rgba(255,255,255,0.03); }
+  .drawer-tab.active { color: #c4b5fd; border-left-color: #8b5cf6; background: rgba(139,92,246,0.08); }
+
+  .drawer-content {
+    flex: 1; overflow-y: auto; padding: 20px 16px;
+  }
+  .drawer-content::-webkit-scrollbar { width: 4px; }
+  .drawer-content::-webkit-scrollbar-track { background: transparent; }
+  .drawer-content::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+  .drawer-close {
+    position: absolute; top: 12px; right: 12px;
+    background: none; border: none; color: #555; font-size: 18px; cursor: pointer;
+  }
+  .drawer-close:hover { color: #fff; }
+
+  .drawer-section { display: none; }
+  .drawer-section.active { display: block; }
+
+  .drawer-section h3 { font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: #8b5cf6; margin-bottom: 16px; }
+  .drawer-section h4 { font-size: 11px; color: #aaa; margin: 16px 0 8px; }
+
+  .health-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .health-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .health-dot.ok { background: #22c55e; box-shadow: 0 0 4px #22c55e; }
+  .health-dot.err { background: #ef4444; box-shadow: 0 0 4px #ef4444; }
+
+  .config-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #1a1a1a; }
+  .config-key { color: #666; }
+  .config-val { color: #ccc; text-align: right; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+
+  .agent-card {
+    background: rgba(255,255,255,0.02); border: 1px solid #1a1a1a; border-radius: 8px;
+    padding: 12px; margin-bottom: 10px;
+  }
+  .agent-card .agent-name { font-weight: 600; color: #e0e0e0; margin-bottom: 4px; }
+  .agent-card .agent-key { font-size: 10px; color: #555; margin-bottom: 8px; }
+  .agent-card .agent-stats { display: flex; gap: 16px; font-size: 10px; color: #888; }
+  .agent-card .agent-strengths { margin-top: 6px; display: flex; gap: 4px; flex-wrap: wrap; }
+  .agent-card .strength-tag {
+    background: rgba(139,92,246,0.15); border: 1px solid rgba(139,92,246,0.3);
+    color: #c4b5fd; padding: 2px 8px; border-radius: 4px; font-size: 9px;
+  }
+
+  .activity-item { padding: 6px 0; border-bottom: 1px solid #111; font-size: 10px; color: #777; }
+  .activity-item .act-type { display: inline-block; width: 60px; color: #888; }
+  .activity-item .act-type.recall { color: #06b6d4; }
+  .activity-item .act-type.feedback { color: #f59e0b; }
+  .activity-item .act-agent { color: #666; }
+  .activity-item .act-time { float: right; color: #444; font-size: 9px; }
+
+  .rules-text { color: #999; line-height: 1.8; }
+  .rules-text strong { color: #ccc; }
+  .rules-text code { background: rgba(139,92,246,0.1); padding: 1px 4px; border-radius: 3px; color: #c4b5fd; }
+
+  .setup-cmd { background: rgba(255,255,255,0.03); border: 1px solid #1a1a1a; border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 10px; color: #aaa; white-space: pre-wrap; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -114,6 +200,86 @@
   <div class="tt-title" id="tt-title"></div>
   <div class="tt-content" id="tt-content"></div>
   <div class="tt-meta" id="tt-meta"></div>
+</div>
+
+<button class="drawer-toggle" id="drawerToggle" title="System info">&#8857;</button>
+
+<div id="drawer">
+  <div class="drawer-tabs">
+    <button class="drawer-tab active" data-tab="status" title="Status">&#9679;</button>
+    <button class="drawer-tab" data-tab="config" title="Config">&#9881;</button>
+    <button class="drawer-tab" data-tab="agents" title="Agents">&#9775;</button>
+    <button class="drawer-tab" data-tab="rules" title="Rules">&#9733;</button>
+    <button class="drawer-tab" data-tab="setup" title="Setup">&#9874;</button>
+  </div>
+  <div class="drawer-content">
+    <button class="drawer-close" id="drawerClose">&times;</button>
+
+    <div class="drawer-section active" id="tab-status">
+      <h3>System Status</h3>
+      <div id="health-indicators"></div>
+      <h4>Concept Counts</h4>
+      <div id="drawer-concept-counts"></div>
+      <h4>Recent Activity</h4>
+      <div id="activity-feed"></div>
+    </div>
+
+    <div class="drawer-section" id="tab-config">
+      <h3>Configuration</h3>
+      <div id="config-grid"></div>
+    </div>
+
+    <div class="drawer-section" id="tab-agents">
+      <h3>Enrolled Agents</h3>
+      <div id="agents-list"></div>
+    </div>
+
+    <div class="drawer-section" id="tab-rules">
+      <h3>How the Neural Net Works</h3>
+      <div class="rules-text">
+        <strong>5-Layer Architecture</strong><br>
+        <strong>Layer 1 — Memory:</strong> Every AI conversation generates knowledge. AgentSSOT captures facts, decisions, and patterns as knowledge items with vector embeddings.<br><br>
+        <strong>Layer 2 — Feedback:</strong> When recalled knowledge is useful, agents send <code>useful</code>/<code>noted</code>/<code>wrong</code> signals. Useful concepts gain confidence; wrong ones get tagged <code>contested</code>.<br><br>
+        <strong>Layer 3 — Skills:</strong> Action patterns crystallize into skills with <code>trigger</code> (when), <code>action</code> (do what), and <code>success_hint</code> (verify). Shown as green nodes.<br><br>
+        <strong>Layer 4 — Personalization:</strong> Each agent/device builds a profile of strengths from its recall patterns. Recall results are boosted toward each agent's expertise areas.<br><br>
+        <strong>Layer 5 — Collective Intelligence:</strong> When 3+ agents independently confirm a concept, it reaches <code>consensus</code> (gold glow). Cross-agent confirmation elevates truth.<br><br>
+        <strong>Concept Lifecycle</strong><br>
+        Knowledge items cluster by embedding similarity. Ollama synthesizes concepts. Reconciler merges or creates. Confidence grows with evidence (+0.1 per match) and agent confirmation (+0.05 per new agent). Stale concepts decay (<code>-0.02/cycle</code> after <code>90 days</code>). Dormant at floor (<code>0.15</code>). Resurrectable on re-recall.<br><br>
+        <strong>Visual Encoding</strong><br>
+        <code>Color</code> = concept type. <code>Size</code> = evidence count. <code>Opacity</code> = confidence. <code>Ring</code> = scope (inner=global, mid=project, outer=device). <code>Gold glow</code> = consensus.
+      </div>
+    </div>
+
+    <div class="drawer-section" id="tab-setup">
+      <h3>Onboarding &amp; Troubleshooting</h3>
+      <div class="rules-text">
+        <strong>Enroll a new device</strong><br>
+        1. From an admin session, create an enrollment token<br>
+        2. On the new device, call <code>POST /auto-enroll</code><br>
+        3. Save the returned agent config to <code>~/.claude/agentssot/local/agent.json</code><br><br>
+        <strong>Verify connectivity</strong>
+      </div>
+      <div class="setup-cmd">curl -s http://YOUR_HOST:8088/health | python3 -m json.tool</div>
+      <div class="rules-text"><strong>Test recall</strong></div>
+      <div class="setup-cmd">curl -s -X POST http://YOUR_HOST:8088/recall \
+  -H "X-API-Key: YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query_text":"test","namespace":"claude-shared"}' | python3 -m json.tool</div>
+      <div class="rules-text"><strong>Trigger synthesis manually</strong></div>
+      <div class="setup-cmd">curl -s -X POST http://YOUR_HOST:8088/synthesis/run \
+  -H "X-API-Key: ADMIN_KEY" \
+  -d '{"namespace":"claude-shared"}' | python3 -m json.tool</div>
+      <div class="rules-text">
+        <br><strong>Troubleshooting</strong><br>
+        - <code>embedding_available: false</code> — Check Ollama is running<br>
+        - <code>llm_available: false</code> — Verify Ollama and model pulled<br>
+        - No concepts appearing — Run synthesis manually then wait 10s<br>
+        - Recall returns empty — Check namespace and knowledge items<br>
+      </div>
+      <h4>Live Health Check</h4>
+      <div id="setup-health-live"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -522,6 +688,186 @@ document.querySelectorAll('.controls button[data-scope]').forEach(function(btn) 
 document.getElementById('search').addEventListener('input', function(e) {
   searchTerm = e.target.value.toLowerCase();
 });
+
+// ---------------------------------------------------------------------------
+// Drawer
+// ---------------------------------------------------------------------------
+let drawerOpen = false;
+let systemInfo = null;
+let activityData = null;
+
+function toggleDrawer() {
+  drawerOpen = !drawerOpen;
+  document.getElementById('drawer').classList.toggle('open', drawerOpen);
+  if (drawerOpen) loadDrawerData();
+}
+
+document.getElementById('drawerToggle').addEventListener('click', toggleDrawer);
+document.getElementById('drawerClose').addEventListener('click', function() {
+  drawerOpen = false;
+  document.getElementById('drawer').classList.remove('open');
+});
+
+document.querySelectorAll('.drawer-tab').forEach(function(tab) {
+  tab.addEventListener('click', function() {
+    document.querySelectorAll('.drawer-tab').forEach(function(t) { t.classList.remove('active'); });
+    document.querySelectorAll('.drawer-section').forEach(function(s) { s.classList.remove('active'); });
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+async function loadDrawerData() {
+  try {
+    var responses = await Promise.all([
+      fetch('/cortex/system-info?namespace=claude-shared'),
+      fetch('/cortex/activity?namespace=claude-shared'),
+    ]);
+    systemInfo = await responses[0].json();
+    activityData = await responses[1].json();
+    renderDrawer();
+  } catch (e) {
+    console.error('Drawer data fetch failed:', e);
+  }
+}
+
+function makeHealthRow(label, ok) {
+  var row = document.createElement('div');
+  row.className = 'health-row';
+  var dot = document.createElement('div');
+  dot.className = 'health-dot ' + (ok ? 'ok' : 'err');
+  var text = document.createElement('span');
+  text.textContent = label;
+  row.appendChild(dot);
+  row.appendChild(text);
+  return row;
+}
+
+function makeConfigRow(key, val) {
+  var row = document.createElement('div');
+  row.className = 'config-row';
+  var k = document.createElement('span');
+  k.className = 'config-key';
+  k.textContent = key;
+  var v = document.createElement('span');
+  v.className = 'config-val';
+  v.textContent = val;
+  row.appendChild(k);
+  row.appendChild(v);
+  return row;
+}
+
+function makeAgentCard(a) {
+  var card = document.createElement('div');
+  card.className = 'agent-card';
+  var name = document.createElement('div');
+  name.className = 'agent-name';
+  name.textContent = a.device_name || 'unknown';
+  var key = document.createElement('div');
+  key.className = 'agent-key';
+  key.textContent = a.agent_key;
+  var stats = document.createElement('div');
+  stats.className = 'agent-stats';
+  stats.textContent = 'recalls: ' + a.total_recalls + '  feedback: ' + a.total_feedback + '  updated: ' + (a.updated_at ? new Date(a.updated_at).toLocaleDateString() : 'never');
+  card.appendChild(name);
+  card.appendChild(key);
+  card.appendChild(stats);
+  if (a.strengths && a.strengths.length > 0) {
+    var strengthsDiv = document.createElement('div');
+    strengthsDiv.className = 'agent-strengths';
+    for (var si = 0; si < a.strengths.length; si++) {
+      var tag = document.createElement('span');
+      tag.className = 'strength-tag';
+      tag.textContent = a.strengths[si];
+      strengthsDiv.appendChild(tag);
+    }
+    card.appendChild(strengthsDiv);
+  }
+  return card;
+}
+
+function renderDrawer() {
+  if (!systemInfo) return;
+  var h = systemInfo.health;
+
+  // Status tab — health
+  var healthEl = document.getElementById('health-indicators');
+  healthEl.textContent = '';
+  healthEl.appendChild(makeHealthRow('Embedding', h.embedding_available));
+  healthEl.appendChild(makeHealthRow('LLM', h.llm_available));
+  healthEl.appendChild(makeHealthRow('Reranker', h.reranker_available));
+  healthEl.appendChild(makeHealthRow('Synthesis', h.synthesis_enabled));
+
+  // Status tab — concept counts
+  var counts = {};
+  for (var ci = 0; ci < nodes.length; ci++) { counts[nodes[ci].concept.type] = (counts[nodes[ci].concept.type] || 0) + 1; }
+  var countsEl = document.getElementById('drawer-concept-counts');
+  countsEl.textContent = '';
+  for (var ctype in counts) {
+    countsEl.appendChild(makeConfigRow(ctype.replace('_', ' '), String(counts[ctype])));
+  }
+  countsEl.appendChild(makeConfigRow('total concepts', String(nodes.length)));
+  countsEl.appendChild(makeConfigRow('knowledge items', document.getElementById('s-know').textContent));
+
+  // Status tab — activity feed
+  var feedEl = document.getElementById('activity-feed');
+  feedEl.textContent = '';
+  if (activityData && activityData.events) {
+    var evts = activityData.events.slice(0, 20);
+    for (var ei = 0; ei < evts.length; ei++) {
+      var ev = evts[ei];
+      var item = document.createElement('div');
+      item.className = 'activity-item';
+      var typeSpan = document.createElement('span');
+      typeSpan.className = 'act-type ' + ev.type;
+      typeSpan.textContent = ev.type;
+      var agentSpan = document.createElement('span');
+      agentSpan.className = 'act-agent';
+      agentSpan.textContent = (ev.agent || '').replace('device-', '').replace('-writer', '') + ' ';
+      var detailText = document.createTextNode(ev.concept ? ev.concept.substring(0, 40) : (ev.detail || ''));
+      var timeSpan = document.createElement('span');
+      timeSpan.className = 'act-time';
+      timeSpan.textContent = new Date(ev.at).toLocaleTimeString();
+      item.appendChild(typeSpan);
+      item.appendChild(document.createTextNode(' '));
+      item.appendChild(agentSpan);
+      item.appendChild(detailText);
+      item.appendChild(timeSpan);
+      feedEl.appendChild(item);
+    }
+  }
+
+  // Config tab
+  var cfg = systemInfo.config;
+  var configEl = document.getElementById('config-grid');
+  configEl.textContent = '';
+  for (var key in cfg) {
+    configEl.appendChild(makeConfigRow(key.replace(/_/g, ' '), String(cfg[key])));
+  }
+
+  // Agents tab
+  var agents = systemInfo.agents || [];
+  var agentsEl = document.getElementById('agents-list');
+  agentsEl.textContent = '';
+  if (agents.length === 0) {
+    var emptyMsg = document.createElement('div');
+    emptyMsg.style.color = '#555';
+    emptyMsg.textContent = 'No agent profiles yet. Profiles build automatically from recall/feedback activity.';
+    agentsEl.appendChild(emptyMsg);
+  } else {
+    for (var ai = 0; ai < agents.length; ai++) {
+      agentsEl.appendChild(makeAgentCard(agents[ai]));
+    }
+  }
+
+  // Setup tab — live health
+  var setupHealthEl = document.getElementById('setup-health-live');
+  setupHealthEl.textContent = '';
+  setupHealthEl.appendChild(makeHealthRow('Embedding', h.embedding_available));
+  setupHealthEl.appendChild(makeHealthRow('LLM', h.llm_available));
+  setupHealthEl.appendChild(makeHealthRow('Reranker', h.reranker_available));
+  setupHealthEl.appendChild(makeHealthRow('Synthesis', h.synthesis_enabled));
+}
 
 loadData().then(function() {
   render();
