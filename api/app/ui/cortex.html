@@ -615,11 +615,7 @@ function buildNodes(concepts) {
 
   // Create InstancedMesh
   const geo = new THREE.SphereGeometry(1, 12, 12);
-  const mat = new THREE.MeshStandardMaterial({
-    roughness: 0.3,
-    metalness: 0.2,
-    emissive: new THREE.Color(0x000000),
-    emissiveIntensity: 0,
+  const mat = new THREE.MeshBasicMaterial({
     transparent: true,
     opacity: 0.9,
   });
