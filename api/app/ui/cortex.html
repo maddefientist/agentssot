@@ -432,7 +432,6 @@ let scene, camera, renderer, controls, composer, fxaaPass;
 // Procedural cosmic background — rendered to a CSS canvas behind WebGL
 // ---------------------------------------------------------------------------
 function buildCosmicBackground() {
-  const container = document.getElementById('scene-container');
   const size = 2048;
   const cv = document.createElement('canvas');
   cv.width = size;
@@ -531,9 +530,13 @@ function buildCosmicBackground() {
     ctx.fill();
   }
 
-  container.style.backgroundImage = `url(${cv.toDataURL()})`;
-  container.style.backgroundSize = 'cover';
-  container.style.backgroundPosition = 'center';
+  // Create skybox sphere (large inverted sphere with cosmic texture)
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const skyGeo = new THREE.SphereGeometry(500, 32, 32);
+  const skyMat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.BackSide });
+  const skyMesh = new THREE.Mesh(skyGeo, skyMat);
+  scene.add(skyMesh);
 }
 
 // ---------------------------------------------------------------------------
@@ -544,9 +547,8 @@ function initScene() {
   let W = window.innerWidth;
   let H = window.innerHeight;
 
-  // Scene — transparent so CSS cosmic background shows through
+  // Scene
   scene = new THREE.Scene();
-  scene.background = null;
 
   // Camera
   camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 1000);
@@ -554,7 +556,7 @@ function initScene() {
   camera.lookAt(0, 0, 0);
 
   // Renderer
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(W, H);
   container.appendChild(renderer.domElement);
@@ -1668,8 +1670,8 @@ async function loadData() {
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
-buildCosmicBackground();
 initScene();
+buildCosmicBackground();
 initInteraction();
 createParticleSystem();
 loadData().then(function() {
