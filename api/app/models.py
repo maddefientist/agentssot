@@ -148,6 +148,13 @@ class KnowledgeItem(Base):
     tags: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list, server_default=text("ARRAY[]::TEXT[]"))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(settings.embedding_dim), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    # Neural cortex: strength tracking
+    strength: Mapped[float] = mapped_column(nullable=False, default=1.0, server_default=text("1.0"))
+    last_recalled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    recall_count: Mapped[int] = mapped_column(nullable=False, default=0, server_default=text("0"))
+    positive_feedback: Mapped[int] = mapped_column(nullable=False, default=0, server_default=text("0"))
+    negative_feedback: Mapped[int] = mapped_column(nullable=False, default=0, server_default=text("0"))
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="active", server_default=text("'active'"))
 
 
 class EnrollmentToken(Base):
@@ -223,6 +230,20 @@ class Concept(Base):
     # Layer 5: Cross-agent confirmation
     confirming_agents: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list, server_default=text("ARRAY[]::TEXT[]"))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(settings.embedding_dim), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ConceptLink(Base):
+    __tablename__ = "concept_links"
+    __table_args__ = (UniqueConstraint("concept_a", "concept_b", name="uq_concept_links_pair"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    concept_a: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False)
+    concept_b: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False)
+    weight: Mapped[float] = mapped_column(nullable=False, default=1.0, server_default=text("1.0"))
+    co_occurrence_count: Mapped[int] = mapped_column(nullable=False, default=1, server_default=text("1"))
+    link_type: Mapped[str] = mapped_column(Text, nullable=False, default="evidence_overlap", server_default=text("'evidence_overlap'"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

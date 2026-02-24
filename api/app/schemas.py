@@ -328,6 +328,7 @@ class AgentProfileResponse(BaseModel):
 class FeedbackRequest(BaseModel):
     signal: Literal["useful", "noted", "wrong"]
     concept_id: str | None = None
+    knowledge_item_id: str | None = None
     query: str | None = None
     note: str | None = None
     session_id: str | None = None
@@ -335,10 +336,12 @@ class FeedbackRequest(BaseModel):
 
 
 class FeedbackResponse(BaseModel):
-    concept_id: str
-    concept_title: str
+    concept_id: str = ""
+    concept_title: str = ""
+    knowledge_item_id: str = ""
     signal: str
-    confidence: float
+    confidence: float = 0.0
+    strength: float = 0.0
 
 
 class SessionCompleteRequest(BaseModel):

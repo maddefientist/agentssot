@@ -2,7 +2,7 @@ import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, select, text as sa_text
 from sqlalchemy.orm import Session
 
 from ..embeddings import EmbeddingProvider, EmbeddingProviderError
@@ -58,7 +58,7 @@ def reconcile_concepts(
                 existing = None
 
             if existing and not is_contradiction:
-                existing.confidence = min(existing.confidence + 0.1, 1.0)
+                existing.confidence = min(existing.confidence + 0.05, 1.0)
                 new_evidence = [UUID(eid) for eid in proposal.get("evidence_item_ids", []) if eid]
                 existing.evidence_ids = list(set(existing.evidence_ids or []) | set(new_evidence))
                 existing.version += 1
@@ -133,7 +133,65 @@ def reconcile_concepts(
         new_count += 1
 
     session.commit()
+
+    # Maintain concept graph: link concepts sharing evidence
+    _update_concept_graph(session, namespace, proposals)
+
     return {"new": new_count, "updated": updated_count}
+
+
+def _update_concept_graph(session: Session, namespace: str, proposals: list[dict]) -> None:
+    """Incrementally update concept_links for newly reconciled concepts."""
+    from itertools import combinations
+    from ..models import ConceptLink
+
+    # Collect all evidence_ids from proposals
+    all_evidence: dict[UUID, set[UUID]] = {}
+    for p in proposals:
+        evidence = set()
+        for eid in p.get("evidence_item_ids", []):
+            try:
+                evidence.add(UUID(eid))
+            except (ValueError, TypeError):
+                continue
+        if not evidence:
+            continue
+        # Find which concept this proposal ended up as
+        matched_id = p.get("matches_existing_id")
+        if matched_id:
+            try:
+                all_evidence[UUID(matched_id)] = evidence
+            except (ValueError, TypeError):
+                pass
+
+    if len(all_evidence) < 2:
+        return
+
+    # Find pairs with overlapping evidence
+    concept_ids = list(all_evidence.keys())
+    for a, b in combinations(concept_ids, 2):
+        overlap = len(all_evidence[a] & all_evidence[b])
+        if overlap == 0:
+            continue
+        # Normalize so concept_a < concept_b
+        ca, cb = (min(a, b), max(a, b))
+        weight = min(overlap * 0.3, 5.0)
+        try:
+            session.execute(
+                sa_text("""
+                    INSERT INTO concept_links (concept_a, concept_b, weight, co_occurrence_count, link_type)
+                    VALUES (:a, :b, :w, :c, 'evidence_overlap')
+                    ON CONFLICT (concept_a, concept_b)
+                    DO UPDATE SET
+                        weight = LEAST(concept_links.weight + :w_inc, 10.0),
+                        co_occurrence_count = concept_links.co_occurrence_count + :c,
+                        updated_at = NOW()
+                """),
+                {"a": ca, "b": cb, "w": weight, "c": overlap, "w_inc": weight * 0.3},
+            )
+        except Exception:
+            logger.debug("Failed to update concept link %s <-> %s", ca, cb)
+    session.flush()
 
 
 def apply_feedback_signals(
