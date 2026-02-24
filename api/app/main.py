@@ -168,6 +168,16 @@ def cortex_data(
     }
 
 
+@app.get("/cortex/links", include_in_schema=False)
+def cortex_links(
+    namespace: str = Query(default="claude-shared"),
+    limit: int = Query(default=200, le=500),
+    session: Session = Depends(get_session),
+):
+    """Public read-only endpoint for cortex edges. Returns concept_links."""
+    return {"links": crud.list_concept_links(session, namespace, limit)}
+
+
 @app.get("/cortex/system-info", include_in_schema=False)
 def cortex_system_info(
     namespace: str = Query(default="claude-shared"),
@@ -282,6 +292,27 @@ def submit_feedback(
 ):
     ensure_namespace_access(auth, namespace, {ApiRole.reader.value, ApiRole.writer.value, ApiRole.admin.value})
     from uuid import UUID
+
+    # Route to knowledge item feedback if knowledge_item_id is provided
+    if payload.knowledge_item_id:
+        try:
+            result = crud.create_knowledge_feedback(
+                session=session,
+                namespace=namespace,
+                signal=payload.signal,
+                agent_key=payload.agent_key or auth.key_name,
+                knowledge_item_id=UUID(payload.knowledge_item_id),
+                note=payload.note,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        session.commit()
+        return schemas.FeedbackResponse(
+            knowledge_item_id=result["knowledge_item_id"],
+            signal=result["signal"],
+            strength=result["strength"],
+        )
+
     try:
         result = crud.create_concept_feedback(
             session=session,
@@ -349,7 +380,7 @@ def session_complete(
 
     # 4. Update agent profile from session activity
     if agent_key:
-        crud.update_profile_from_recall(session, namespace, agent_key, payload.conversation_summary)
+        crud.update_profile_from_recall(session, agent_key, namespace)
 
     session.commit()
 
@@ -526,9 +557,8 @@ def recall(
         settings=app.state.settings,
     )
 
-    # Commit recall events logged during recall (if session_id was provided)
-    if payload.session_id:
-        session.commit()
+    # Commit tracking updates (knowledge recall counts + concept recall events)
+    session.commit()
 
     top_k = payload.top_k if payload.top_k is not None else app.state.settings.default_top_k
     top_k = min(max(top_k, 1), 50)
@@ -965,7 +995,7 @@ mkdir -p "$PLUGIN_DIR/hooks" "$PLUGIN_DIR/skills/hive"
 echo "$BUNDLE" | python3 -c "
 import sys, json, os
 bundle = json.load(sys.stdin)
-plugin_dir = os.environ['PLUGIN_DIR']
+plugin_dir = os.environ.get('PLUGIN_DIR', os.path.expanduser('~/.claude/plugins/hari-hive'))
 for rel_path, content in bundle.items():
     full_path = os.path.join(plugin_dir, rel_path)
     os.makedirs(os.path.dirname(full_path), exist_ok=True)

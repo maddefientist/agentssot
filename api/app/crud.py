@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, delete as sa_delete, func, or_, select, text as sa_text, update
+from sqlalchemy import and_, case, delete as sa_delete, func, or_, select, text as sa_text, update
 from sqlalchemy.orm import Session
 
 from .chunking import chunk_text_semantic
@@ -322,6 +322,133 @@ def query_records(
     return rows[:query_limit]
 
 
+def _recall_knowledge_weighted(
+    session: Session,
+    namespace: str,
+    query_embedding: list[float],
+    candidate_k: int,
+    project_id: UUID | None,
+    entity_id: UUID | None,
+    settings,
+) -> list[dict]:
+    """Recall knowledge items with weighted scoring: similarity + strength + recency."""
+    similarity = (1.0 - KnowledgeItem.embedding.cosine_distance(query_embedding)).label("similarity")
+    # Normalized strength: cap at 5.0, divide by 5
+    norm_strength = func.least(func.coalesce(KnowledgeItem.strength, 1.0), 5.0) / 5.0
+    # Recency bonus based on last recall time
+    recency = case(
+        (KnowledgeItem.last_recalled_at > func.now() - sa_text("INTERVAL '1 day'"), 1.0),
+        (KnowledgeItem.last_recalled_at > func.now() - sa_text("INTERVAL '7 days'"), 0.7),
+        (KnowledgeItem.last_recalled_at > func.now() - sa_text("INTERVAL '30 days'"), 0.4),
+        else_=0.1,
+    )
+    weighted_score = (similarity * 0.6 + norm_strength * 0.3 + recency * 0.1).label("weighted_score")
+    # Use cosine_distance for ORDER BY (pgvector operator) but weighted_score for final ranking
+    cosine_dist = KnowledgeItem.embedding.cosine_distance(query_embedding).label("score")
+
+    stmt = (
+        select(KnowledgeItem, cosine_dist, weighted_score)
+        .where(KnowledgeItem.namespace == namespace)
+        .where(KnowledgeItem.embedding.is_not(None))
+        .where(or_(KnowledgeItem.status == "active", KnowledgeItem.status.is_(None)))
+        .order_by(weighted_score.desc())
+        .limit(candidate_k)
+    )
+    if project_id:
+        stmt = stmt.where(KnowledgeItem.project_id == project_id)
+    if entity_id:
+        stmt = stmt.where(KnowledgeItem.entity_id == entity_id)
+
+    rows = session.execute(stmt).all()
+    return [
+        {
+            "id": str(item.id),
+            "scope": "knowledge",
+            "score": float(cosine_val),
+            "snippet": _clip(item.content, settings.max_snippet_chars),
+            "tags": list(item.tags or []),
+            "created_at": item.created_at,
+        }
+        for item, cosine_val, _ws in rows
+    ]
+
+
+def _apply_spreading_activation(session: Session, items: list[dict], namespace: str) -> list[dict]:
+    """Boost concept recall results by spreading activation through concept graph.
+
+    Concepts linked to highly-ranked results get a score boost.
+    This helps surface associated concepts that may not match the query directly.
+    """
+    from .models import ConceptLink
+    if not items or len(items) < 2:
+        return items
+
+    concept_ids = [i["id"] for i in items if i.get("scope") == "concepts"]
+    if not concept_ids:
+        return items
+
+    from uuid import UUID as _UUID
+    top_ids = set(_UUID(cid) for cid in concept_ids[:5])
+
+    # Find linked concepts from top results
+    linked = session.execute(
+        select(ConceptLink.concept_a, ConceptLink.concept_b, ConceptLink.weight)
+        .where(or_(
+            ConceptLink.concept_a.in_(top_ids),
+            ConceptLink.concept_b.in_(top_ids),
+        ))
+        .where(ConceptLink.weight >= 0.3)
+    ).all()
+
+    # Build boost map: concept_id -> accumulated boost from links
+    boost_map: dict[str, float] = {}
+    for a, b, w in linked:
+        # The "other" concept in the pair gets a boost
+        if a in top_ids:
+            other = str(b)
+        else:
+            other = str(a)
+        # Small boost proportional to link weight, capped
+        boost_map[other] = boost_map.get(other, 0) + min(w * 0.02, 0.05)
+
+    if not boost_map:
+        return items
+
+    # Apply boosts (lower score = better for cosine distance)
+    for item in items:
+        boost = boost_map.get(item["id"], 0)
+        if boost > 0 and item.get("scope") == "concepts":
+            if "reranker_score" in item and item["reranker_score"] is not None:
+                item["reranker_score"] = item["reranker_score"] * (1 + min(boost, 0.15))
+            else:
+                item["score"] = item["score"] * (1 - min(boost, 0.15))
+
+    # Re-sort
+    if items and items[0].get("reranker_score") is not None:
+        items.sort(key=lambda x: x.get("reranker_score", 0), reverse=True)
+    else:
+        items.sort(key=lambda x: x["score"])
+
+    return items
+
+
+def _track_knowledge_recalls(session: Session, item_ids: list[str]) -> None:
+    """Update recall tracking on knowledge items that were surfaced."""
+    if not item_ids:
+        return
+    from uuid import UUID as _UUID
+    uuids = [_UUID(i) for i in item_ids]
+    session.execute(
+        update(KnowledgeItem)
+        .where(KnowledgeItem.id.in_(uuids))
+        .values(
+            last_recalled_at=func.now(),
+            recall_count=KnowledgeItem.recall_count + 1,
+        )
+    )
+    session.flush()
+
+
 def _apply_reranker(
     query_text: str | None,
     items: list[dict],
@@ -417,32 +544,12 @@ def recall(
         }
 
     if payload.scope == "knowledge":
-        score = KnowledgeItem.embedding.cosine_distance(query_embedding).label("score")
-        stmt = (
-            select(KnowledgeItem, score)
-            .where(KnowledgeItem.namespace == payload.namespace)
-            .where(KnowledgeItem.embedding.is_not(None))
-            .order_by(score)
-            .limit(candidate_k)
+        items = _recall_knowledge_weighted(
+            session, payload.namespace, query_embedding, candidate_k,
+            project_id, entity_id, settings,
         )
-        if project_id:
-            stmt = stmt.where(KnowledgeItem.project_id == project_id)
-        if entity_id:
-            stmt = stmt.where(KnowledgeItem.entity_id == entity_id)
-
-        rows = session.execute(stmt).all()
-        items = [
-            {
-                "id": str(item.id),
-                "scope": "knowledge",
-                "score": float(score_value),
-                "snippet": _clip(item.content, settings.max_snippet_chars),
-                "tags": list(item.tags or []),
-                "created_at": item.created_at,
-            }
-            for item, score_value in rows
-        ]
         items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        _track_knowledge_recalls(session, [i["id"] for i in items])
         if payload.agent_key:
             update_profile_from_recall(session, payload.agent_key, payload.namespace)
         return items
@@ -524,6 +631,7 @@ def recall(
 
         items = [_concept_to_recall(item, score_value) for item, score_value in rows]
         items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        items = _apply_spreading_activation(session, items, payload.namespace)
         if payload.agent_key:
             items = _boost_by_agent_profile(session, items, payload.agent_key, payload.namespace)
         # Log recall events for concepts that were surfaced
@@ -546,32 +654,11 @@ def recall(
         return items
 
     if payload.scope == "all":
-        # --- knowledge items ---
-        ki_score = KnowledgeItem.embedding.cosine_distance(query_embedding).label("score")
-        ki_stmt = (
-            select(KnowledgeItem, ki_score)
-            .where(KnowledgeItem.namespace == payload.namespace)
-            .where(KnowledgeItem.embedding.is_not(None))
-            .order_by(ki_score)
-            .limit(candidate_k)
+        # --- knowledge items (weighted) ---
+        items = _recall_knowledge_weighted(
+            session, payload.namespace, query_embedding, candidate_k,
+            project_id, entity_id, settings,
         )
-        if project_id:
-            ki_stmt = ki_stmt.where(KnowledgeItem.project_id == project_id)
-        if entity_id:
-            ki_stmt = ki_stmt.where(KnowledgeItem.entity_id == entity_id)
-
-        ki_rows = session.execute(ki_stmt).all()
-        items = [
-            {
-                "id": str(item.id),
-                "scope": "knowledge",
-                "score": float(score_value),
-                "snippet": _clip(item.content, settings.max_snippet_chars),
-                "tags": list(item.tags or []),
-                "created_at": item.created_at,
-            }
-            for item, score_value in ki_rows
-        ]
 
         # --- concepts ---
         c_score = Concept.embedding.cosine_distance(query_embedding).label("score")
@@ -592,8 +679,13 @@ def recall(
         items = items[:candidate_k]
 
         items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        items = _apply_spreading_activation(session, items, payload.namespace)
         if payload.agent_key:
             items = _boost_by_agent_profile(session, items, payload.agent_key, payload.namespace)
+        # Track knowledge item recalls
+        ki_ids = [i["id"] for i in items if i.get("scope") == "knowledge"]
+        if ki_ids:
+            _track_knowledge_recalls(session, ki_ids)
         # Log recall events for concepts that were surfaced
         if payload.session_id:
             concept_items = [item for item in items if item.get("scope") == "concepts"]
@@ -1117,6 +1209,41 @@ def list_concepts(
     ]
 
 
+def list_concept_links(
+    session: Session,
+    namespace: str,
+    limit: int = 200,
+) -> list[dict]:
+    """List concept links for a namespace, ordered by weight descending."""
+    from .models import ConceptLink, Concept
+
+    stmt = (
+        select(
+            ConceptLink.concept_a,
+            ConceptLink.concept_b,
+            ConceptLink.weight,
+            ConceptLink.link_type,
+            ConceptLink.co_occurrence_count,
+        )
+        .join(Concept, ConceptLink.concept_a == Concept.id)
+        .where(Concept.namespace == namespace)
+        .order_by(ConceptLink.weight.desc())
+        .limit(min(max(limit, 1), 500))
+    )
+
+    rows = session.execute(stmt).all()
+    return [
+        {
+            "source": str(r.concept_a),
+            "target": str(r.concept_b),
+            "weight": r.weight,
+            "link_type": r.link_type,
+            "co_occurrences": r.co_occurrence_count,
+        }
+        for r in rows
+    ]
+
+
 def get_concept_with_history(session: Session, namespace: str, concept_id: str) -> dict | None:
     """Get a concept and its version history chain."""
     ensure_namespace_exists(session, namespace)
@@ -1554,6 +1681,46 @@ def get_feedback_summary(
         summary[cid]["implicit_recalls"] = count
 
     return dict(summary)
+
+
+KNOWLEDGE_STRENGTH_DELTAS = {
+    "useful": 0.2,
+    "noted": 0.1,
+    "wrong": -0.5,
+}
+
+
+def create_knowledge_feedback(
+    session: Session,
+    namespace: str,
+    signal: str,
+    agent_key: str,
+    knowledge_item_id: UUID,
+    note: str | None = None,
+) -> dict:
+    """Apply feedback signal to a knowledge item's strength."""
+    item = session.get(KnowledgeItem, knowledge_item_id)
+    if not item or item.namespace != namespace:
+        raise ValueError(f"Knowledge item {knowledge_item_id} not found in namespace {namespace}")
+
+    delta = KNOWLEDGE_STRENGTH_DELTAS.get(signal, 0)
+    new_strength = max(item.strength + delta, 0.1)
+    item.strength = new_strength
+
+    if delta > 0:
+        item.positive_feedback = (item.positive_feedback or 0) + 1
+    elif delta < 0:
+        item.negative_feedback = (item.negative_feedback or 0) + 1
+
+    if signal == "wrong":
+        item.status = "flagged"
+
+    session.flush()
+    return {
+        "knowledge_item_id": str(knowledge_item_id),
+        "signal": signal,
+        "strength": new_strength,
+    }
 
 
 def mark_session_completed(session: Session, session_id: str) -> int:
