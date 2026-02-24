@@ -449,11 +449,231 @@ function makeTextSprite(text, position) {
 }
 
 // ---------------------------------------------------------------------------
+// Node system — golden spiral placement + InstancedMesh rendering
+// ---------------------------------------------------------------------------
+function placeOnShell(index, total, radius) {
+  const goldenAngle = 2.399963229728653; // pi * (3 - sqrt(5))
+  const y = 1 - (2 * index / Math.max(total - 1, 1));
+  const radiusAtY = Math.sqrt(1 - y * y);
+  const theta = goldenAngle * index;
+  const jitter = (Math.random() - 0.5) * 2;
+  return new THREE.Vector3(
+    (Math.cos(theta) * radiusAtY * radius) + jitter,
+    (y * radius) + jitter,
+    (Math.sin(theta) * radiusAtY * radius) + jitter
+  );
+}
+
+function buildNodes(concepts) {
+  // Remove old instanced mesh if present
+  if (instancedNodes) {
+    scene.remove(instancedNodes);
+    instancedNodes.geometry.dispose();
+    instancedNodes.material.dispose();
+    instancedNodes = null;
+  }
+
+  if (concepts.length === 0) return;
+
+  // Preserve birth/flash state from existing nodeData keyed by concept id
+  const prevState = {};
+  for (let i = 0; i < nodeData.length; i++) {
+    const nd = nodeData[i];
+    prevState[nd.concept.id] = { birth: nd.birth, flash: nd.flash, pulse: nd.pulse };
+  }
+
+  // Group concepts by scope
+  const scopeGroups = { global: [], project: [], device: [] };
+  for (let i = 0; i < concepts.length; i++) {
+    const c = concepts[i];
+    const scope = c.scope || 'global';
+    const bucket = scopeGroups[scope] || scopeGroups.global;
+    bucket.push(c);
+  }
+
+  // Build nodeData with rendering properties
+  nodeData = [];
+  conceptMap = {};
+  for (const scope of ['global', 'project', 'device']) {
+    const group = scopeGroups[scope];
+    const radius = SCOPE_RADII[scope] || SCOPE_RADII.global;
+    for (let i = 0; i < group.length; i++) {
+      const c = group[i];
+      conceptMap[c.id] = c;
+      const evidenceCount = c.evidence_count || 0;
+      const prev = prevState[c.id];
+      nodeData.push({
+        concept: c,
+        position: placeOnShell(i, group.length, radius),
+        color: (TYPE_COLORS[c.type] || new THREE.Color(0x888888)).clone(),
+        baseSize: Math.max(0.5, Math.min(3, 0.5 + Math.sqrt(evidenceCount) * 0.4)),
+        opacity: 0.3 + (c.confidence || 0.5) * 0.7,
+        visible: true,
+        birth: prev ? prev.birth : 0,
+        flash: prev ? prev.flash : 0,
+        pulse: prev ? prev.pulse : Math.random() * Math.PI * 2,
+        instanceIndex: 0,
+      });
+    }
+  }
+
+  // Create InstancedMesh
+  const geo = new THREE.SphereGeometry(1, 12, 12);
+  const mat = new THREE.MeshStandardMaterial({
+    roughness: 0.3,
+    metalness: 0.6,
+    emissive: new THREE.Color(0x222222),
+    emissiveIntensity: 0.5,
+    transparent: true,
+    opacity: 0.9,
+  });
+  instancedNodes = new THREE.InstancedMesh(geo, mat, nodeData.length);
+  instancedNodes.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+  const dummy = new THREE.Object3D();
+  for (let i = 0; i < nodeData.length; i++) {
+    const n = nodeData[i];
+    n.instanceIndex = i;
+    dummy.position.copy(n.position);
+    dummy.scale.setScalar(n.baseSize);
+    dummy.updateMatrix();
+    instancedNodes.setMatrixAt(i, dummy.matrix);
+    instancedNodes.setColorAt(i, n.color);
+  }
+  instancedNodes.instanceMatrix.needsUpdate = true;
+  instancedNodes.instanceColor.needsUpdate = true;
+  scene.add(instancedNodes);
+}
+
+function updateNodes(newConcepts) {
+  // Build lookup of new concepts
+  const newMap = {};
+  for (let i = 0; i < newConcepts.length; i++) {
+    newMap[newConcepts[i].id] = newConcepts[i];
+  }
+
+  let changed = false;
+
+  // Check for changes in existing nodes
+  for (let i = 0; i < nodeData.length; i++) {
+    const nd = nodeData[i];
+    const updated = newMap[nd.concept.id];
+    if (updated) {
+      const oldConf = nd.concept.confidence;
+      const oldEvidence = nd.concept.evidence_count;
+      if (updated.confidence !== oldConf || updated.evidence_count !== oldEvidence) {
+        nd.flash = 1.0;
+        nd.concept = updated;
+        nd.baseSize = Math.max(0.5, Math.min(3, 0.5 + Math.sqrt(updated.evidence_count || 0) * 0.4));
+        nd.opacity = 0.3 + (updated.confidence || 0.5) * 0.7;
+        nd.color = (TYPE_COLORS[updated.type] || new THREE.Color(0x888888)).clone();
+        changed = true;
+      }
+    }
+  }
+
+  // Check for new concepts
+  const existingIds = new Set();
+  for (let i = 0; i < nodeData.length; i++) {
+    existingIds.add(nodeData[i].concept.id);
+  }
+  for (let i = 0; i < newConcepts.length; i++) {
+    if (!existingIds.has(newConcepts[i].id)) {
+      changed = true;
+      break;
+    }
+  }
+
+  // Check for removed concepts
+  if (!changed) {
+    for (let i = 0; i < nodeData.length; i++) {
+      if (!newMap[nodeData[i].concept.id]) {
+        changed = true;
+        break;
+      }
+    }
+  }
+
+  if (changed) {
+    // Mark new concepts with birth animation before rebuild
+    const oldIds = new Set();
+    for (let i = 0; i < nodeData.length; i++) {
+      oldIds.add(nodeData[i].concept.id);
+    }
+
+    // Temporarily stash birth/flash into a map so buildNodes preserves them
+    // For new concepts, we inject a synthetic prev state with birth=1
+    const synthState = {};
+    for (let i = 0; i < newConcepts.length; i++) {
+      if (!oldIds.has(newConcepts[i].id)) {
+        synthState[newConcepts[i].id] = true;
+      }
+    }
+
+    buildNodes(newConcepts);
+
+    // Set birth=1 for truly new nodes
+    for (let i = 0; i < nodeData.length; i++) {
+      if (synthState[nodeData[i].concept.id]) {
+        nodeData[i].birth = 1.0;
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Animate loop
 // ---------------------------------------------------------------------------
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
+
+  // Animate instanced nodes
+  if (instancedNodes && nodeData.length > 0) {
+    const dummy = new THREE.Object3D();
+    let colorDirty = false;
+    for (let i = 0; i < nodeData.length; i++) {
+      const n = nodeData[i];
+
+      // Gentle pulse
+      n.pulse += 0.01;
+      const pulseScale = 1 + Math.sin(n.pulse) * 0.05;
+
+      // Birth animation: scale from 0 to baseSize
+      let scale = n.baseSize * pulseScale;
+      if (n.birth > 0) {
+        n.birth = Math.max(0, n.birth - 0.02);
+        scale *= (1 - n.birth);
+      }
+
+      // Flash: lerp color toward white and back
+      if (n.flash > 0) {
+        n.flash = Math.max(0, n.flash - 0.02);
+        const flashColor = n.color.clone().lerp(new THREE.Color(0xffffff), n.flash * 0.6);
+        instancedNodes.setColorAt(i, flashColor);
+        colorDirty = true;
+      }
+
+      // Visibility via scale (hide = scale 0)
+      const typeMatch = activeGroup === 'all' || n.concept.type === activeGroup;
+      const scopeMatch = !activeScope || n.concept.scope === activeScope;
+      const searchMatch = !searchTerm || n.concept.title.toLowerCase().includes(searchTerm) ||
+                          (n.concept.scope_ref || '').toLowerCase().includes(searchTerm);
+      n.visible = typeMatch && scopeMatch && searchMatch;
+
+      if (!n.visible) scale = 0;
+
+      dummy.position.copy(n.position);
+      dummy.scale.setScalar(scale);
+      dummy.updateMatrix();
+      instancedNodes.setMatrixAt(i, dummy.matrix);
+    }
+    instancedNodes.instanceMatrix.needsUpdate = true;
+    if (colorDirty) {
+      instancedNodes.instanceColor.needsUpdate = true;
+    }
+  }
+
   composer.render();
 }
 
@@ -596,7 +816,7 @@ function renderDrawer() {
   // Status tab - concept counts
   var counts = {};
   for (var ci = 0; ci < nodeData.length; ci++) {
-    var ctype = nodeData[ci].type || 'unknown';
+    var ctype = (nodeData[ci].concept ? nodeData[ci].concept.type : nodeData[ci].type) || 'unknown';
     counts[ctype] = (counts[ctype] || 0) + 1;
   }
   var countsEl = document.getElementById('drawer-concept-counts');
@@ -668,7 +888,7 @@ function renderDrawer() {
 }
 
 // ---------------------------------------------------------------------------
-// Data loading (stub — populates nodeData for drawer, full node rendering in Task 3)
+// Data loading — builds or updates 3D nodes from API data
 // ---------------------------------------------------------------------------
 async function loadData() {
   try {
@@ -676,19 +896,19 @@ async function loadData() {
     const data = await resp.json();
     const incoming = data.concepts || [];
 
-    // Store raw concept data
-    conceptMap = {};
-    nodeData = incoming;
-    for (const c of incoming) {
-      conceptMap[c.id] = c;
-    }
-
-    // Update HUD stats
+    // Update HUD stats from raw incoming (before nodeData is restructured)
     document.getElementById('s-know').textContent = data.knowledge_count || '?';
     document.getElementById('s-prin').textContent = incoming.filter(c => c.type === 'principle').length;
     document.getElementById('s-model').textContent = incoming.filter(c => c.type === 'mental_model').length;
     document.getElementById('s-rel').textContent = incoming.filter(c => c.type === 'relationship').length;
     document.getElementById('s-skill').textContent = incoming.filter(c => c.type === 'skill').length;
+
+    // First load: build all nodes. Subsequent loads: diff-update.
+    if (nodeData.length === 0) {
+      buildNodes(incoming);
+    } else {
+      updateNodes(incoming);
+    }
   } catch (e) {
     console.error('Failed to load concepts:', e);
   }
