@@ -5,7 +5,7 @@ import uuid
 import httpx
 import pytest
 
-BASE_URL = "http://127.0.0.1:8000"
+from .conftest import BASE_URL
 
 
 def _unique_name(prefix: str = "pytest") -> str:

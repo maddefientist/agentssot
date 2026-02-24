@@ -1,7 +1,9 @@
+import os
+
 import httpx
 import pytest
 
-BASE_URL = "http://127.0.0.1:8000"
+BASE_URL = os.environ.get("SSOT_TEST_URL", "http://YOUR_HOST:8088")
 
 
 @pytest.fixture
