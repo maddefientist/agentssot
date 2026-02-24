@@ -407,6 +407,7 @@ let globalEdges = null;
 let focusEdges = null;
 let particleSystem = null;
 let clusterHulls = [];
+let focusEdgeEndpoints = []; // populated by showFocusEdges, consumed by particle system
 
 // Constants
 const TYPE_COLORS = {
@@ -755,10 +756,12 @@ function focusOnNode(node) {
 
   // Open detail panel
   showDetailPanel(node);
+  showFocusEdges(node.concept.id);
 }
 
 function unfocus() {
   focusedNode = null;
+  hideFocusEdges();
   cameraTarget = {
     position: defaultCameraPos.clone(),
     lookAt: new THREE.Vector3(0, 0, 0),
@@ -878,6 +881,247 @@ function hideDetailPanel() {
 document.getElementById('detailClose').addEventListener('click', unfocus);
 
 // ---------------------------------------------------------------------------
+// Edge rendering — global web + focus edges
+// ---------------------------------------------------------------------------
+async function loadLinks() {
+  try {
+    const resp = await fetch('/cortex/links?namespace=claude-shared&limit=200');
+    const data = await resp.json();
+    allLinks = data.links || [];
+    buildGlobalEdges();
+  } catch (e) {
+    console.error('Failed to load links:', e);
+  }
+}
+
+function buildGlobalEdges() {
+  if (globalEdges) {
+    scene.remove(globalEdges);
+    globalEdges.geometry.dispose();
+    globalEdges.material.dispose();
+    globalEdges = null;
+  }
+
+  if (allLinks.length === 0 || nodeData.length === 0) return;
+
+  const posMap = {};
+  for (const n of nodeData) {
+    posMap[n.concept.id] = n.position;
+  }
+
+  const topLinks = allLinks.slice(0, 80);
+  const positions = [];
+  const colors = [];
+
+  for (const link of topLinks) {
+    const pA = posMap[link.source];
+    const pB = posMap[link.target];
+    if (!pA || !pB) continue;
+
+    const sourceC = conceptMap[link.source];
+    const col = sourceC ? (TYPE_COLORS[sourceC.type] || new THREE.Color(0x888888)) : new THREE.Color(0x888888);
+    const opacity = 0.03 + (link.weight / 5.0) * 0.07;
+
+    positions.push(pA.x, pA.y, pA.z, pB.x, pB.y, pB.z);
+    colors.push(col.r * opacity, col.g * opacity, col.b * opacity);
+    colors.push(col.r * opacity, col.g * opacity, col.b * opacity);
+  }
+
+  if (positions.length === 0) return;
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+  const mat = new THREE.LineBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 1.0,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+
+  globalEdges = new THREE.LineSegments(geo, mat);
+  scene.add(globalEdges);
+}
+
+function showFocusEdges(nodeId) {
+  hideFocusEdges();
+
+  const posMap = {};
+  for (const n of nodeData) {
+    posMap[n.concept.id] = n.position;
+  }
+
+  const nodeLinks = allLinks.filter(l => l.source === nodeId || l.target === nodeId);
+  if (nodeLinks.length === 0) return;
+
+  const positions = [];
+  const colors = [];
+  const focusNodePos = posMap[nodeId];
+  if (!focusNodePos) return;
+
+  const sourceC = conceptMap[nodeId];
+  const baseColor = sourceC ? (TYPE_COLORS[sourceC.type] || new THREE.Color(0x8b5cf6)) : new THREE.Color(0x8b5cf6);
+
+  focusEdgeEndpoints = [];
+
+  for (const link of nodeLinks) {
+    const otherId = link.source === nodeId ? link.target : link.source;
+    const otherPos = posMap[otherId];
+    if (!otherPos) continue;
+
+    positions.push(focusNodePos.x, focusNodePos.y, focusNodePos.z);
+    positions.push(otherPos.x, otherPos.y, otherPos.z);
+
+    const intensity = 0.3 + (link.weight / 5.0) * 0.5;
+    colors.push(baseColor.r * intensity, baseColor.g * intensity, baseColor.b * intensity);
+    colors.push(baseColor.r * intensity * 0.5, baseColor.g * intensity * 0.5, baseColor.b * intensity * 0.5);
+
+    focusEdgeEndpoints.push({
+      start: focusNodePos.clone(),
+      end: otherPos.clone(),
+      weight: link.weight,
+    });
+  }
+
+  if (positions.length === 0) return;
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+  const mat = new THREE.LineBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.8,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+
+  focusEdges = new THREE.LineSegments(geo, mat);
+  scene.add(focusEdges);
+
+  activateParticles();
+}
+
+function hideFocusEdges() {
+  if (focusEdges) {
+    scene.remove(focusEdges);
+    focusEdges.geometry.dispose();
+    focusEdges.material.dispose();
+    focusEdges = null;
+  }
+  deactivateParticles();
+}
+
+// ---------------------------------------------------------------------------
+// Particle flow system — dots streaming along focus edges
+// ---------------------------------------------------------------------------
+const PARTICLE_COUNT = 500;
+let particlePositions, particleSpeeds, particleProgress, particleEdgeIndices;
+
+function createParticleSystem() {
+  const geo = new THREE.BufferGeometry();
+  particlePositions = new Float32Array(PARTICLE_COUNT * 3);
+  const particleColors = new Float32Array(PARTICLE_COUNT * 3);
+  const sizes = new Float32Array(PARTICLE_COUNT);
+
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    particlePositions[i * 3] = 0;
+    particlePositions[i * 3 + 1] = 0;
+    particlePositions[i * 3 + 2] = 0;
+    particleColors[i * 3] = 0.6;
+    particleColors[i * 3 + 1] = 0.4;
+    particleColors[i * 3 + 2] = 1.0;
+    sizes[i] = 0;
+  }
+
+  geo.setAttribute('position', new THREE.BufferAttribute(particlePositions, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(particleColors, 3));
+  geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+  const mat = new THREE.PointsMaterial({
+    size: 0.3,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.6,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    sizeAttenuation: true,
+  });
+
+  particleSystem = new THREE.Points(geo, mat);
+  scene.add(particleSystem);
+
+  particleProgress = new Float32Array(PARTICLE_COUNT);
+  particleSpeeds = new Float32Array(PARTICLE_COUNT);
+  particleEdgeIndices = new Int32Array(PARTICLE_COUNT);
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    particleProgress[i] = Math.random();
+    particleSpeeds[i] = 0;
+    particleEdgeIndices[i] = -1;
+  }
+}
+
+function activateParticles() {
+  if (!particleSystem || focusEdgeEndpoints.length === 0) return;
+
+  const edgeCount = focusEdgeEndpoints.length;
+  const perEdge = Math.floor(PARTICLE_COUNT / edgeCount);
+  const sizes = particleSystem.geometry.attributes.size;
+  const colors = particleSystem.geometry.attributes.color;
+
+  const focusColor = focusedNode ? focusedNode.color : new THREE.Color(0x8b5cf6);
+
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    const edgeIdx = Math.min(Math.floor(i / Math.max(perEdge, 1)), edgeCount - 1);
+    particleEdgeIndices[i] = edgeIdx;
+    particleProgress[i] = Math.random();
+    const edge = focusEdgeEndpoints[edgeIdx];
+    particleSpeeds[i] = 0.005 + (edge.weight / 5.0) * 0.015;
+    sizes.array[i] = 0.3;
+    colors.array[i * 3] = focusColor.r;
+    colors.array[i * 3 + 1] = focusColor.g;
+    colors.array[i * 3 + 2] = focusColor.b;
+  }
+  sizes.needsUpdate = true;
+  colors.needsUpdate = true;
+}
+
+function deactivateParticles() {
+  if (!particleSystem) return;
+  focusEdgeEndpoints = [];
+  const sizes = particleSystem.geometry.attributes.size;
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    sizes.array[i] = 0;
+    particleEdgeIndices[i] = -1;
+  }
+  sizes.needsUpdate = true;
+}
+
+function updateParticles() {
+  if (!particleSystem || focusEdgeEndpoints.length === 0) return;
+
+  const positions = particleSystem.geometry.attributes.position;
+
+  for (let i = 0; i < PARTICLE_COUNT; i++) {
+    const edgeIdx = particleEdgeIndices[i];
+    if (edgeIdx < 0 || edgeIdx >= focusEdgeEndpoints.length) continue;
+
+    particleProgress[i] += particleSpeeds[i];
+    if (particleProgress[i] > 1) particleProgress[i] -= 1;
+
+    const edge = focusEdgeEndpoints[edgeIdx];
+    const t = particleProgress[i];
+    positions.array[i * 3] = edge.start.x + (edge.end.x - edge.start.x) * t;
+    positions.array[i * 3 + 1] = edge.start.y + (edge.end.y - edge.start.y) * t;
+    positions.array[i * 3 + 2] = edge.start.z + (edge.end.z - edge.start.z) * t;
+  }
+  positions.needsUpdate = true;
+}
+
+// ---------------------------------------------------------------------------
 // Animate loop
 // ---------------------------------------------------------------------------
 function animate() {
@@ -977,6 +1221,7 @@ function animate() {
     }
   }
 
+  updateParticles();
   composer.render();
 }
 
@@ -1223,9 +1468,12 @@ async function loadData() {
 // Boot
 // ---------------------------------------------------------------------------
 initScene();
+createParticleSystem();
 loadData().then(function() {
   animate();
   setInterval(loadData, POLL_INTERVAL);
+  loadLinks();
+  setInterval(loadLinks, 30000);
 });
 </script>
 </body>
