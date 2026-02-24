@@ -466,9 +466,9 @@ function initScene() {
 
   const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(W, H),
-    0.6,   // strength
-    0.5,   // radius
-    0.2    // threshold
+    0.4,   // strength
+    0.4,   // radius
+    0.6    // threshold
   );
   composer.addPass(bloomPass);
 
@@ -477,7 +477,7 @@ function initScene() {
   composer.addPass(fxaaPass);
 
   // Lighting
-  const ambientLight = new THREE.AmbientLight(0x404060, 0.5);
+  const ambientLight = new THREE.AmbientLight(0x606080, 0.8);
   scene.add(ambientLight);
 
   const pointLight = new THREE.PointLight(0x8b5cf6, 0.5);
@@ -613,10 +613,10 @@ function buildNodes(concepts) {
   // Create InstancedMesh
   const geo = new THREE.SphereGeometry(1, 12, 12);
   const mat = new THREE.MeshStandardMaterial({
-    roughness: 0.3,
-    metalness: 0.6,
-    emissive: new THREE.Color(0x222222),
-    emissiveIntensity: 0.5,
+    roughness: 0.4,
+    metalness: 0.3,
+    emissive: new THREE.Color(0xffffff),
+    emissiveIntensity: 0.6,
     transparent: true,
     opacity: 0.9,
   });
@@ -798,29 +798,30 @@ const mouse = new THREE.Vector2(-999, -999);
 let cameraTarget = null; // { position, lookAt } for smooth camera tween
 let defaultCameraPos = new THREE.Vector3(0, 60, 120);
 
-renderer.domElement.addEventListener('mousemove', (e) => {
-  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-  mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-});
+function initInteraction() {
+  renderer.domElement.addEventListener('mousemove', (e) => {
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  });
 
-renderer.domElement.addEventListener('click', (e) => {
-  // Don't trigger if clicking on UI overlays
-  if (e.target !== renderer.domElement) return;
+  renderer.domElement.addEventListener('click', (e) => {
+    if (e.target !== renderer.domElement) return;
 
-  if (hoveredNode) {
-    if (focusedNode === hoveredNode) {
-      unfocus();
+    if (hoveredNode) {
+      if (focusedNode === hoveredNode) {
+        unfocus();
+      } else {
+        focusOnNode(hoveredNode);
+      }
     } else {
-      focusOnNode(hoveredNode);
+      unfocus();
     }
-  } else {
-    unfocus();
-  }
-});
+  });
 
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') unfocus();
-});
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') unfocus();
+  });
+}
 
 function focusOnNode(node) {
   focusedNode = node;
@@ -1560,6 +1561,7 @@ async function loadData() {
 // Boot
 // ---------------------------------------------------------------------------
 initScene();
+initInteraction();
 createParticleSystem();
 loadData().then(function() {
   animate();
