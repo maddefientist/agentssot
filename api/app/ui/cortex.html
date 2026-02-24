@@ -261,6 +261,9 @@
   <div class="legend-item"><div class="legend-dot" style="background:#22c55e50"></div> Size = evidence</div>
   <div class="legend-item"><div class="legend-dot" style="background:rgba(255,255,255,0.3)"></div> Opacity = confidence</div>
   <div class="legend-item"><div class="legend-dot" style="background:#ffd700; box-shadow: 0 0 6px #ffd700;"></div> Gold glow = consensus</div>
+  <div class="legend-item"><div class="legend-dot" style="background:rgba(139,92,246,0.3); border: 1px solid rgba(139,92,246,0.5);"></div> Edges = shared evidence</div>
+  <div class="legend-item"><div class="legend-dot" style="background:rgba(139,92,246,0.6);"></div> Particles = active flow</div>
+  <div class="legend-item"><div class="legend-dot" style="background:rgba(100,100,100,0.1); border: 1px dashed rgba(100,100,100,0.3);"></div> Hull = concept cluster</div>
 </div>
 
 <div id="tooltip">
@@ -388,6 +391,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
+import { ConvexGeometry } from 'three/addons/geometries/ConvexGeometry.js';
 
 // ---------------------------------------------------------------------------
 // State (populated by later tasks)
@@ -706,6 +710,82 @@ function updateNodes(newConcepts) {
       if (synthState[nodeData[i].concept.id]) {
         nodeData[i].birth = 1.0;
       }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cluster Hulls — transparent convex hulls grouped by scope_ref
+// ---------------------------------------------------------------------------
+function buildClusterHulls() {
+  // Remove old hulls
+  for (const group of clusterHulls) {
+    scene.remove(group);
+    group.traverse(child => {
+      if (child.geometry) child.geometry.dispose();
+      if (child.material) child.material.dispose();
+    });
+  }
+  clusterHulls = [];
+
+  if (nodeData.length === 0) return;
+
+  // Group nodes by scope_ref
+  const groups = {};
+  for (const n of nodeData) {
+    const ref = n.concept.scope_ref;
+    if (!ref) continue;
+    if (!groups[ref]) groups[ref] = [];
+    groups[ref].push(n);
+  }
+
+  for (const [ref, nodes] of Object.entries(groups)) {
+    if (nodes.length < 4) continue; // Need 4+ points for 3D convex hull
+
+    const points = nodes.map(n => n.position.clone());
+
+    try {
+      const hullGeo = new ConvexGeometry(points);
+
+      // Average color from node types in this group
+      const avgColor = new THREE.Color(0, 0, 0);
+      for (const n of nodes) avgColor.add(n.color);
+      avgColor.multiplyScalar(1 / nodes.length);
+
+      const group = new THREE.Group();
+
+      // Transparent fill
+      const fillMat = new THREE.MeshBasicMaterial({
+        color: avgColor,
+        transparent: true,
+        opacity: 0.03,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      group.add(new THREE.Mesh(hullGeo, fillMat));
+
+      // Wireframe outline
+      const wireMat = new THREE.MeshBasicMaterial({
+        color: avgColor,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.06,
+      });
+      group.add(new THREE.Mesh(hullGeo.clone(), wireMat));
+
+      // Label sprite at centroid
+      const centroid = new THREE.Vector3();
+      for (const p of points) centroid.add(p);
+      centroid.divideScalar(points.length);
+
+      const label = makeTextSprite(ref, centroid);
+      label.scale.set(8, 2, 1);
+      group.add(label);
+
+      scene.add(group);
+      clusterHulls.push(group);
+    } catch (e) {
+      // ConvexGeometry can fail with coplanar points — skip silently
     }
   }
 }
@@ -1165,6 +1245,17 @@ function animate() {
         colorDirty = true;
       }
 
+      // Consensus glow: gold pulse for concepts confirmed by 3+ agents
+      if (n.flash <= 0) {
+        const agents = n.concept.confirming_agents;
+        if (agents && agents.length >= 3) {
+          const goldIntensity = 0.5 + Math.sin(n.pulse * 2) * 0.3;
+          const goldColor = n.color.clone().lerp(new THREE.Color(0xffd700), goldIntensity);
+          instancedNodes.setColorAt(i, goldColor);
+          colorDirty = true;
+        }
+      }
+
       // Visibility via scale (hide = scale 0)
       const typeMatch = activeGroup === 'all' || n.concept.type === activeGroup;
       const scopeMatch = !activeScope || n.concept.scope === activeScope;
@@ -1457,6 +1548,7 @@ async function loadData() {
     } else {
       updateNodes(incoming);
     }
+    buildClusterHulls();
   } catch (e) {
     console.error('Failed to load concepts:', e);
   }
