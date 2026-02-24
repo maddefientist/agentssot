@@ -429,9 +429,10 @@ const POLL_INTERVAL = 10000;
 let scene, camera, renderer, controls, composer, fxaaPass;
 
 // ---------------------------------------------------------------------------
-// Procedural cosmic background — nebula gradients + layered starfield
+// Procedural cosmic background — rendered to a CSS canvas behind WebGL
 // ---------------------------------------------------------------------------
 function buildCosmicBackground() {
+  const container = document.getElementById('scene-container');
   const size = 2048;
   const cv = document.createElement('canvas');
   cv.width = size;
@@ -530,9 +531,9 @@ function buildCosmicBackground() {
     ctx.fill();
   }
 
-  const tex = new THREE.CanvasTexture(cv);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  container.style.backgroundImage = `url(${cv.toDataURL()})`;
+  container.style.backgroundSize = 'cover';
+  container.style.backgroundPosition = 'center';
 }
 
 // ---------------------------------------------------------------------------
@@ -543,9 +544,9 @@ function initScene() {
   let W = window.innerWidth;
   let H = window.innerHeight;
 
-  // Scene
+  // Scene — transparent so CSS cosmic background shows through
   scene = new THREE.Scene();
-  scene.background = buildCosmicBackground();
+  scene.background = null;
 
   // Camera
   camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 1000);
@@ -553,7 +554,7 @@ function initScene() {
   camera.lookAt(0, 0, 0);
 
   // Renderer
-  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setSize(W, H);
   container.appendChild(renderer.domElement);
@@ -1667,6 +1668,7 @@ async function loadData() {
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
+buildCosmicBackground();
 initScene();
 initInteraction();
 createParticleSystem();
