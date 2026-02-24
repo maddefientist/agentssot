@@ -221,10 +221,37 @@
   .rules-text code { background: rgba(139,92,246,0.1); padding: 1px 4px; border-radius: 3px; color: #c4b5fd; }
 
   .setup-cmd { background: rgba(255,255,255,0.03); border: 1px solid #1a1a1a; border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 10px; color: #aaa; white-space: pre-wrap; word-break: break-all; }
+
+  /* Live activity ticker */
+  #live-ticker {
+    position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%);
+    z-index: 20; display: flex; flex-direction: column; align-items: center;
+    gap: 4px; pointer-events: none;
+  }
+  .ticker-item {
+    background: rgba(5, 5, 15, 0.85); border: 1px solid rgba(139, 92, 246, 0.3);
+    border-radius: 20px; padding: 4px 14px; font-size: 10px; letter-spacing: 0.5px;
+    color: #c4b5fd; white-space: nowrap;
+    animation: tickerFade 4s ease-out forwards;
+  }
+  .ticker-item .tick-icon { margin-right: 6px; }
+  .ticker-item .tick-concept { color: #e0e0e0; font-weight: 600; }
+  .ticker-item .tick-agent { color: #666; margin-left: 8px; }
+  .ticker-item.recall { border-color: rgba(6, 182, 212, 0.4); }
+  .ticker-item.recall .tick-icon { color: #06b6d4; }
+  .ticker-item.feedback { border-color: rgba(245, 158, 11, 0.4); }
+  .ticker-item.feedback .tick-icon { color: #f59e0b; }
+  @keyframes tickerFade {
+    0% { opacity: 0; transform: translateY(10px); }
+    10% { opacity: 1; transform: translateY(0); }
+    70% { opacity: 1; }
+    100% { opacity: 0; }
+  }
 </style>
 </head>
 <body>
 <div id="scene-container"></div>
+<div id="live-ticker"></div>
 
 <div id="hud">
   <div>
@@ -1314,6 +1341,7 @@ function updateParticles() {
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
+  updateFireRings();
 
   // Smooth camera tween
   if (cameraTarget) {
@@ -1668,6 +1696,151 @@ async function loadData() {
 }
 
 // ---------------------------------------------------------------------------
+// Live Activity — neuron firing + ticker
+// ---------------------------------------------------------------------------
+let lastSeenEventTime = null;
+const fireRings = []; // active ripple ring animations
+
+function fireNeuron(conceptTitle, eventType) {
+  // Find the node matching this concept
+  const node = nodeData.find(n =>
+    n.concept.title && n.concept.title === conceptTitle
+  );
+  if (!node) return;
+
+  // Trigger flash on the node (bright white flash that fades)
+  node.flash = 1.0;
+
+  // Create expanding ripple ring at the node's position
+  const ringColor = eventType === 'recall'
+    ? new THREE.Color(0x06b6d4)   // cyan for recall
+    : new THREE.Color(0xf59e0b);  // amber for feedback
+
+  const ringGeo = new THREE.RingGeometry(0.5, 0.8, 32);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: ringColor,
+    transparent: true,
+    opacity: 0.8,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.position.copy(node.position);
+  // Orient ring to face camera
+  ring.lookAt(camera.position);
+  scene.add(ring);
+
+  fireRings.push({
+    mesh: ring,
+    age: 0,
+    maxAge: 60, // frames (~1 second at 60fps)
+    node: node,
+  });
+
+  // Also flash connected edges briefly
+  const connected = allLinks.filter(l =>
+    l.source === node.concept.id || l.target === node.concept.id
+  );
+  for (const link of connected.slice(0, 8)) {
+    const otherId = link.source === node.concept.id ? link.target : link.source;
+    const otherNode = nodeData.find(n => n.concept.id === otherId);
+    if (otherNode) {
+      otherNode.flash = Math.max(otherNode.flash, 0.4); // softer flash on neighbors
+    }
+  }
+}
+
+function updateFireRings() {
+  for (let i = fireRings.length - 1; i >= 0; i--) {
+    const r = fireRings[i];
+    r.age++;
+    const t = r.age / r.maxAge;
+
+    // Expand ring
+    const scale = 1 + t * 8;
+    r.mesh.scale.setScalar(scale);
+
+    // Fade out
+    r.mesh.material.opacity = 0.8 * (1 - t);
+
+    // Keep facing camera
+    r.mesh.lookAt(camera.position);
+
+    if (r.age >= r.maxAge) {
+      scene.remove(r.mesh);
+      r.mesh.geometry.dispose();
+      r.mesh.material.dispose();
+      fireRings.splice(i, 1);
+    }
+  }
+}
+
+function showTickerItem(event) {
+  const ticker = document.getElementById('live-ticker');
+  const item = document.createElement('div');
+  item.className = 'ticker-item ' + event.type;
+
+  const icon = document.createElement('span');
+  icon.className = 'tick-icon';
+  icon.textContent = event.type === 'recall' ? '\u26A1' : '\u2B50';
+  item.appendChild(icon);
+
+  const label = document.createElement('span');
+  label.textContent = event.type === 'recall' ? 'recall ' : 'feedback ';
+  item.appendChild(label);
+
+  const concept = document.createElement('span');
+  concept.className = 'tick-concept';
+  concept.textContent = (event.concept || '').slice(0, 40);
+  item.appendChild(concept);
+
+  const agent = document.createElement('span');
+  agent.className = 'tick-agent';
+  agent.textContent = (event.agent || '').replace('device-', '').replace('-writer', '');
+  item.appendChild(agent);
+
+  ticker.appendChild(item);
+
+  // Remove after animation completes
+  setTimeout(function() {
+    if (item.parentNode) item.parentNode.removeChild(item);
+  }, 4200);
+
+  // Keep max 5 items
+  while (ticker.children.length > 5) {
+    ticker.removeChild(ticker.firstChild);
+  }
+}
+
+async function pollActivity() {
+  try {
+    const resp = await fetch('/cortex/activity?namespace=claude-shared&limit=10');
+    const data = await resp.json();
+    if (!data.events || data.events.length === 0) return;
+
+    // On first poll, just record the latest timestamp
+    if (!lastSeenEventTime) {
+      lastSeenEventTime = data.events[0].at;
+      return;
+    }
+
+    // Find new events since last poll
+    const newEvents = data.events.filter(e => e.at > lastSeenEventTime);
+    if (newEvents.length > 0) {
+      lastSeenEventTime = newEvents[0].at;
+
+      // Process newest first (but fire in chronological order)
+      const chronological = newEvents.reverse();
+      for (const evt of chronological) {
+        fireNeuron(evt.concept, evt.type);
+        showTickerItem(evt);
+      }
+    }
+  } catch (_) {}
+}
+
+// ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
 initScene();
@@ -1679,6 +1852,9 @@ loadData().then(function() {
   setInterval(loadData, POLL_INTERVAL);
   loadLinks();
   setInterval(loadLinks, 30000);
+  // Start live activity polling (5s intervals)
+  pollActivity();
+  setInterval(pollActivity, 5000);
 });
 </script>
 </body>
