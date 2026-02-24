@@ -477,12 +477,15 @@ function initScene() {
   composer.addPass(fxaaPass);
 
   // Lighting
-  const ambientLight = new THREE.AmbientLight(0x606080, 0.8);
+  const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
   scene.add(ambientLight);
 
-  const pointLight = new THREE.PointLight(0x8b5cf6, 0.5);
+  const pointLight = new THREE.PointLight(0x8b5cf6, 0.8);
   pointLight.position.set(0, 0, 0);
   scene.add(pointLight);
+
+  const hemiLight = new THREE.HemisphereLight(0xccccff, 0x222244, 0.6);
+  scene.add(hemiLight);
 
   // Scope shells
   createScopeShells();
@@ -613,10 +616,10 @@ function buildNodes(concepts) {
   // Create InstancedMesh
   const geo = new THREE.SphereGeometry(1, 12, 12);
   const mat = new THREE.MeshStandardMaterial({
-    roughness: 0.4,
-    metalness: 0.3,
-    emissive: new THREE.Color(0xffffff),
-    emissiveIntensity: 0.6,
+    roughness: 0.3,
+    metalness: 0.2,
+    emissive: new THREE.Color(0x000000),
+    emissiveIntensity: 0,
     transparent: true,
     opacity: 0.9,
   });
@@ -843,10 +846,7 @@ function focusOnNode(node) {
 function unfocus() {
   focusedNode = null;
   hideFocusEdges();
-  cameraTarget = {
-    position: defaultCameraPos.clone(),
-    lookAt: new THREE.Vector3(0, 0, 0),
-  };
+  cameraTarget = null;
   controls.autoRotate = true;
   hideDetailPanel();
 }
@@ -883,7 +883,7 @@ function showDetailPanel(node) {
 
   // Confirming agents
   const agentsEl = document.getElementById('dp-agents');
-  agentsEl.innerHTML = '';
+  agentsEl.replaceChildren();
   if (c.confirming_agents && c.confirming_agents.length > 0) {
     const title = document.createElement('div');
     title.className = 'detail-section-title';
@@ -899,7 +899,7 @@ function showDetailPanel(node) {
 
   // Tags
   const tagsEl = document.getElementById('dp-tags');
-  tagsEl.innerHTML = '';
+  tagsEl.replaceChildren();
   if (c.tags && c.tags.length > 0) {
     const title = document.createElement('div');
     title.className = 'detail-section-title';
@@ -915,7 +915,7 @@ function showDetailPanel(node) {
 
   // Connected concepts
   const connEl = document.getElementById('dp-connections');
-  connEl.innerHTML = '';
+  connEl.replaceChildren();
   const connTitle = document.getElementById('dp-connections-title');
   const connections = allLinks.filter(l => l.source === c.id || l.target === c.id);
   if (connections.length > 0) {
@@ -1001,11 +1001,11 @@ function buildGlobalEdges() {
 
     const sourceC = conceptMap[link.source];
     const col = sourceC ? (TYPE_COLORS[sourceC.type] || new THREE.Color(0x888888)) : new THREE.Color(0x888888);
-    const opacity = 0.03 + (link.weight / 5.0) * 0.07;
+    const intensity = 0.15 + (link.weight / 5.0) * 0.35;
 
     positions.push(pA.x, pA.y, pA.z, pB.x, pB.y, pB.z);
-    colors.push(col.r * opacity, col.g * opacity, col.b * opacity);
-    colors.push(col.r * opacity, col.g * opacity, col.b * opacity);
+    colors.push(col.r * intensity, col.g * intensity, col.b * intensity);
+    colors.push(col.r * intensity, col.g * intensity, col.b * intensity);
   }
 
   if (positions.length === 0) return;
@@ -1241,8 +1241,12 @@ function animate() {
       // Flash: lerp color toward white and back
       if (n.flash > 0) {
         n.flash = Math.max(0, n.flash - 0.02);
-        const flashColor = n.color.clone().lerp(new THREE.Color(0xffffff), n.flash * 0.6);
-        instancedNodes.setColorAt(i, flashColor);
+        if (n.flash > 0) {
+          const flashColor = n.color.clone().lerp(new THREE.Color(0xffffff), n.flash * 0.6);
+          instancedNodes.setColorAt(i, flashColor);
+        } else {
+          instancedNodes.setColorAt(i, n.color);
+        }
         colorDirty = true;
       }
 
@@ -1260,7 +1264,7 @@ function animate() {
       // Visibility via scale (hide = scale 0)
       const typeMatch = activeGroup === 'all' || n.concept.type === activeGroup;
       const scopeMatch = !activeScope || n.concept.scope === activeScope;
-      const searchMatch = !searchTerm || n.concept.title.toLowerCase().includes(searchTerm) ||
+      const searchMatch = !searchTerm || (n.concept.title || '').toLowerCase().includes(searchTerm) ||
                           (n.concept.scope_ref || '').toLowerCase().includes(searchTerm);
       n.visible = typeMatch && scopeMatch && searchMatch;
 
