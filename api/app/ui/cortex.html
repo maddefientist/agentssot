@@ -14,7 +14,7 @@
 </script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #0a0a0f; color: #e0e0e0; font-family: 'JetBrains Mono', 'Fira Code', monospace; overflow: hidden; }
+  body { background: #0f1020; color: #e0e0e0; font-family: 'JetBrains Mono', 'Fira Code', monospace; overflow: hidden; }
 
   #scene-container {
     position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 0;
@@ -429,6 +429,113 @@ const POLL_INTERVAL = 10000;
 let scene, camera, renderer, controls, composer, fxaaPass;
 
 // ---------------------------------------------------------------------------
+// Procedural cosmic background — nebula gradients + layered starfield
+// ---------------------------------------------------------------------------
+function buildCosmicBackground() {
+  const size = 2048;
+  const cv = document.createElement('canvas');
+  cv.width = size;
+  cv.height = size;
+  const ctx = cv.getContext('2d');
+
+  // Base: deep space gradient (lighter center for contrast)
+  const bgGrad = ctx.createRadialGradient(size * 0.5, size * 0.5, 0, size * 0.5, size * 0.5, size * 0.7);
+  bgGrad.addColorStop(0, '#1e1835');    // warm purple center
+  bgGrad.addColorStop(0.4, '#121525');  // deep blue-black
+  bgGrad.addColorStop(1, '#0a0c18');    // dark edges
+  ctx.fillStyle = bgGrad;
+  ctx.fillRect(0, 0, size, size);
+
+  // Nebula layer 1: purple haze (top-right)
+  const neb1 = ctx.createRadialGradient(size * 0.7, size * 0.3, 0, size * 0.7, size * 0.3, size * 0.45);
+  neb1.addColorStop(0, 'rgba(139, 92, 246, 0.15)');
+  neb1.addColorStop(0.3, 'rgba(139, 92, 246, 0.07)');
+  neb1.addColorStop(1, 'rgba(139, 92, 246, 0)');
+  ctx.fillStyle = neb1;
+  ctx.fillRect(0, 0, size, size);
+
+  // Nebula layer 2: cyan cloud (bottom-left)
+  const neb2 = ctx.createRadialGradient(size * 0.25, size * 0.7, 0, size * 0.25, size * 0.7, size * 0.4);
+  neb2.addColorStop(0, 'rgba(6, 182, 212, 0.12)');
+  neb2.addColorStop(0.4, 'rgba(6, 182, 212, 0.05)');
+  neb2.addColorStop(1, 'rgba(6, 182, 212, 0)');
+  ctx.fillStyle = neb2;
+  ctx.fillRect(0, 0, size, size);
+
+  // Nebula layer 3: warm amber glow (center-left)
+  const neb3 = ctx.createRadialGradient(size * 0.35, size * 0.45, 0, size * 0.35, size * 0.45, size * 0.35);
+  neb3.addColorStop(0, 'rgba(245, 158, 11, 0.08)');
+  neb3.addColorStop(0.5, 'rgba(245, 158, 11, 0.03)');
+  neb3.addColorStop(1, 'rgba(245, 158, 11, 0)');
+  ctx.fillStyle = neb3;
+  ctx.fillRect(0, 0, size, size);
+
+  // Nebula layer 4: deep rose (bottom-right)
+  const neb4 = ctx.createRadialGradient(size * 0.75, size * 0.65, 0, size * 0.75, size * 0.65, size * 0.3);
+  neb4.addColorStop(0, 'rgba(220, 50, 120, 0.06)');
+  neb4.addColorStop(0.5, 'rgba(220, 50, 120, 0.02)');
+  neb4.addColorStop(1, 'rgba(220, 50, 120, 0)');
+  ctx.fillStyle = neb4;
+  ctx.fillRect(0, 0, size, size);
+
+  // Star layers: dense small + sparse bright
+  const rng = (seed) => {
+    let s = seed;
+    return () => { s = (s * 16807 + 0) % 2147483647; return s / 2147483647; };
+  };
+  const rand = rng(42);
+
+  // Layer 1: ~600 dim small stars
+  for (let i = 0; i < 600; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const r = 0.3 + rand() * 0.7;
+    const brightness = 0.2 + rand() * 0.4;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(200, 210, 255, ${brightness})`;
+    ctx.fill();
+  }
+
+  // Layer 2: ~150 medium stars with color tint
+  const starColors = ['220,220,255', '255,240,220', '200,230,255', '255,220,200'];
+  for (let i = 0; i < 150; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const r = 0.6 + rand() * 1.2;
+    const brightness = 0.4 + rand() * 0.5;
+    const col = starColors[Math.floor(rand() * starColors.length)];
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${col}, ${brightness})`;
+    ctx.fill();
+  }
+
+  // Layer 3: ~50 bright stars with glow
+  for (let i = 0; i < 50; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const r = 1.0 + rand() * 1.5;
+    // Glow halo
+    const glow = ctx.createRadialGradient(x, y, 0, x, y, r * 4);
+    glow.addColorStop(0, 'rgba(255, 255, 255, 0.3)');
+    glow.addColorStop(0.3, 'rgba(200, 210, 255, 0.1)');
+    glow.addColorStop(1, 'rgba(200, 210, 255, 0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(x - r * 4, y - r * 4, r * 8, r * 8);
+    // Core
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.fill();
+  }
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+// ---------------------------------------------------------------------------
 // Scene initialization
 // ---------------------------------------------------------------------------
 function initScene() {
@@ -438,7 +545,7 @@ function initScene() {
 
   // Scene
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a0a0f);
+  scene.background = buildCosmicBackground();
 
   // Camera
   camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 1000);
