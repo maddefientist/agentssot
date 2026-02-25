@@ -881,7 +881,7 @@ def enroll_portal():
 @app.get("/enroll/bootstrap.sh", response_class=PlainTextResponse, include_in_schema=False)
 def enroll_bootstrap_script(request: Request):
     """Serve a curl-pipeable bootstrap script for CLI enrollment."""
-    server_host = request.headers.get("host", "YOUR_HOST:8088")
+    server_host = request.headers.get("host", "localhost:8088")
     base_url = f"http://{server_host}"
 
     return f'''#!/usr/bin/env bash
@@ -921,13 +921,8 @@ if [[ -f "$AGENT_JSON" && "$FORCE" != "true" ]]; then
 fi
 
 if [[ ! -d "$CLAUDE_DIR" ]]; then
-    echo "==> ~/.claude not found, cloning claude-config..."
-    if command -v git &>/dev/null; then
-        git clone YOUR_CLAUDE_CONFIG_REPO "$CLAUDE_DIR"
-    else
-        echo "ERROR: git not installed. Install git and retry, or clone claude-config manually."
-        exit 1
-    fi
+    echo "==> ~/.claude directory not found. Creating it..."
+    mkdir -p "$CLAUDE_DIR"
 fi
 
 mkdir -p "$CLAUDE_DIR/agentssot/local"
@@ -1078,7 +1073,7 @@ echo "    Slash command: /hive [query]"
 @app.get("/enroll/install-plugin.sh", response_class=PlainTextResponse, include_in_schema=False)
 def enroll_install_plugin_script(request: Request):
     """Plugin-only install script for already-enrolled agents."""
-    server_host = request.headers.get("host", "YOUR_HOST:8088")
+    server_host = request.headers.get("host", "localhost:8088")
     base_url = f"http://{server_host}"
 
     return f'''#!/usr/bin/env bash

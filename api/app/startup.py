@@ -135,7 +135,7 @@ def _bootstrap_admin_key_if_needed(session, settings) -> None:
     session.add(key)
     session.commit()
 
-    logger.warning("BOOTSTRAP_ADMIN_API_KEY=%s", plaintext)
+    logger.warning("BOOTSTRAP_ADMIN_API_KEY=%s...%s", plaintext[:8], plaintext[-4:])
 
 
 def _maybe_enable_hnsw_indexes(session, settings) -> None:

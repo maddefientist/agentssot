@@ -11,7 +11,7 @@
   "settings": {
     "baseUrl": {
       "type": "string",
-      "default": "http://YOUR_HOST:8088",
+      "default": "http://localhost:8088",
       "description": "AgentSSOT API base URL"
     },
     "defaultNamespace": {

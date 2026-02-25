@@ -1,6 +1,7 @@
 .env
 data/
 backups/
+dropbox/
 __pycache__/
 *.pyc
 *.pyo
@@ -9,3 +10,4 @@ firebase-debug.log
 .claude/
 *.db
 *.backup
+*.dump

@@ -211,7 +211,7 @@ class EnrollResponse(BaseModel):
 
 class BackfillEmbeddingsRequest(BaseModel):
     namespace: str = "default"
-    scope: Literal["knowledge", "requirements", "events"] = "knowledge"
+    scope: Literal["knowledge", "requirements", "events", "concepts"] = "knowledge"
     limit: int = 500
     batch_size: int = 50
     dry_run: bool = False
@@ -219,7 +219,7 @@ class BackfillEmbeddingsRequest(BaseModel):
 
 class BackfillEmbeddingsResponse(BaseModel):
     namespace: str
-    scope: Literal["knowledge", "requirements", "events"]
+    scope: Literal["knowledge", "requirements", "events", "concepts"]
     updated: int
     skipped: int
     dry_run: bool

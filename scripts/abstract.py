@@ -54,7 +54,7 @@ Synthesized concepts:
 
 def psql(sql: str) -> str:
     result = subprocess.run(
-        ["docker", "exec", "agentssot-db", "psql", "-U", "ssot", "-d", "ssot", "-t", "-A", "-c", sql],
+        ["docker", "exec", "agentssot-db", "psql", "-U", os.environ.get("POSTGRES_USER", "ssot"), "-d", os.environ.get("POSTGRES_DB", "ssot"), "-t", "-A", "-c", sql],
         capture_output=True, text=True, timeout=60,
     )
     return result.stdout.strip() if result.returncode == 0 else ""
@@ -178,6 +178,8 @@ def main():
         embed_str = "[" + ",".join(str(x) for x in embedding) + "]"
         evidence_titles = ", ".join(f"'{e[:60]}'" for e in evidence[:5])
 
+        safe_title = text[:200].replace("'", "''").replace("\\", "\\\\")
+        safe_content = full_text.replace("'", "''").replace("\\", "\\\\")
         psql(f"""
             INSERT INTO concepts (id, namespace, type, scope, title, content, confidence, version, tags, embedding)
             VALUES (
@@ -185,8 +187,8 @@ def main():
                 'claude-shared',
                 'principle',
                 'global',
-                '{text[:200].replace("'", "''")}',
-                '{full_text.replace("'", "''")}',
+                E'{safe_title}',
+                E'{safe_content}',
                 0.8,
                 1,
                 ARRAY['abstraction-engine', 'cross-cutting']::text[],

@@ -23,7 +23,7 @@ log = logging.getLogger("cortex-decay")
 def psql(sql: str) -> str:
     """Execute SQL via docker exec."""
     result = subprocess.run(
-        ["docker", "exec", "agentssot-db", "psql", "-U", "ssot", "-d", "ssot", "-t", "-A", "-c", sql],
+        ["docker", "exec", "agentssot-db", "psql", "-U", os.environ.get("POSTGRES_USER", "ssot"), "-d", os.environ.get("POSTGRES_DB", "ssot"), "-t", "-A", "-c", sql],
         capture_output=True, text=True, timeout=60,
     )
     if result.returncode != 0:

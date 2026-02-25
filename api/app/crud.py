@@ -795,10 +795,12 @@ def backfill_embeddings(
     updated = 0
     skipped = 0
 
+    max_chars = 6000  # safe limit for nomic-embed-text 8192-token context
+
     def embed_source_text(text: str) -> list[float] | None:
         if not text.strip():
             return None
-        emb = embedding_provider.embed_text(text)
+        emb = embedding_provider.embed_text(text[:max_chars])
         _validate_embedding_dim(emb, settings.embedding_dim)
         return emb
 
@@ -875,6 +877,30 @@ def backfill_embeddings(
                     continue
                 if not dry_run:
                     ev.embedding = emb
+                updated += 1
+
+        elif scope == "concepts":
+            rows = session.scalars(
+                select(Concept)
+                .where(Concept.namespace == namespace)
+                .where(Concept.embedding.is_(None))
+                .order_by(Concept.updated_at.desc())
+                .limit(take)
+            ).all()
+            if not rows:
+                break
+
+            for concept in rows:
+                source_text = "\n".join(part for part in [concept.title, concept.content or ""] if part)
+                try:
+                    emb = embed_source_text(source_text)
+                except EmbeddingProviderError as exc:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+                if emb is None:
+                    skipped += 1
+                    continue
+                if not dry_run:
+                    concept.embedding = emb
                 updated += 1
 
         else:
@@ -1434,7 +1460,7 @@ def auto_enroll(session: Session, name: str, passphrase: str, settings) -> tuple
     )
 
     agent_config = {
-        "base_url": f"http://YOUR_HOST:{settings.api_port}",
+        "base_url": f"http://localhost:{settings.api_port}",
         "api_key": plaintext,
         "device_name": safe_name,
         "default_namespace": shared_ns,

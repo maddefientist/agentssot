@@ -13,7 +13,7 @@ REPORT_DIR = os.path.expanduser("~/cortex-health")
 
 def psql(sql: str) -> str:
     result = subprocess.run(
-        ["docker", "exec", "agentssot-db", "psql", "-U", "ssot", "-d", "ssot", "-t", "-A", "-c", sql],
+        ["docker", "exec", "agentssot-db", "psql", "-U", os.environ.get("POSTGRES_USER", "ssot"), "-d", os.environ.get("POSTGRES_DB", "ssot"), "-t", "-A", "-c", sql],
         capture_output=True, text=True, timeout=60,
     )
     return result.stdout.strip() if result.returncode == 0 else f"ERROR: {result.stderr.strip()}"

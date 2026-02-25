@@ -29,7 +29,7 @@ try:
 except Exception as exc:
     raise SystemExit(f"Cannot read agent config at {_agent_path}: {exc}") from exc
 
-BASE_URL: str = _cfg.get("base_url", "http://YOUR_HOST:8088")
+BASE_URL: str = _cfg.get("base_url", "http://localhost:8088")
 API_KEY: str = _cfg.get("admin_api_key") or _cfg.get("api_key", "")
 DEFAULT_NS: str = _cfg.get("default_namespace", "claude-shared")
 DEVICE_NAME: str = _cfg.get("device_name", "unknown")

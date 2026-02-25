@@ -12,10 +12,11 @@ from itertools import combinations
 import psycopg2
 import psycopg2.extras
 
-DB_URL = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://ssot:REDACTED_DB_PASSWORD@localhost:5432/ssot",
-).replace("postgresql+psycopg://", "postgresql://")
+DB_URL = os.environ.get("DATABASE_URL")
+if not DB_URL:
+    print("ERROR: DATABASE_URL environment variable is required.", file=sys.stderr)
+    sys.exit(1)
+DB_URL = DB_URL.replace("postgresql+psycopg://", "postgresql://")
 
 # If running inside docker network, db host is 'db'
 if "db:5432" in DB_URL:
