@@ -22,6 +22,7 @@ from .models import ApiRole
 from .security import AuthContext, ensure_namespace_access, require_admin, require_api_key
 from .settings import get_settings
 from .startup import initialize_system
+from .cortex import router as cortex_router
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -83,6 +84,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="AgentSSOT API", version="1.0.0", lifespan=lifespan)
 if UI_DIR.exists():
     app.mount("/ui/assets", StaticFiles(directory=UI_DIR), name="ui-assets")
+
+
+app.include_router(cortex_router)
 
 
 @app.middleware("http")
@@ -282,6 +286,40 @@ def cortex_activity(
     events.sort(key=lambda e: e["at"], reverse=True)
     return {"events": events[:limit]}
 
+
+
+@app.get("/dashboard/stats", include_in_schema=False)
+def dashboard_stats(
+    namespace: str = Query(default="claude-shared"),
+    session: Session = Depends(get_session),
+):
+    """Lightweight stats endpoint for Homepage dashboard widget. No auth required."""
+    from sqlalchemy import func, text
+    from .models import Concept, KnowledgeItem, RecallEvent, ConceptFeedback
+
+    concepts_total = session.scalar(select(func.count()).select_from(Concept).where(Concept.namespace == namespace)) or 0
+    skills = session.scalar(select(func.count()).select_from(Concept).where(Concept.namespace == namespace, Concept.type == "skill")) or 0
+    knowledge = session.scalar(select(func.count()).select_from(KnowledgeItem).where(KnowledgeItem.namespace == namespace)) or 0
+    recalls_24h = session.scalar(
+        select(func.count()).select_from(RecallEvent)
+        .where(RecallEvent.namespace == namespace, RecallEvent.created_at > text("now() - interval '24 hours'"))
+    ) or 0
+    ingested_24h = session.scalar(
+        select(func.count()).select_from(KnowledgeItem)
+        .where(KnowledgeItem.namespace == namespace, KnowledgeItem.created_at > text("now() - interval '24 hours'"))
+    ) or 0
+    avg_conf = session.scalar(
+        select(func.avg(Concept.confidence)).where(Concept.namespace == namespace, Concept.confidence.isnot(None))
+    ) or 0
+
+    return {
+        "concepts": concepts_total,
+        "skills": skills,
+        "knowledge": knowledge,
+        "recalls_24h": recalls_24h,
+        "ingested_24h": ingested_24h,
+        "avg_confidence": float(avg_conf),
+    }
 
 @app.post("/feedback", response_model=schemas.FeedbackResponse)
 def submit_feedback(

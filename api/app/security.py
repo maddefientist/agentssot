@@ -1,4 +1,6 @@
+import hashlib
 import secrets
+import time
 from dataclasses import dataclass
 
 from fastapi import Depends, Header, HTTPException, status
@@ -16,6 +18,12 @@ ROLE_ORDER = {
     ApiRole.writer.value: 2,
     ApiRole.admin.value: 3,
 }
+
+# API key verification requires bcrypt; with many keys this is expensive.
+# Cache successful lookups briefly to avoid O(N keys) bcrypt checks on every request.
+_AUTH_CACHE_TTL_SECONDS = 3600
+_AUTH_CACHE_MAX_ENTRIES = 1024
+_auth_cache: dict[str, tuple[float, "AuthContext"]] = {}
 
 
 @dataclass
@@ -40,6 +48,38 @@ def generate_api_key() -> str:
 
 def generate_enrollment_token() -> str:
     return f"ssot_enroll_{secrets.token_urlsafe(32)}"
+
+
+def _cache_key(plaintext_key: str) -> str:
+    return hashlib.sha256(plaintext_key.encode("utf-8")).hexdigest()
+
+
+def _auth_cache_get(plaintext_key: str) -> AuthContext | None:
+    key = _cache_key(plaintext_key)
+    cached = _auth_cache.get(key)
+    if not cached:
+        return None
+
+    expires_at, auth = cached
+    if expires_at <= time.time():
+        _auth_cache.pop(key, None)
+        return None
+    return auth
+
+
+def _auth_cache_set(plaintext_key: str, auth: AuthContext) -> None:
+    now = time.time()
+    _auth_cache[_cache_key(plaintext_key)] = (now + _AUTH_CACHE_TTL_SECONDS, auth)
+
+    # Opportunistic cleanup to keep memory bounded.
+    if len(_auth_cache) > _AUTH_CACHE_MAX_ENTRIES:
+        expired = [k for k, (exp, _a) in _auth_cache.items() if exp <= now]
+        for k in expired:
+            _auth_cache.pop(k, None)
+
+        while len(_auth_cache) > _AUTH_CACHE_MAX_ENTRIES:
+            oldest = next(iter(_auth_cache))
+            _auth_cache.pop(oldest, None)
 
 
 def require_role(auth: AuthContext, allowed_roles: set[str]) -> None:
@@ -85,8 +125,13 @@ def require_api_key(
     if not x_api_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing X-API-Key header")
 
+    cached = _auth_cache_get(x_api_key)
+    if cached:
+        return cached
+
     auth = _lookup_api_key(session, x_api_key)
     if not auth:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
+    _auth_cache_set(x_api_key, auth)
     return auth

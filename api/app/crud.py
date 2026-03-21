@@ -1,4 +1,5 @@
 import logging
+import math
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -23,6 +24,15 @@ def _clip(text: str | None, max_chars: int) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 3] + "..."
+
+
+def _safe_float(value, fallback: float = 1.0) -> float:
+    """Convert scores to finite floats to avoid NaN/Inf leaking into JSON responses."""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return f if math.isfinite(f) else fallback
 
 
 def _validate_embedding_dim(embedding: list[float] | None, expected_dim: int) -> None:
@@ -364,7 +374,7 @@ def _recall_knowledge_weighted(
         {
             "id": str(item.id),
             "scope": "knowledge",
-            "score": float(cosine_val),
+            "score": _safe_float(cosine_val),
             "snippet": _clip(item.content, settings.max_snippet_chars),
             "tags": list(item.tags or []),
             "created_at": item.created_at,
@@ -467,7 +477,7 @@ def _apply_reranker(
         return items[:top_k]
 
     for item, reranker_score in zip(items, scores):
-        item["reranker_score"] = reranker_score
+        item["reranker_score"] = _safe_float(reranker_score, fallback=0.0)
 
     items.sort(key=lambda x: x["reranker_score"], reverse=True)
     return items[:top_k]
@@ -532,7 +542,7 @@ def recall(
         return {
             "id": str(item.id),
             "scope": "concepts",
-            "score": float(score_value),
+            "score": _safe_float(score_value),
             "snippet": snippet,
             "tags": list(item.tags or []),
             "created_at": item.created_at,
@@ -573,7 +583,7 @@ def recall(
             {
                 "id": str(item.id),
                 "scope": "requirements",
-                "score": float(score_value),
+                "score": _safe_float(score_value),
                 "snippet": _clip(item.context_snippet or item.body or item.title, settings.max_snippet_chars),
                 "tags": list(item.tags or []),
                 "created_at": item.created_at,
@@ -604,7 +614,7 @@ def recall(
             {
                 "id": str(item.id),
                 "scope": "events",
-                "score": float(score_value),
+                "score": _safe_float(score_value),
                 "snippet": _clip(item.body or item.context_snippet or item.title, settings.max_snippet_chars),
                 "tags": list(item.tags or []),
                 "created_at": item.created_at,

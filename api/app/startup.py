@@ -5,6 +5,7 @@ from sqlalchemy import func, select, text
 from .db import SessionLocal
 from .models import ApiKey, ApiRole, Namespace
 from .security import generate_api_key, hash_api_key
+from .cortex import ensure_cortex_tables
 from .settings import get_settings
 
 logger = logging.getLogger("agentssot.startup")
@@ -16,6 +17,7 @@ def initialize_system(settings) -> None:
     with SessionLocal() as session:
         _ensure_enrollment_tokens_table(session)
         _ensure_concepts_table(session)
+        ensure_cortex_tables(session)
         _bootstrap_namespaces(session, settings)
         _bootstrap_admin_key_if_needed(session, settings)
         _ensure_embedding_dim(session, settings)
