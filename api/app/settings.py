@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     # Typed memory: when enabled, recall accepts memory_type and staleness filters
     typed_memory_enabled: bool = Field(default=False, alias="TYPED_MEMORY_ENABLED")
 
+    # Secret scanning: reject knowledge items containing likely secrets on ingest
+    ingest_secret_scanning: bool = Field(default=True, alias="INGEST_SECRET_SCANNING")
+
     # Open enrollment passphrase (empty = no passphrase required)
     enrollment_passphrase: str = Field(default="", alias="ENROLLMENT_PASSPHRASE")
     expose_db_port: bool = Field(default=False, alias="EXPOSE_DB_PORT")

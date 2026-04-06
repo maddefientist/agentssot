@@ -13,6 +13,7 @@ from .llm import LLMProvider, LLMProviderError
 from .reranker import RerankerProvider, RerankerProviderError
 from .models import AgentProfile, ApiKey, ApiRole, Concept, ConceptFeedback, ConceptScope, ConceptType, EnrollmentToken, Entity, EntityType, Event, EventType, FeedbackSignal, KnowledgeItem, MemoryType, Namespace, RecallEvent, Requirement
 from .schemas import IngestRequest, RecallRequest
+from .secret_scanner import scan_ingest_payload, scan_text
 from .security import generate_api_key, generate_enrollment_token, hash_api_key, verify_api_key
 
 logger = logging.getLogger("agentssot.crud")
@@ -86,6 +87,14 @@ def _maybe_embed_text(
 
 def ingest_batch(session: Session, payload: IngestRequest, embedding_provider: EmbeddingProvider, settings) -> dict[str, int]:
     ensure_namespace_exists(session, payload.namespace)
+
+    # ── Secret scanning gate ──────────────────────────────────────
+    if getattr(settings, "ingest_secret_scanning", True):
+        rejections = scan_ingest_payload(payload)
+        if rejections:
+            detail = "Ingest rejected: content contains potential secrets.\n" + "\n".join(rejections)
+            logger.warning("secret scan rejected %d item(s) in namespace=%s", len(rejections), payload.namespace)
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
 
     counts = {
         "entities": 0,
