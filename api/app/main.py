@@ -23,6 +23,7 @@ from .security import AuthContext, ensure_namespace_access, require_admin, requi
 from .settings import get_settings
 from .startup import initialize_system
 from .cortex import router as cortex_router
+from .sync import router as sync_router
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -87,6 +88,7 @@ if UI_DIR.exists():
 
 
 app.include_router(cortex_router)
+app.include_router(sync_router)
 
 
 @app.middleware("http")
@@ -293,32 +295,108 @@ def dashboard_stats(
     namespace: str = Query(default="claude-shared"),
     session: Session = Depends(get_session),
 ):
-    """Lightweight stats endpoint for Homepage dashboard widget. No auth required."""
-    from sqlalchemy import func, text
+    """Enhanced stats endpoint for dashboard. No auth required.
+
+    Includes: basic counts, memory type distribution (M3), staleness distribution (M3),
+    secret scanning stats (M8), sync checkpoint status (M10).
+    """
+    from sqlalchemy import func, text as sa_text, case, literal_column
     from .models import Concept, KnowledgeItem, RecallEvent, ConceptFeedback
 
+    # ── Basic counts (existing) ────────────────────────────────────
     concepts_total = session.scalar(select(func.count()).select_from(Concept).where(Concept.namespace == namespace)) or 0
     skills = session.scalar(select(func.count()).select_from(Concept).where(Concept.namespace == namespace, Concept.type == "skill")) or 0
     knowledge = session.scalar(select(func.count()).select_from(KnowledgeItem).where(KnowledgeItem.namespace == namespace)) or 0
     recalls_24h = session.scalar(
         select(func.count()).select_from(RecallEvent)
-        .where(RecallEvent.namespace == namespace, RecallEvent.created_at > text("now() - interval '24 hours'"))
+        .where(RecallEvent.namespace == namespace, RecallEvent.created_at > sa_text("now() - interval '24 hours'"))
     ) or 0
     ingested_24h = session.scalar(
         select(func.count()).select_from(KnowledgeItem)
-        .where(KnowledgeItem.namespace == namespace, KnowledgeItem.created_at > text("now() - interval '24 hours'"))
+        .where(KnowledgeItem.namespace == namespace, KnowledgeItem.created_at > sa_text("now() - interval '24 hours'"))
     ) or 0
     avg_conf = session.scalar(
         select(func.avg(Concept.confidence)).where(Concept.namespace == namespace, Concept.confidence.isnot(None))
     ) or 0
 
+    # ── Memory type distribution (M3 data) ─────────────────────────
+    memory_type_rows = session.execute(
+        select(
+            func.coalesce(KnowledgeItem.memory_type, "untyped").label("mtype"),
+            func.count().label("cnt"),
+        )
+        .where(KnowledgeItem.namespace == namespace)
+        .group_by("mtype")
+    ).all()
+    memory_type_distribution = {row.mtype: row.cnt for row in memory_type_rows}
+
+    # ── Staleness distribution (M3 data) ───────────────────────────
+    # Buckets: [0, 0.25), [0.25, 0.5), [0.5, 0.75), [0.75, 1.0], null
+    staleness_buckets = {"fresh": 0, "aging": 0, "stale": 0, "critical": 0, "unscored": 0}
+    staleness_rows = session.execute(
+        select(
+            case(
+                (KnowledgeItem.staleness_score.is_(None), "unscored"),
+                (KnowledgeItem.staleness_score < 0.25, "fresh"),
+                (KnowledgeItem.staleness_score < 0.5, "aging"),
+                (KnowledgeItem.staleness_score < 0.75, "stale"),
+                else_="critical",
+            ).label("bucket"),
+            func.count().label("cnt"),
+        )
+        .where(KnowledgeItem.namespace == namespace)
+        .group_by("bucket")
+    ).all()
+    for row in staleness_rows:
+        staleness_buckets[row.bucket] = row.cnt
+
+    # ── Secret scanning stats (M8 data) ────────────────────────────
+    # We track rejected items via the access log, but we can report config status
+    # and count items with the 'secret-rejected' tag if any got through historically
+    secret_scanning_enabled = settings.ingest_secret_scanning
+
+    # ── Sync checkpoint status (M10 data) ──────────────────────────
+    sync_status: list[dict] = []
+    if settings.sync_tracking_enabled:
+        try:
+            sync_rows = session.execute(sa_text("""
+                SELECT device_id, namespace, last_synced_at
+                FROM sync_checkpoints
+                WHERE namespace = :namespace
+                ORDER BY last_synced_at DESC
+            """), {"namespace": namespace}).all()
+            sync_status = [
+                {
+                    "device_id": row.device_id,
+                    "last_synced_at": row.last_synced_at.isoformat() if row.last_synced_at else None,
+                }
+                for row in sync_rows
+            ]
+        except Exception:
+            # Table might not exist yet
+            pass
+
     return {
+        # Original fields (backward compatible)
         "concepts": concepts_total,
         "skills": skills,
         "knowledge": knowledge,
         "recalls_24h": recalls_24h,
         "ingested_24h": ingested_24h,
         "avg_confidence": float(avg_conf),
+        # M3: Memory type distribution
+        "memory_type_distribution": memory_type_distribution,
+        # M3: Staleness distribution
+        "staleness_distribution": staleness_buckets,
+        # M8: Secret scanning
+        "secret_scanning": {
+            "enabled": secret_scanning_enabled,
+        },
+        # M10: Sync checkpoints
+        "sync": {
+            "enabled": settings.sync_tracking_enabled,
+            "devices": sync_status,
+        },
     }
 
 @app.post("/feedback", response_model=schemas.FeedbackResponse)

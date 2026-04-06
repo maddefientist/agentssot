@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # Secret scanning: reject knowledge items containing likely secrets on ingest
     ingest_secret_scanning: bool = Field(default=True, alias="INGEST_SECRET_SCANNING")
 
+    # Sync tracking: enable per-device sync checkpoints and conflict detection
+    sync_tracking_enabled: bool = Field(default=False, alias="SYNC_TRACKING_ENABLED")
+    sync_conflict_window_hours: int = Field(default=24, alias="SYNC_CONFLICT_WINDOW_HOURS")
+
     # Open enrollment passphrase (empty = no passphrase required)
     enrollment_passphrase: str = Field(default="", alias="ENROLLMENT_PASSPHRASE")
     expose_db_port: bool = Field(default=False, alias="EXPOSE_DB_PORT")
