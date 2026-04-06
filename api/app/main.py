@@ -700,6 +700,20 @@ def admin_delete_items(
     return schemas.DeleteItemsResponse(namespace=payload.namespace, deleted=deleted)
 
 
+
+@app.post("/admin/delete-concepts", response_model=schemas.DeleteConceptsResponse)
+def admin_delete_concepts(
+    payload: schemas.DeleteConceptsRequest,
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    """Delete concepts by ID. Also removes associated links, recall events, and feedback via CASCADE."""
+    require_admin(auth)
+    ensure_namespace_access(auth, payload.namespace, {ApiRole.admin.value})
+
+    result = crud.delete_concepts(session, payload.namespace, payload.ids)
+    return schemas.DeleteConceptsResponse(namespace=payload.namespace, **result)
+
 @app.post("/admin/dedup", response_model=schemas.DedupResponse)
 def admin_dedup(
     payload: schemas.DedupRequest,

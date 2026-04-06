@@ -1083,6 +1083,32 @@ def delete_items(session: Session, namespace: str, ids: list[str]) -> int:
     return deleted
 
 
+def delete_concepts(session: Session, namespace: str, ids: list[str]) -> dict:
+    """Delete concepts by ID within a namespace.
+
+    Also cleans up associated concept_links, recall_events, and concept_feedback
+    via CASCADE, but we explicitly handle it for clarity.
+    Returns dict with deleted count and IDs.
+    """
+    ensure_namespace_exists(session, namespace)
+    deleted_ids: list[str] = []
+    for concept_id in ids:
+        try:
+            uid = UUID(concept_id)
+        except ValueError:
+            continue
+        concept = session.scalar(
+            select(Concept).where(
+                and_(Concept.id == uid, Concept.namespace == namespace)
+            )
+        )
+        if concept:
+            session.delete(concept)
+            deleted_ids.append(str(uid))
+    session.commit()
+    return {"deleted": len(deleted_ids), "deleted_ids": deleted_ids}
+
+
 # ── Dedup ──────────────────────────────────────────────────────────
 
 

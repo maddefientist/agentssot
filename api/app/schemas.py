@@ -166,6 +166,17 @@ class DeleteItemsResponse(BaseModel):
     namespace: str
     deleted: int
 
+class DeleteConceptsRequest(BaseModel):
+    namespace: str = "default"
+    ids: list[str] = Field(min_length=1, max_length=100)
+
+
+class DeleteConceptsResponse(BaseModel):
+    namespace: str
+    deleted: int
+    deleted_ids: list[str]
+
+
 
 class EnrollmentTokenCreateRequest(BaseModel):
     role: Literal["reader", "writer"] = "writer"

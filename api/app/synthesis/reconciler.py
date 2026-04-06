@@ -132,7 +132,7 @@ def reconcile_concepts(
         session.add(new_concept)
         new_count += 1
 
-    session.commit()
+    session.flush()
 
     # Maintain concept graph: link concepts sharing evidence
     _update_concept_graph(session, namespace, proposals)

@@ -208,43 +208,61 @@ def _run_synthesis_for_namespace(
         all_concepts = _get_active_concepts(session, namespace)
 
         all_touched_ids: set[UUID] = set()
-        for cluster in clusters:
-            related = _find_related_concepts(cluster, all_concepts)
+        for cluster_idx, cluster in enumerate(clusters):
+            # Use a savepoint per cluster so a failure in one doesn't
+            # poison the session for subsequent clusters (fixes
+            # InFailedSqlTransaction cascading errors).
+            try:
+                savepoint = session.begin_nested()
 
-            proposals = run_synthesis_batch(
-                cluster_items=cluster,
-                existing_concepts=related,
-                llm_provider=llm_provider,
-                synthesis_model=settings.synthesis_model,
-                fallback_model=settings.synthesis_fallback_model,
-            )
+                related = _find_related_concepts(cluster, all_concepts)
 
-            # Layer 5: Extract agent attribution from cluster sources
-            cluster_agent_keys = set()
-            for item in cluster:
-                src = item.get("source", "")
-                if src and (src.startswith("device-") or src.startswith("enroll-") or src.startswith("agent-")):
-                    cluster_agent_keys.add(src)
-
-            if proposals:
-                result = reconcile_concepts(
-                    session=session,
-                    namespace=namespace,
-                    proposals=proposals,
-                    embedding_provider=embedding_provider,
-                    embedding_provider_kind=settings.embedding_provider,
-                    embedding_dim=settings.embedding_dim,
-                    agent_keys=cluster_agent_keys or None,
+                proposals = run_synthesis_batch(
+                    cluster_items=cluster,
+                    existing_concepts=related,
+                    llm_provider=llm_provider,
+                    synthesis_model=settings.synthesis_model,
+                    fallback_model=settings.synthesis_fallback_model,
                 )
-                stats["new"] += result["new"]
-                stats["updated"] += result["updated"]
 
-                for p in proposals:
-                    if p.get("matches_existing_id"):
-                        try:
-                            all_touched_ids.add(UUID(p["matches_existing_id"]))
-                        except ValueError:
-                            pass
+                # Layer 5: Extract agent attribution from cluster sources
+                cluster_agent_keys = set()
+                for item in cluster:
+                    src = item.get("source", "")
+                    if src and (src.startswith("device-") or src.startswith("enroll-") or src.startswith("agent-")):
+                        cluster_agent_keys.add(src)
+
+                if proposals:
+                    result = reconcile_concepts(
+                        session=session,
+                        namespace=namespace,
+                        proposals=proposals,
+                        embedding_provider=embedding_provider,
+                        embedding_provider_kind=settings.embedding_provider,
+                        embedding_dim=settings.embedding_dim,
+                        agent_keys=cluster_agent_keys or None,
+                    )
+                    stats["new"] += result["new"]
+                    stats["updated"] += result["updated"]
+
+                    for p in proposals:
+                        if p.get("matches_existing_id"):
+                            try:
+                                all_touched_ids.add(UUID(p["matches_existing_id"]))
+                            except ValueError:
+                                pass
+
+                savepoint.commit()
+
+            except Exception:
+                logger.warning(
+                    "cluster %d/%d failed, rolling back savepoint",
+                    cluster_idx + 1,
+                    len(clusters),
+                    exc_info=True,
+                    extra={"namespace": namespace},
+                )
+                session.rollback()
 
         # --- Feedback integration (Layer 2) ---
         last_synthesis_time = datetime.now(UTC) - timedelta(days=1)
