@@ -12,3 +12,4 @@ firebase-debug.log
 *.backup
 *.dump
 *.bak.*
+.DS_Store

@@ -42,6 +42,10 @@ get_settings.cache_clear()
 class TestMemoryTypeEnum:
     """Verify MemoryType enum has correct values and is importable."""
 
+    @classmethod
+    def setup_class(cls):
+        pytest.importorskip("pgvector", reason="pgvector required for model imports")
+
     def test_enum_values(self):
         from app.models import MemoryType
 
@@ -236,6 +240,10 @@ class TestBackfillHeuristics:
 
 class TestModelColumns:
     """Verify new columns exist on the KnowledgeItem model."""
+
+    @classmethod
+    def setup_class(cls):
+        pytest.importorskip("pgvector", reason="pgvector required for model imports")
 
     def test_memory_type_column_exists(self):
         from app.models import KnowledgeItem
