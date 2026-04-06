@@ -17,11 +17,56 @@ def initialize_system(settings) -> None:
     with SessionLocal() as session:
         _ensure_enrollment_tokens_table(session)
         _ensure_concepts_table(session)
+        _ensure_typed_memory_columns(session)
         ensure_cortex_tables(session)
         _bootstrap_namespaces(session, settings)
         _bootstrap_admin_key_if_needed(session, settings)
         _ensure_embedding_dim(session, settings)
         _maybe_enable_hnsw_indexes(session, settings)
+
+
+def _ensure_typed_memory_columns(session) -> None:
+    """Add typed memory and verification metadata columns to knowledge_items if missing.
+
+    Non-breaking migration: all new columns are nullable, existing rows remain valid.
+    """
+    columns_to_add = [
+        ("memory_type", "TEXT"),
+        ("last_verified_at", "TIMESTAMPTZ"),
+        ("staleness_score", "FLOAT"),
+        ("extraction_source", "TEXT"),
+        ("extraction_cursor_id", "TEXT"),
+    ]
+    try:
+        for col_name, col_type in columns_to_add:
+            session.execute(text(f"""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'knowledge_items' AND column_name = '{col_name}'
+                    ) THEN
+                        ALTER TABLE knowledge_items ADD COLUMN {col_name} {col_type};
+                    END IF;
+                END $$
+            """))
+        # Index on memory_type for filtered recall queries
+        session.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_knowledge_items_memory_type
+            ON knowledge_items(memory_type)
+            WHERE memory_type IS NOT NULL
+        """))
+        # Index on staleness_score for threshold filtering
+        session.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_knowledge_items_staleness
+            ON knowledge_items(staleness_score)
+            WHERE staleness_score IS NOT NULL
+        """))
+        session.commit()
+        logger.info("ensured typed memory columns on knowledge_items")
+    except Exception as exc:
+        session.rollback()
+        logger.warning("typed memory column migration skipped: %s", exc)
 
 
 def _ensure_enrollment_tokens_table(session) -> None:

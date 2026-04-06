@@ -54,6 +54,9 @@ class Settings(BaseSettings):
 
     enable_hnsw_index: bool = Field(default=False, alias="ENABLE_HNSW_INDEX")
 
+    # Typed memory: when enabled, recall accepts memory_type and staleness filters
+    typed_memory_enabled: bool = Field(default=False, alias="TYPED_MEMORY_ENABLED")
+
     # Open enrollment passphrase (empty = no passphrase required)
     enrollment_passphrase: str = Field(default="", alias="ENROLLMENT_PASSPHRASE")
     expose_db_port: bool = Field(default=False, alias="EXPOSE_DB_PORT")

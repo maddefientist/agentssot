@@ -11,7 +11,7 @@ from .chunking import chunk_text_semantic
 from .embeddings import EmbeddingProvider, EmbeddingProviderError
 from .llm import LLMProvider, LLMProviderError
 from .reranker import RerankerProvider, RerankerProviderError
-from .models import AgentProfile, ApiKey, ApiRole, Concept, ConceptFeedback, ConceptScope, ConceptType, EnrollmentToken, Entity, EntityType, Event, EventType, FeedbackSignal, KnowledgeItem, Namespace, RecallEvent, Requirement
+from .models import AgentProfile, ApiKey, ApiRole, Concept, ConceptFeedback, ConceptScope, ConceptType, EnrollmentToken, Entity, EntityType, Event, EventType, FeedbackSignal, KnowledgeItem, MemoryType, Namespace, RecallEvent, Requirement
 from .schemas import IngestRequest, RecallRequest
 from .security import generate_api_key, generate_enrollment_token, hash_api_key, verify_api_key
 
@@ -172,18 +172,24 @@ def ingest_batch(session: Session, payload: IngestRequest, embedding_provider: E
                     chunk_embedding = _maybe_embed_text(embedding_provider, chunk, settings.embedding_provider)
                     _validate_embedding_dim(chunk_embedding, settings.embedding_dim)
 
-                session.add(
-                    KnowledgeItem(
-                        namespace=payload.namespace,
-                        project_id=project_id,
-                        entity_id=entity_id,
-                        content=chunk,
-                        source=item.source,
-                        source_ref=item.source_ref,
-                        tags=item.tags,
-                        embedding=chunk_embedding,
-                    )
+                ki_kwargs = dict(
+                    namespace=payload.namespace,
+                    project_id=project_id,
+                    entity_id=entity_id,
+                    content=chunk,
+                    source=item.source,
+                    source_ref=item.source_ref,
+                    tags=item.tags,
+                    embedding=chunk_embedding,
                 )
+                # Pass through typed memory fields if provided
+                if item.memory_type is not None:
+                    ki_kwargs["memory_type"] = item.memory_type
+                if item.extraction_source is not None:
+                    ki_kwargs["extraction_source"] = item.extraction_source
+                if item.extraction_cursor_id is not None:
+                    ki_kwargs["extraction_cursor_id"] = item.extraction_cursor_id
+                session.add(KnowledgeItem(**ki_kwargs))
                 counts["knowledge_items"] += 1
 
         for item in payload.events:
@@ -340,8 +346,15 @@ def _recall_knowledge_weighted(
     project_id: UUID | None,
     entity_id: UUID | None,
     settings,
+    memory_type: str | None = None,
+    max_staleness: float | None = None,
 ) -> list[dict]:
-    """Recall knowledge items with weighted scoring: similarity + strength + recency."""
+    """Recall knowledge items with weighted scoring: similarity + strength + recency.
+
+    Optional filters (only applied when typed_memory_enabled is True in settings):
+    - memory_type: filter to a specific MemoryType value
+    - max_staleness: exclude items with staleness_score above this threshold
+    """
     similarity = (1.0 - KnowledgeItem.embedding.cosine_distance(query_embedding)).label("similarity")
     # Normalized strength: cap at 5.0, divide by 5
     norm_strength = func.least(func.coalesce(KnowledgeItem.strength, 1.0), 5.0) / 5.0
@@ -369,9 +382,23 @@ def _recall_knowledge_weighted(
     if entity_id:
         stmt = stmt.where(KnowledgeItem.entity_id == entity_id)
 
+    # Opt-in typed memory filters (gated by feature flag)
+    if settings.typed_memory_enabled:
+        if memory_type is not None:
+            stmt = stmt.where(KnowledgeItem.memory_type == memory_type)
+        if max_staleness is not None:
+            # Include items with NULL staleness (not yet scored) AND items below threshold
+            stmt = stmt.where(
+                or_(
+                    KnowledgeItem.staleness_score.is_(None),
+                    KnowledgeItem.staleness_score <= max_staleness,
+                )
+            )
+
     rows = session.execute(stmt).all()
-    return [
-        {
+    results = []
+    for item, cosine_val, _ws in rows:
+        row_dict = {
             "id": str(item.id),
             "scope": "knowledge",
             "score": _safe_float(cosine_val),
@@ -379,8 +406,14 @@ def _recall_knowledge_weighted(
             "tags": list(item.tags or []),
             "created_at": item.created_at,
         }
-        for item, cosine_val, _ws in rows
-    ]
+        # Include typed memory metadata in response when feature is enabled
+        if settings.typed_memory_enabled:
+            row_dict["memory_type"] = item.memory_type
+            row_dict["last_verified_at"] = item.last_verified_at
+            row_dict["staleness_score"] = item.staleness_score
+            row_dict["extraction_source"] = item.extraction_source
+        results.append(row_dict)
+    return results
 
 
 def _apply_spreading_activation(session: Session, items: list[dict], namespace: str) -> list[dict]:
@@ -557,6 +590,8 @@ def recall(
         items = _recall_knowledge_weighted(
             session, payload.namespace, query_embedding, candidate_k,
             project_id, entity_id, settings,
+            memory_type=payload.memory_type,
+            max_staleness=payload.max_staleness,
         )
         items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
         _track_knowledge_recalls(session, [i["id"] for i in items])
@@ -668,6 +703,8 @@ def recall(
         items = _recall_knowledge_weighted(
             session, payload.namespace, query_embedding, candidate_k,
             project_id, entity_id, settings,
+            memory_type=payload.memory_type,
+            max_staleness=payload.max_staleness,
         )
 
         # --- concepts ---
@@ -1045,6 +1082,7 @@ def summarize_and_archive_session(
         source_ref=session_id,
         tags=["summary", "compaction"],
         embedding=summary_embedding,
+        memory_type="session_summary",
     )
     session.add(summary_item)
 
@@ -1679,6 +1717,7 @@ def create_concept_feedback(
             content=f"Correction: {note} (re: concept '{concept.title}')",
             tags=["correction", "operator-feedback"],
             embedding=embedding_provider.embed_text(note),
+            memory_type="correction",
         ))
 
     # Resurrect dormant concepts on positive feedback

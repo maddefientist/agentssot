@@ -87,7 +87,14 @@ CREATE TABLE IF NOT EXISTS knowledge_items (
     source_ref TEXT,
     tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
     embedding VECTOR(1536),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Typed memory taxonomy (nullable for backward compat)
+    memory_type TEXT,
+    -- Verification metadata
+    last_verified_at TIMESTAMPTZ,
+    staleness_score FLOAT,
+    extraction_source TEXT,
+    extraction_cursor_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -122,6 +129,8 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_items_namespace ON knowledge_items(name
 CREATE INDEX IF NOT EXISTS idx_knowledge_items_project ON knowledge_items(project_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_items_entity ON knowledge_items(entity_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_items_tags_gin ON knowledge_items USING GIN(tags);
+CREATE INDEX IF NOT EXISTS idx_knowledge_items_memory_type ON knowledge_items(memory_type) WHERE memory_type IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_knowledge_items_staleness ON knowledge_items(staleness_score) WHERE staleness_score IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_events_namespace_session ON events(namespace, session_id);
 CREATE INDEX IF NOT EXISTS idx_events_project ON events(project_id);

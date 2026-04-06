@@ -50,6 +50,21 @@ class EventType(str, enum.Enum):
     error = "error"
 
 
+class MemoryType(str, enum.Enum):
+    """Typed memory taxonomy for knowledge items.
+
+    Classifies knowledge by its origin and purpose to enable
+    type-aware recall filtering and lifecycle management.
+    """
+    fact = "fact"                    # general extracted knowledge (default)
+    decision = "decision"            # architectural/design decisions
+    preference = "preference"        # user/operator preferences
+    skill = "skill"                  # skill-type knowledge
+    reference = "reference"          # documentation/API references
+    correction = "correction"        # feedback-driven corrections
+    session_summary = "session_summary"  # compaction output
+
+
 class ConceptType(str, enum.Enum):
     mental_model = "mental_model"
     relationship = "relationship"
@@ -148,6 +163,13 @@ class KnowledgeItem(Base):
     tags: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list, server_default=text("ARRAY[]::TEXT[]"))
     embedding: Mapped[list[float] | None] = mapped_column(Vector(settings.embedding_dim), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    # Typed memory taxonomy (nullable for backward compat with existing data)
+    memory_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Verification metadata
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    staleness_score: Mapped[float | None] = mapped_column(nullable=True)
+    extraction_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extraction_cursor_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Neural cortex: strength tracking
     strength: Mapped[float] = mapped_column(nullable=False, default=1.0, server_default=text("1.0"))
     last_recalled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

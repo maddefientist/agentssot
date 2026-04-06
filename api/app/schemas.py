@@ -32,6 +32,14 @@ class KnowledgeItemIn(BaseModel):
     source_ref: str | None = None
     tags: list[str] = Field(default_factory=list)
     embedding: list[float] | None = None
+    # Typed memory taxonomy (optional, backward-compatible)
+    memory_type: Literal[
+        "fact", "decision", "preference", "skill",
+        "reference", "correction", "session_summary",
+    ] | None = None
+    # Extraction provenance (optional)
+    extraction_source: str | None = None
+    extraction_cursor_id: str | None = None
 
 
 class EventIn(BaseModel):
@@ -84,6 +92,12 @@ class RecallRequest(BaseModel):
     entity_slug: str | None = None
     session_id: str | None = None
     agent_key: str | None = None
+    # Typed memory filters (opt-in, ignored when typed_memory_enabled=False)
+    memory_type: Literal[
+        "fact", "decision", "preference", "skill",
+        "reference", "correction", "session_summary",
+    ] | None = None
+    max_staleness: float | None = None  # exclude items with staleness_score above this
 
 
 class RecallItem(BaseModel):
@@ -99,6 +113,14 @@ class RecallItem(BaseModel):
     trigger: str | None = None
     action: str | None = None
     success_hint: str | None = None
+    # Typed memory + verification metadata (knowledge scope only)
+    memory_type: Literal[
+        "fact", "decision", "preference", "skill",
+        "reference", "correction", "session_summary",
+    ] | None = None
+    last_verified_at: datetime | None = None
+    staleness_score: float | None = None
+    extraction_source: str | None = None
 
 
 class RecallResponse(BaseModel):
