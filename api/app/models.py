@@ -65,6 +65,33 @@ class MemoryType(str, enum.Enum):
     session_summary = "session_summary"  # compaction output
 
 
+class MemoryCategory(str, enum.Enum):
+    """Semantic categories for tiered memory organization.
+    
+    Mirrors OpenViking's structure for user/agent memory separation.
+    """
+    user_profile = "user_profile"          # who the user is
+    user_preferences = "user_preferences"   # how user likes things
+    user_entities = "user_entities"         # people, projects user knows
+    user_events = "user_events"             # decisions, milestones
+    agent_patterns = "agent_patterns"       # learned workflows
+    agent_tools = "agent_tools"             # tool usage knowledge
+    agent_skills = "agent_skills"           # skill execution history
+    agent_cases = "agent_cases"             # problem-solving cases
+
+
+class ContentLayer(str, enum.Enum):
+    """Tiered content depth for efficient retrieval.
+    
+    L0 (abstract): ~50 tokens, for quick filtering
+    L1 (summary): ~500 tokens, for context building
+    L2 (full): original content, loaded on demand
+    """
+    abstract = "abstract"
+    summary = "summary"
+    full = "full"
+
+
 class ConceptType(str, enum.Enum):
     mental_model = "mental_model"
     relationship = "relationship"
@@ -177,6 +204,30 @@ class KnowledgeItem(Base):
     positive_feedback: Mapped[int] = mapped_column(nullable=False, default=0, server_default=text("0"))
     negative_feedback: Mapped[int] = mapped_column(nullable=False, default=0, server_default=text("0"))
     status: Mapped[str] = mapped_column(Text, nullable=False, default="active", server_default=text("'active'"))
+    # Tiered memory fields (OpenViking-style)
+    category: Mapped[MemoryCategory | None] = mapped_column(
+        Enum(MemoryCategory, name="memory_category", create_type=False),
+        nullable=True
+    )
+    layer: Mapped[ContentLayer] = mapped_column(
+        Enum(ContentLayer, name="content_layer", create_type=False),
+        nullable=False,
+        default=ContentLayer.full,
+        server_default="full"
+    )
+    abstract: Mapped[str | None] = mapped_column(Text, nullable=True)  # L0
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)   # L1
+    source_ki_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("knowledge_items.id", ondelete="SET NULL"),
+        nullable=True
+    )
+    # Verbatim mode: when TRUE, L0/L1 synthesis is suppressed.
+    # Why: truth-critical memories (quotes, credentials, verbatim user input) must
+    # never be paraphrased by an LLM. This flag is permanent per row.
+    verbatim: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
 
 
 class EnrollmentToken(Base):

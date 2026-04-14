@@ -1,7 +1,93 @@
 from datetime import datetime
 from typing import Any, Literal
-
+from uuid import UUID
 from pydantic import BaseModel, Field
+
+# Category enum for API
+MemoryCategoryLiteral = Literal[
+    "user_profile",
+    "user_preferences",
+    "user_entities",
+    "user_events",
+    "agent_patterns",
+    "agent_tools",
+    "agent_skills",
+    "agent_cases"
+]
+
+ContentLayerLiteral = Literal["abstract", "summary", "full"]
+
+
+class TieredKnowledgeCreate(BaseModel):
+    """Create a new knowledge item with tiered content."""
+    content: str = Field(..., description="Full content (L2)")
+    namespace: str = Field("default", description="Namespace for the knowledge item")
+    category: MemoryCategoryLiteral | None = Field(None, description="Semantic category")
+    abstract: str | None = Field(None, description="L0: ~50 token summary")
+    summary: str | None = Field(None, description="L1: ~500 token summary")
+    source: str | None = None
+    source_ref: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    memory_type: str | None = None  # backward compat
+    generate_summaries: bool = Field(False, description="Auto-generate abstract/summary via LLM")
+    verbatim: bool = Field(
+        False,
+        description="Suppress all L0/L1 synthesis for this item. Wins over generate_summaries.",
+    )
+
+
+class TieredKnowledgeResponse(BaseModel):
+    """Response with tiered content."""
+    id: UUID
+    category: MemoryCategoryLiteral | None
+    layer: ContentLayerLiteral
+    abstract: str | None
+    summary: str | None
+    content: str  # Always include full content for now
+    source: str | None
+    tags: list[str]
+    created_at: datetime
+    verbatim: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class TieredRecallRequest(BaseModel):
+    """Request for tiered recall with category filtering."""
+    query: str = Field(..., description="Search query")
+    categories: list[MemoryCategoryLiteral] | None = Field(None, description="Filter by categories")
+    layer_preference: ContentLayerLiteral = Field("summary", description="Preferred content layer")
+    limit: int = Field(5, ge=1, le=50, description="Max results")
+    scope: str | None = None
+    namespace: str = "default"
+
+
+class TieredRecallResult(BaseModel):
+    """Single recall result with layered content."""
+    id: UUID
+    category: MemoryCategoryLiteral | None
+    layer: ContentLayerLiteral
+    # Return content based on layer_preference
+    content: str
+    # Include tiered content for client choice
+    abstract: str | None
+    summary: str | None
+    full_content: str | None = Field(None, description="Full L2 content, only if requested")
+    score: float
+    tags: list[str]
+    source: str | None
+    source_ref: str | None = None
+
+
+class TieredRecallResponse(BaseModel):
+    """Response from tiered recall."""
+    results: list[TieredRecallResult]
+    query: str
+    total: int
+    layer_used: ContentLayerLiteral
+
+
 
 
 class EntityIn(BaseModel):

@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from . import crud, schemas
+from . import crud, schemas, wal
 from .background import compaction_loop
 from .db import get_session
 from .embeddings import build_embedding_provider
@@ -24,6 +24,7 @@ from .settings import get_settings
 from .startup import initialize_system
 from .cortex import router as cortex_router
 from .sync import router as sync_router
+from .routers import knowledge_router
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -89,6 +90,7 @@ if UI_DIR.exists():
 
 app.include_router(cortex_router)
 app.include_router(sync_router)
+app.include_router(knowledge_router, prefix="/api/v1")
 
 
 @app.middleware("http")
@@ -629,6 +631,13 @@ def ingest(
         embedding_provider=app.state.embedding_provider,
         settings=app.state.settings,
     )
+    wal.log_event(
+        "ingest.batch",
+        namespace=namespace,
+        actor_key_id=auth.key_id,
+        payload=payload.model_dump(),
+        result={"counts": counts},
+    )
     return schemas.IngestResponse(namespace=namespace, counts=counts)
 
 
@@ -775,6 +784,13 @@ def admin_delete_items(
     ensure_namespace_access(auth, payload.namespace, {ApiRole.admin.value})
 
     deleted = crud.delete_items(session, payload.namespace, payload.ids)
+    wal.log_event(
+        "knowledge.delete",
+        namespace=payload.namespace,
+        actor_key_id=auth.key_id,
+        payload={"ids": payload.ids},
+        result={"deleted": deleted},
+    )
     return schemas.DeleteItemsResponse(namespace=payload.namespace, deleted=deleted)
 
 
@@ -790,6 +806,13 @@ def admin_delete_concepts(
     ensure_namespace_access(auth, payload.namespace, {ApiRole.admin.value})
 
     result = crud.delete_concepts(session, payload.namespace, payload.ids)
+    wal.log_event(
+        "concept.delete",
+        namespace=payload.namespace,
+        actor_key_id=auth.key_id,
+        payload={"ids": payload.ids},
+        result=result,
+    )
     return schemas.DeleteConceptsResponse(namespace=payload.namespace, **result)
 
 @app.post("/admin/dedup", response_model=schemas.DedupResponse)

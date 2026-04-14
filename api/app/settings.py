@@ -64,6 +64,16 @@ class Settings(BaseSettings):
     sync_tracking_enabled: bool = Field(default=False, alias="SYNC_TRACKING_ENABLED")
     sync_conflict_window_hours: int = Field(default=24, alias="SYNC_CONFLICT_WINDOW_HOURS")
 
+    # Write-ahead log (audit artifact for ingest/delete operations)
+    wal_enabled: bool = Field(default=True, alias="WAL_ENABLED")
+    wal_dir: str = Field(default="/var/lib/agentssot/wal", alias="WAL_DIR")
+    wal_retention_days: int = Field(default=30, alias="WAL_RETENTION_DAYS")
+
+    # Semantic dedup on ingest: if cosine similarity to an existing item in the
+    # same namespace meets or exceeds this threshold, skip insert and return the
+    # existing item. Verbatim items bypass this check. 0.0 disables dedup.
+    semantic_dedup_threshold: float = Field(default=0.0, alias="SEMANTIC_DEDUP_THRESHOLD")
+
     # Open enrollment passphrase (empty = no passphrase required)
     enrollment_passphrase: str = Field(default="", alias="ENROLLMENT_PASSPHRASE")
     expose_db_port: bool = Field(default=False, alias="EXPOSE_DB_PORT")

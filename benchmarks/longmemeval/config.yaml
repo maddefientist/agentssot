@@ -1,0 +1,37 @@
+# Benchmark configurations. Run: python runner.py --config <name>
+#
+# All configs share ingest + recall against the same running agentssot instance.
+# Variables below are read by runner.py; server-side settings (reranker on/off,
+# synthesis on/off) must be set in the API's .env before starting the run.
+
+default:
+  base_url: http://localhost:8088
+  # Override via SSOT_TEST_API_KEY env var. Key needs writer role on the namespace.
+  api_key_env: SSOT_TEST_API_KEY
+  dataset: data/longmemeval_oracle.json
+  # Test namespace is wiped and recreated per run.
+  namespace: bench_longmemeval
+  top_k: [1, 5, 10]
+  # layer_preference to send on recall. "full" is the honest baseline.
+  layer_preference: full
+  # Max questions to evaluate (null = all). Useful for quick iteration.
+  limit: null
+  # Tag written on every ingested item so we can purge the namespace cleanly.
+  tag: bench_run
+
+configs:
+  vector_only:
+    description: Baseline — pgvector search only, reranker disabled server-side.
+    layer_preference: full
+
+  with_reranker:
+    description: Vector + Qwen3-Reranker-8B (requires RERANKER_PROVIDER=ollama).
+    layer_preference: full
+
+  tiered_summary:
+    description: Same server config, but clients request summary layer.
+    layer_preference: summary
+
+  tiered_abstract:
+    description: Same server config, but clients request abstract layer.
+    layer_preference: abstract
