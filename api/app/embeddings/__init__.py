@@ -15,7 +15,11 @@ def build_embedding_provider(settings) -> EmbeddingProvider:
     if settings.embedding_provider == "openai":
         return OpenAIEmbeddingProvider(api_key=settings.openai_api_key, model=settings.openai_embed_model)
     if settings.embedding_provider == "ollama":
-        return OllamaEmbeddingProvider(base_url=settings.ollama_base_url, model=settings.ollama_embed_model)
+        return OllamaEmbeddingProvider(
+            base_url=settings.ollama_base_url,
+            model=settings.ollama_embed_model,
+            cpu_only=settings.ollama_embed_cpu_only,
+        )
     return DisabledEmbeddingProvider(reason="EMBEDDING_PROVIDER=none")
 
 

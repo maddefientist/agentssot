@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     openai_embed_model: str = Field(default="text-embedding-3-small", alias="OPENAI_EMBED_MODEL")
     ollama_base_url: str = Field(default="http://host.docker.internal:11434", alias="OLLAMA_BASE_URL")
     ollama_embed_model: str = Field(default="nomic-embed-text", alias="OLLAMA_EMBED_MODEL")
+    ollama_embed_cpu_only: bool = Field(default=True, alias="OLLAMA_EMBED_CPU_ONLY")
 
     llm_provider: Literal["none", "openai", "ollama"] = Field(default="none", alias="LLM_PROVIDER")
     openai_chat_model: str = Field(default="gpt-4o-mini", alias="OPENAI_CHAT_MODEL")

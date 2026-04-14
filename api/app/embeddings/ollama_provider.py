@@ -4,10 +4,11 @@ from .base import EmbeddingProvider, EmbeddingProviderError
 
 
 class OllamaEmbeddingProvider(EmbeddingProvider):
-    def __init__(self, base_url: str, model: str, timeout_seconds: int = 30):
+    def __init__(self, base_url: str, model: str, timeout_seconds: int = 30, cpu_only: bool = False):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = timeout_seconds
+        self.cpu_only = cpu_only
         super().__init__(
             provider_name="ollama",
             is_available=bool(base_url and model),
@@ -23,6 +24,9 @@ class OllamaEmbeddingProvider(EmbeddingProvider):
             "model": self.model,
             "prompt": text,
         }
+        # Force CPU-only to avoid GPU memory contention with large inference models
+        if self.cpu_only:
+            payload["options"] = {"num_gpu": 0}
 
         try:
             response = httpx.post(url, json=payload, timeout=self.timeout_seconds)
