@@ -154,6 +154,10 @@ def ui_home():
 
 @app.get("/cortex", include_in_schema=False)
 def ui_cortex():
+    cortex_file = UI_DIR / "cortex-v2.html"
+    if cortex_file.exists():
+        return FileResponse(cortex_file)
+    # fallback to original
     cortex_file = UI_DIR / "cortex.html"
     if cortex_file.exists():
         return FileResponse(cortex_file)
@@ -180,10 +184,11 @@ def cortex_data(
 def cortex_links(
     namespace: str = Query(default="claude-shared"),
     limit: int = Query(default=200, le=500),
+    min_weight: float = Query(default=0.3, ge=0.0, le=1.0),
     session: Session = Depends(get_session),
 ):
     """Public read-only endpoint for cortex edges. Returns concept_links."""
-    return {"links": crud.list_concept_links(session, namespace, limit)}
+    return {"links": crud.list_concept_links(session, namespace, limit, min_weight)}
 
 
 @app.get("/cortex/system-info", include_in_schema=False)
@@ -774,6 +779,119 @@ def admin_list_api_keys(
     return [schemas.ApiKeyListItem(**row) for row in rows]
 
 
+@app.get("/admin/feedback")
+def list_feedback(
+    namespace: str = Query(default="claude-shared"),
+    concept_id: str | None = Query(default=None),
+    signal: str | None = Query(default=None),  # useful/noted/wrong
+    limit: int = Query(default=50),
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    """List recent feedback with optional filters. Returns feedback records with concept titles."""
+    from .models import ConceptFeedback, Concept
+    from uuid import UUID
+
+    q = (
+        select(
+            ConceptFeedback.id,
+            ConceptFeedback.concept_id,
+            ConceptFeedback.signal,
+            ConceptFeedback.agent_key,
+            ConceptFeedback.session_id,
+            ConceptFeedback.note,
+            ConceptFeedback.created_at,
+            Concept.title.label("concept_title"),
+        )
+        .join(Concept, ConceptFeedback.concept_id == Concept.id)
+        .where(ConceptFeedback.namespace == namespace)
+    )
+
+    if concept_id:
+        try:
+            q = q.where(ConceptFeedback.concept_id == UUID(concept_id))
+        except ValueError:
+            pass
+
+    if signal:
+        q = q.where(ConceptFeedback.signal == signal)
+
+    q = q.order_by(ConceptFeedback.created_at.desc()).limit(min(limit, 200))
+
+    rows = session.execute(q).all()
+    return [
+        {
+            "id": str(r.id),
+            "concept_id": str(r.concept_id),
+            "concept_title": r.concept_title,
+            "signal": r.signal.value if hasattr(r.signal, "value") else str(r.signal),
+            "agent_key": r.agent_key,
+            "session_id": r.session_id,
+            "note": r.note,
+            "created_at": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
+@app.get("/admin/feedback/contested")
+def list_contested_concepts(
+    namespace: str = Query(default="claude-shared"),
+    limit: int = Query(default=30),
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    """Return concepts that have received both useful AND wrong signals (contested)."""
+    from .models import ConceptFeedback, Concept
+    from sqlalchemy import func, and_
+
+    subq = (
+        select(
+            ConceptFeedback.concept_id,
+            func.count().filter(ConceptFeedback.signal == "useful").label("useful_count"),
+            func.count().filter(ConceptFeedback.signal == "wrong").label("wrong_count"),
+            func.count().filter(ConceptFeedback.signal == "noted").label("noted_count"),
+            func.count().label("total_count"),
+        )
+        .where(ConceptFeedback.namespace == namespace)
+        .group_by(ConceptFeedback.concept_id)
+        .subquery()
+    )
+
+    rows = session.execute(
+        select(
+            subq.c.concept_id,
+            subq.c.useful_count,
+            subq.c.wrong_count,
+            subq.c.noted_count,
+            subq.c.total_count,
+            Concept.title,
+            Concept.type,
+            Concept.confidence,
+        )
+        .join(Concept, subq.c.concept_id == Concept.id)
+        .where(
+            and_(subq.c.useful_count > 0, subq.c.wrong_count > 0)
+        )
+        .order_by(subq.c.total_count.desc())
+        .limit(min(limit, 100))
+    ).all()
+
+    return [
+        {
+            "concept_id": str(r.concept_id),
+            "concept_title": r.title,
+            "concept_type": r.type.value if hasattr(r.type, "value") else str(r.type),
+            "confidence": r.confidence,
+            "useful_count": r.useful_count,
+            "wrong_count": r.wrong_count,
+            "noted_count": r.noted_count,
+            "total_count": r.total_count,
+        }
+        for r in rows
+    ]
+
+
 @app.post("/admin/delete-items", response_model=schemas.DeleteItemsResponse)
 def admin_delete_items(
     payload: schemas.DeleteItemsRequest,
@@ -926,6 +1044,267 @@ def admin_trigger_synthesis(
         decayed_concepts=stats["decayed"],
         feedback_adjustments=stats.get("feedback_adjustments", 0),
     )
+
+
+# ── Settings API ──────────────────────────────────────────────────
+
+# Fields treated as sensitive — values are masked in GET responses.
+_SENSITIVE_FIELDS = frozenset({
+    "openai_api_key",
+    "enrollment_passphrase",
+    "database_url",
+})
+
+# Settings that can be updated at runtime without a restart.
+_RUNTIME_CONFIGURABLE = frozenset({
+    "synthesis_enabled",
+    "synthesis_similarity_threshold",
+    "synthesis_min_cluster_size",
+    "synthesis_confidence_decay",
+    "synthesis_decay_floor",
+    "synthesis_decay_grace_days",
+    "compaction_enabled",
+    "compaction_event_threshold",
+    "compaction_char_threshold",
+    "typed_memory_enabled",
+    "ingest_secret_scanning",
+    "semantic_dedup_threshold",
+    "wal_enabled",
+    "wal_retention_days",
+    "sync_tracking_enabled",
+    "sync_conflict_window_hours",
+})
+
+# Human-readable descriptions for each setting.
+_SETTING_DESCRIPTIONS: dict[str, str] = {
+    "database_url": "PostgreSQL connection string (restart required)",
+    "api_port": "HTTP port the API listens on (restart required)",
+    "log_level": "Log verbosity: debug/info/warning/error (restart required)",
+    "default_top_k": "Default number of recall results returned",
+    "max_snippet_chars": "Maximum characters per knowledge snippet",
+    "embedding_provider": "Embedding backend: none/openai/ollama (restart required)",
+    "embedding_dim": "Embedding vector dimension (restart required)",
+    "openai_api_key": "OpenAI API key — masked (restart required)",
+    "openai_embed_model": "OpenAI embedding model name (restart required)",
+    "ollama_base_url": "Ollama service base URL (restart required)",
+    "ollama_embed_model": "Ollama embedding model name (restart required)",
+    "llm_provider": "LLM backend: none/openai/ollama (restart required)",
+    "openai_chat_model": "OpenAI chat model name (restart required)",
+    "ollama_chat_model": "Ollama chat model name (restart required)",
+    "reranker_provider": "Reranker backend: none/ollama (restart required)",
+    "ollama_reranker_model": "Ollama reranker model name (restart required)",
+    "reranker_candidate_multiplier": "Candidate pool multiplier for reranking",
+    "compaction_enabled": "Enable/disable background event compaction",
+    "compaction_event_threshold": "Number of events that triggers compaction",
+    "compaction_char_threshold": "Character count that triggers compaction",
+    "compaction_interval_seconds": "How often the compaction loop checks (restart required)",
+    "synthesis_enabled": "Enable/disable background concept synthesis",
+    "synthesis_model": "LLM model used for synthesis (restart required)",
+    "synthesis_fallback_model": "Fallback LLM for synthesis (restart required)",
+    "synthesis_schedule_hour": "UTC hour when synthesis runs (restart required)",
+    "synthesis_similarity_threshold": "Cosine similarity threshold for clustering items into concepts",
+    "synthesis_min_cluster_size": "Minimum items per cluster for synthesis",
+    "synthesis_confidence_decay": "Per-day confidence decay applied to concepts",
+    "synthesis_decay_floor": "Minimum confidence floor (concepts never decay below this)",
+    "synthesis_decay_grace_days": "Days before decay begins on a concept",
+    "synthesis_feedback_protection_days": "Days after last feedback before decay resumes (restart required)",
+    "enable_hnsw_index": "Use HNSW index for vector recall (restart required)",
+    "typed_memory_enabled": "Enable memory_type and staleness filters on recall",
+    "ingest_secret_scanning": "Reject knowledge items containing likely secrets on ingest",
+    "sync_tracking_enabled": "Enable per-device sync checkpoints and conflict detection",
+    "sync_conflict_window_hours": "Hours window used for sync conflict detection",
+    "wal_enabled": "Enable write-ahead log for ingest/delete audit",
+    "wal_dir": "Directory for WAL files (restart required)",
+    "wal_retention_days": "Days before WAL files are pruned",
+    "semantic_dedup_threshold": "Cosine similarity threshold for ingest dedup (0.0 = disabled)",
+    "enrollment_passphrase": "Required passphrase for /enroll/auto — masked (restart required)",
+    "expose_db_port": "Expose Postgres port externally (restart required)",
+    "bootstrap_admin_namespaces": "Comma-separated namespaces given to the bootstrap admin key (restart required)",
+}
+
+# Expected Python types for each configurable field (used for coercion and validation).
+_SETTING_TYPES: dict[str, type] = {
+    "synthesis_enabled": bool,
+    "synthesis_similarity_threshold": float,
+    "synthesis_min_cluster_size": int,
+    "synthesis_confidence_decay": float,
+    "synthesis_decay_floor": float,
+    "synthesis_decay_grace_days": int,
+    "compaction_enabled": bool,
+    "compaction_event_threshold": int,
+    "compaction_char_threshold": int,
+    "typed_memory_enabled": bool,
+    "ingest_secret_scanning": bool,
+    "semantic_dedup_threshold": float,
+    "wal_enabled": bool,
+    "wal_retention_days": int,
+    "sync_tracking_enabled": bool,
+    "sync_conflict_window_hours": int,
+}
+
+# Acceptable value ranges for numeric settings (inclusive).
+_SETTING_RANGES: dict[str, tuple[float, float]] = {
+    "synthesis_similarity_threshold": (0.0, 1.0),
+    "synthesis_confidence_decay": (0.0, 1.0),
+    "synthesis_decay_floor": (0.0, 1.0),
+    "semantic_dedup_threshold": (0.0, 1.0),
+    "synthesis_min_cluster_size": (1, 1000),
+    "synthesis_decay_grace_days": (0, 3650),
+    "compaction_event_threshold": (1, 100_000),
+    "compaction_char_threshold": (1, 10_000_000),
+    "wal_retention_days": (1, 3650),
+    "sync_conflict_window_hours": (1, 8760),
+}
+
+
+def _mask_value(key: str, value: object) -> object:
+    if key in _SENSITIVE_FIELDS:
+        raw = str(value)
+        return "****" if not raw else f"****({len(raw)} chars)"
+    return value
+
+
+def _type_name(val: object) -> str:
+    if isinstance(val, bool):
+        return "bool"
+    if isinstance(val, int):
+        return "int"
+    if isinstance(val, float):
+        return "float"
+    return "str"
+
+
+def _coerce_setting(key: str, raw: object) -> object:
+    """Coerce a raw JSON value to the expected Python type. Raises ValueError on mismatch."""
+    expected = _SETTING_TYPES.get(key)
+    if expected is None:
+        raise ValueError(f"Unknown configurable setting: {key!r}")
+
+    if expected is bool:
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            if raw.lower() in ("true", "1", "yes"):
+                return True
+            if raw.lower() in ("false", "0", "no"):
+                return False
+        raise ValueError(f"{key}: expected bool, got {type(raw).__name__} {raw!r}")
+
+    if expected is int:
+        if isinstance(raw, bool):
+            raise ValueError(f"{key}: expected int, not bool")
+        if isinstance(raw, int):
+            return raw
+        if isinstance(raw, float) and raw == int(raw):
+            return int(raw)
+        if isinstance(raw, str):
+            try:
+                return int(raw)
+            except ValueError:
+                pass
+        raise ValueError(f"{key}: expected int, got {type(raw).__name__} {raw!r}")
+
+    if expected is float:
+        if isinstance(raw, bool):
+            raise ValueError(f"{key}: expected float, not bool")
+        if isinstance(raw, (int, float)):
+            return float(raw)
+        if isinstance(raw, str):
+            try:
+                return float(raw)
+            except ValueError:
+                pass
+        raise ValueError(f"{key}: expected float, got {type(raw).__name__} {raw!r}")
+
+    return str(raw)
+
+
+@app.get("/admin/settings", response_model=schemas.SettingsGetResponse)
+def get_settings_endpoint(
+    auth: AuthContext = Depends(require_api_key),
+):
+    """Return all current settings with metadata (admin only). Sensitive values are masked."""
+    require_admin(auth)
+
+    s = app.state.settings
+    items = []
+    for field_name in s.model_fields:
+        value = getattr(s, field_name, None)
+        items.append(
+            schemas.SettingMeta(
+                key=field_name,
+                value=_mask_value(field_name, value),
+                type=_type_name(value),
+                runtime_configurable=field_name in _RUNTIME_CONFIGURABLE,
+                description=_SETTING_DESCRIPTIONS.get(field_name, ""),
+            )
+        )
+
+    return schemas.SettingsGetResponse(settings=items)
+
+
+@app.post("/admin/settings", response_model=schemas.SettingsUpdateResponse)
+def update_settings_endpoint(
+    payload: schemas.SettingsUpdateRequest,
+    auth: AuthContext = Depends(require_api_key),
+):
+    """Update runtime-configurable settings (admin only). Changes are session-only — not persisted to .env."""
+    require_admin(auth)
+
+    s = app.state.settings
+    applied: dict[str, object] = {}
+    skipped: dict[str, str] = {}
+    errors: list[str] = []
+
+    for key, raw_value in payload.updates.items():
+        # Reject unknown fields
+        if not hasattr(s, key):
+            skipped[key] = "unknown setting"
+            continue
+
+        # Reject non-runtime-configurable settings
+        if key not in _RUNTIME_CONFIGURABLE:
+            skipped[key] = "requires restart — update .env and redeploy to change this setting"
+            continue
+
+        # Coerce and validate type
+        try:
+            value = _coerce_setting(key, raw_value)
+        except ValueError as exc:
+            errors.append(str(exc))
+            skipped[key] = f"type error: {exc}"
+            continue
+
+        # Range check for numerics
+        if key in _SETTING_RANGES:
+            lo, hi = _SETTING_RANGES[key]
+            if not (lo <= value <= hi):  # type: ignore[operator]
+                msg = f"{key}: value {value} out of range [{lo}, {hi}]"
+                errors.append(msg)
+                skipped[key] = f"range error: {msg}"
+                continue
+
+        # Apply to live settings object
+        object.__setattr__(s, key, value)
+        applied[key] = _mask_value(key, value)
+        logger.info("settings.update key=%s value=%r actor=%s", key, value, auth.key_name)
+
+    if errors and not applied:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="; ".join(errors),
+        )
+
+    # Log to WAL (best-effort)
+    wal.log_event(
+        "settings.update",
+        namespace=None,
+        actor_key_id=auth.key_id,
+        payload={"updates": {k: _mask_value(k, v) for k, v in payload.updates.items()}},
+        result={"applied": applied, "skipped": skipped},
+    )
+
+    return schemas.SettingsUpdateResponse(applied=applied, skipped=skipped)
 
 
 # ── Enrollment ─────────────────────────────────────────────────────

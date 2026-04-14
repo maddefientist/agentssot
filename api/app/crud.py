@@ -1322,6 +1322,7 @@ def list_concept_links(
     session: Session,
     namespace: str,
     limit: int = 200,
+    min_weight: float = 0.3,
 ) -> list[dict]:
     """List concept links for a namespace, ordered by weight descending."""
     from .models import ConceptLink, Concept
@@ -1336,6 +1337,7 @@ def list_concept_links(
         )
         .join(Concept, ConceptLink.concept_a == Concept.id)
         .where(Concept.namespace == namespace)
+        .where(ConceptLink.weight >= min_weight)
         .order_by(ConceptLink.weight.desc())
         .limit(min(max(limit, 1), 500))
     )

@@ -153,6 +153,260 @@
   .rules-text code { background: rgba(139,92,246,0.1); padding: 1px 4px; border-radius: 3px; color: #c4b5fd; }
 
   .setup-cmd { background: rgba(255,255,255,0.03); border: 1px solid #1a1a1a; border-radius: 6px; padding: 8px 12px; margin: 8px 0; font-size: 10px; color: #aaa; white-space: pre-wrap; word-break: break-all; }
+
+  /* Admin tab */
+  .admin-key-row { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
+  .admin-key-row input {
+    flex: 1; background: rgba(255,255,255,0.04); border: 1px solid #2a2a3a; border-radius: 6px;
+    color: #e0e0e0; padding: 7px 10px; font-family: inherit; font-size: 11px; outline: none;
+    transition: border-color 0.2s;
+  }
+  .admin-key-row input:focus { border-color: #8b5cf6; }
+
+  .admin-section { margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid #141420; }
+  .admin-section:last-child { border-bottom: none; }
+  .admin-section h4 { font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: #8b5cf6; margin-bottom: 10px; }
+
+  .admin-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+  .admin-row input[type="text"], .admin-row select {
+    background: rgba(255,255,255,0.04); border: 1px solid #2a2a3a; border-radius: 6px;
+    color: #e0e0e0; padding: 6px 10px; font-family: inherit; font-size: 11px; outline: none;
+    transition: border-color 0.2s; min-width: 0;
+  }
+  .admin-row input[type="text"]:focus, .admin-row select:focus { border-color: #8b5cf6; }
+  .admin-row input[type="text"] { flex: 1; }
+  .admin-row select option { background: #0f0f1a; }
+
+  .admin-check-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 11px; color: #888; }
+  .admin-check-row input[type="checkbox"] { accent-color: #8b5cf6; cursor: pointer; }
+
+  .admin-btn {
+    background: rgba(139,92,246,0.12); border: 1px solid rgba(139,92,246,0.35); color: #c4b5fd;
+    padding: 6px 14px; border-radius: 6px; font-size: 11px; cursor: pointer; font-family: inherit;
+    transition: all 0.2s; white-space: nowrap;
+  }
+  .admin-btn:hover { background: rgba(139,92,246,0.25); border-color: #8b5cf6; color: #ede9fe; }
+  .admin-btn:active { background: rgba(139,92,246,0.35); }
+  .admin-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .admin-btn.loading { opacity: 0.65; cursor: wait; }
+
+  .admin-result {
+    margin-top: 8px; padding: 8px 10px; border-radius: 6px; font-size: 10px; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-all; display: none;
+  }
+  .admin-result.ok { background: rgba(34,197,94,0.08); border: 1px solid rgba(34,197,94,0.2); color: #86efac; }
+  .admin-result.err { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); color: #fca5a5; }
+
+  .admin-keys-table { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 8px; }
+  .admin-keys-table th { text-align: left; color: #555; padding: 4px 6px; border-bottom: 1px solid #1a1a1a; font-weight: 400; letter-spacing: 0.8px; }
+  .admin-keys-table td { padding: 5px 6px; border-bottom: 1px solid #111; color: #999; vertical-align: top; }
+  .admin-keys-table td:first-child { color: #ccc; }
+  .admin-keys-preview { font-size: 9px; color: #555; letter-spacing: 0.5px; }
+  .admin-role-badge {
+    display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 9px;
+    background: rgba(139,92,246,0.12); border: 1px solid rgba(139,92,246,0.25); color: #a78bfa;
+  }
+  .admin-role-badge.admin { background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.3); color: #fbbf24; }
+
+  /* Tasks tab */
+  .tasks-filters { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .tasks-filter-select {
+    background: rgba(255,255,255,0.04); border: 1px solid #222; border-radius: 5px;
+    color: #ccc; font-family: inherit; font-size: 10px; padding: 4px 8px;
+    cursor: pointer; outline: none; flex: 1; min-width: 100px;
+  }
+  .tasks-filter-select:focus { border-color: #8b5cf6; }
+  .tasks-filter-select option { background: #0f0f1a; }
+
+  .task-card {
+    background: rgba(255,255,255,0.02); border: 1px solid #1a1a1a; border-radius: 8px;
+    padding: 10px 12px; margin-bottom: 8px; cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .task-card:hover { border-color: #333; background: rgba(255,255,255,0.04); }
+  .task-card.expanded { border-color: #8b5cf680; background: rgba(139,92,246,0.04); }
+
+  .task-card-header { display: flex; align-items: flex-start; gap: 8px; }
+  .task-status-badge {
+    display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 9px;
+    letter-spacing: 0.5px; text-transform: uppercase; font-weight: 600; flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .badge-pending     { background: rgba(245,158,11,0.2);  color: #f59e0b; border: 1px solid rgba(245,158,11,0.35); }
+  .badge-in_progress { background: rgba(6,182,212,0.2);   color: #06b6d4; border: 1px solid rgba(6,182,212,0.35); }
+  .badge-completed   { background: rgba(34,197,94,0.2);   color: #22c55e; border: 1px solid rgba(34,197,94,0.35); }
+  .badge-abandoned   { background: rgba(239,68,68,0.2);   color: #ef4444; border: 1px solid rgba(239,68,68,0.35); }
+
+  .task-title { font-size: 11px; font-weight: 600; color: #e0e0e0; line-height: 1.35; flex: 1; }
+  .task-meta  { font-size: 9px; color: #555; margin-top: 5px; display: flex; gap: 12px; align-items: center; }
+  .task-meta-agent   { color: #666; }
+  .task-meta-version { color: #444; }
+  .task-meta-time    { color: #444; margin-left: auto; }
+
+  .task-details { display: none; margin-top: 10px; border-top: 1px solid #1a1a1a; padding-top: 10px; }
+  .task-details.visible { display: block; }
+  .task-detail-section { margin-bottom: 8px; }
+  .task-detail-label { font-size: 9px; letter-spacing: 1px; text-transform: uppercase; color: #8b5cf6; margin-bottom: 4px; }
+  .task-detail-list { list-style: none; padding: 0; margin: 0; }
+  .task-detail-list li { font-size: 10px; color: #999; padding: 2px 0 2px 10px; position: relative; }
+  .task-detail-list li::before { content: '›'; position: absolute; left: 0; color: #555; }
+  .task-detail-empty { font-size: 10px; color: #444; font-style: italic; }
+
+  .task-snapshot-toggle {
+    background: none; border: 1px solid #222; border-radius: 4px; color: #666;
+    font-size: 9px; padding: 2px 8px; cursor: pointer; font-family: inherit; margin-bottom: 4px;
+  }
+  .task-snapshot-toggle:hover { border-color: #444; color: #aaa; }
+  .task-snapshot-body {
+    display: none; background: rgba(0,0,0,0.3); border-radius: 4px; padding: 8px;
+    font-size: 9px; color: #888; white-space: pre-wrap; word-break: break-word;
+    max-height: 120px; overflow-y: auto; margin-top: 4px;
+  }
+  .task-snapshot-body.visible { display: block; }
+
+  .tasks-empty { text-align: center; color: #444; font-size: 11px; padding: 30px 0; }
+  .tasks-count { font-size: 9px; color: #555; margin-bottom: 10px; }
+  .tasks-refresh-btn {
+    background: none; border: 1px solid #222; border-radius: 4px; color: #666;
+    font-size: 9px; padding: 2px 8px; cursor: pointer; font-family: inherit; float: right;
+  }
+  .tasks-refresh-btn:hover { border-color: #8b5cf6; color: #c4b5fd; }
+
+  /* Feedback Analytics tab */
+  .feedback-stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px; }
+  .feedback-stat-card {
+    background: rgba(255,255,255,0.02); border: 1px solid #1a1a1a; border-radius: 8px;
+    padding: 10px 12px; text-align: center;
+  }
+  .feedback-stat-card.span2 { grid-column: span 2; }
+  .feedback-stat-val { font-size: 20px; font-weight: 700; }
+  .feedback-stat-label { font-size: 9px; letter-spacing: 1px; color: #666; text-transform: uppercase; margin-top: 2px; }
+  .feedback-stat-val.useful { color: #22c55e; }
+  .feedback-stat-val.noted  { color: #f59e0b; }
+  .feedback-stat-val.wrong  { color: #ef4444; }
+  .feedback-stat-val.contested { color: #f97316; }
+
+  .feedback-filter-row { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .feedback-filter-btn {
+    background: rgba(255,255,255,0.04); border: 1px solid #2a2a2a; color: #888;
+    padding: 4px 10px; border-radius: 5px; font-size: 10px; cursor: pointer;
+    font-family: inherit; transition: all 0.2s;
+  }
+  .feedback-filter-btn:hover { background: rgba(255,255,255,0.08); color: #ccc; }
+  .feedback-filter-btn.active { border-color: #8b5cf6; background: rgba(139,92,246,0.15); color: #c4b5fd; }
+  .feedback-filter-btn.f-useful.active { border-color: #22c55e; background: rgba(34,197,94,0.12); color: #86efac; }
+  .feedback-filter-btn.f-noted.active  { border-color: #f59e0b; background: rgba(245,158,11,0.12); color: #fcd34d; }
+  .feedback-filter-btn.f-wrong.active  { border-color: #ef4444; background: rgba(239,68,68,0.12); color: #fca5a5; }
+
+  .feedback-list { margin-bottom: 20px; }
+  .feedback-item {
+    padding: 8px 0; border-bottom: 1px solid #111; display: flex; align-items: flex-start; gap: 8px;
+  }
+  .signal-badge {
+    font-size: 8px; letter-spacing: 0.5px; text-transform: uppercase; padding: 2px 6px;
+    border-radius: 4px; white-space: nowrap; flex-shrink: 0; margin-top: 1px; font-weight: 600;
+  }
+  .signal-badge.useful { background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
+  .signal-badge.noted  { background: rgba(245,158,11,0.15); color: #f59e0b; border: 1px solid rgba(245,158,11,0.3); }
+  .signal-badge.wrong  { background: rgba(239,68,68,0.15); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
+
+  .feedback-item-body { flex: 1; min-width: 0; }
+  .feedback-concept-link {
+    font-size: 11px; color: #c4b5fd; cursor: pointer; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; display: block;
+    background: none; border: none; font-family: inherit; text-align: left; padding: 0; width: 100%;
+  }
+  .feedback-concept-link:hover { color: #fff; text-decoration: underline; }
+  .feedback-meta { font-size: 9px; color: #555; margin-top: 2px; }
+  .feedback-note { font-size: 9px; color: #888; margin-top: 3px; font-style: italic; border-left: 2px solid #333; padding-left: 6px; }
+
+  .contested-section { margin-top: 8px; }
+  .contested-item {
+    background: rgba(249,115,22,0.05); border: 1px solid rgba(249,115,22,0.2);
+    border-radius: 6px; padding: 10px; margin-bottom: 8px; cursor: pointer;
+  }
+  .contested-item:hover { background: rgba(249,115,22,0.09); }
+  .contested-title { font-size: 11px; color: #fdba74; font-weight: 600; margin-bottom: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .contested-counts { display: flex; gap: 10px; font-size: 9px; margin-top: 4px; }
+  .c-useful { color: #22c55e; }
+  .c-noted  { color: #f59e0b; }
+  .c-wrong  { color: #ef4444; }
+  .feedback-empty { color: #555; font-size: 11px; padding: 12px 0; text-align: center; }
+  .feedback-loading { color: #444; font-size: 10px; padding: 8px 0; }
+
+  /* Knowledge Browser */
+  .kb-controls { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .kb-search-wrap { display: flex; flex: 1; min-width: 0; gap: 6px; }
+  .kb-input {
+    flex: 1; min-width: 0; background: rgba(255,255,255,0.04); border: 1px solid #2a2a2a;
+    border-radius: 6px; color: #e0e0e0; font-family: inherit; font-size: 11px;
+    padding: 6px 10px; outline: none; transition: border-color 0.2s;
+  }
+  .kb-input:focus { border-color: #8b5cf6; }
+  .kb-input::placeholder { color: #444; }
+  .kb-mode-toggle {
+    background: rgba(255,255,255,0.04); border: 1px solid #2a2a2a; border-radius: 6px;
+    color: #888; font-family: inherit; font-size: 10px; padding: 6px 9px; cursor: pointer;
+    white-space: nowrap; transition: all 0.2s;
+  }
+  .kb-mode-toggle.semantic { border-color: #8b5cf6; color: #c4b5fd; background: rgba(139,92,246,0.12); }
+  .kb-select {
+    width: 100%; background: rgba(255,255,255,0.04); border: 1px solid #2a2a2a;
+    border-radius: 6px; color: #888; font-family: inherit; font-size: 11px;
+    padding: 6px 10px; outline: none; cursor: pointer;
+  }
+  .kb-select option { background: #0f0f1a; }
+  .kb-filter-row { display: flex; gap: 6px; width: 100%; }
+  .kb-filter-row .kb-select { flex: 1; width: auto; }
+  .kb-search-btn {
+    background: rgba(139,92,246,0.15); border: 1px solid rgba(139,92,246,0.4);
+    color: #c4b5fd; font-family: inherit; font-size: 11px; padding: 6px 14px;
+    border-radius: 6px; cursor: pointer; white-space: nowrap; transition: all 0.2s;
+  }
+  .kb-search-btn:hover { background: rgba(139,92,246,0.25); }
+  .kb-spinner { display: none; text-align: center; color: #555; padding: 20px 0; font-size: 11px; }
+  .kb-spinner.show { display: block; }
+  .kb-empty { color: #555; text-align: center; padding: 20px 0; font-size: 11px; display: none; }
+  .kb-empty.show { display: block; }
+  .kb-result-count { font-size: 10px; color: #555; margin-bottom: 10px; }
+  .kb-item {
+    border: 1px solid #1a1a1a; border-radius: 8px; margin-bottom: 8px;
+    background: rgba(255,255,255,0.02); overflow: hidden; cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .kb-item:hover { border-color: #333; }
+  .kb-item.expanded { border-color: #8b5cf6; }
+  .kb-item-header { padding: 10px 12px; }
+  .kb-item-title { font-size: 11px; font-weight: 600; color: #ddd; margin-bottom: 5px; line-height: 1.4; }
+  .kb-item-snippet { font-size: 10px; color: #666; line-height: 1.5; margin-bottom: 6px; word-break: break-word; }
+  .kb-item-meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  .kb-badge {
+    display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 4px;
+    letter-spacing: 0.4px; font-weight: 600; text-transform: uppercase;
+  }
+  .kb-badge-cat-user  { background: rgba(59,130,246,0.15);  border: 1px solid rgba(59,130,246,0.35); color: #93c5fd; }
+  .kb-badge-cat-agent { background: rgba(34,197,94,0.12);   border: 1px solid rgba(34,197,94,0.3);   color: #86efac; }
+  .kb-badge-cat-def   { background: rgba(100,116,139,0.15); border: 1px solid rgba(100,116,139,0.3); color: #94a3b8; }
+  .kb-badge-layer-abstract { background: rgba(234,179,8,0.15);   border: 1px solid rgba(234,179,8,0.3);   color: #fde047; }
+  .kb-badge-layer-summary  { background: rgba(249,115,22,0.15);  border: 1px solid rgba(249,115,22,0.3);  color: #fdba74; }
+  .kb-badge-layer-full     { background: rgba(100,116,139,0.12); border: 1px solid rgba(100,116,139,0.25);color: #94a3b8; }
+  .kb-badge-kind     { background: rgba(139,92,246,0.12); border: 1px solid rgba(139,92,246,0.25); color: #c4b5fd; }
+  .kb-badge-verbatim { background: rgba(239,68,68,0.12);  border: 1px solid rgba(239,68,68,0.25);  color: #fca5a5; }
+  .kb-badge-tag      { background: rgba(255,255,255,0.04); border: 1px solid #222; color: #666; }
+  .kb-item-date { font-size: 9px; color: #444; margin-left: auto; padding-left: 4px; white-space: nowrap; }
+  .kb-item-body { display: none; padding: 0 12px 12px; border-top: 1px solid #1a1a1a; }
+  .kb-item.expanded .kb-item-body { display: block; }
+  .kb-item-full {
+    font-size: 10px; color: #888; line-height: 1.7; white-space: pre-wrap;
+    word-break: break-word; margin-top: 10px; max-height: 300px; overflow-y: auto;
+  }
+  .kb-load-more {
+    width: 100%; margin-top: 8px; background: rgba(255,255,255,0.03); border: 1px solid #222;
+    color: #666; font-family: inherit; font-size: 11px; padding: 8px; border-radius: 6px;
+    cursor: pointer; transition: all 0.2s; display: none;
+  }
+  .kb-load-more:hover { background: rgba(255,255,255,0.06); color: #aaa; }
+  .kb-load-more.show { display: block; }
 </style>
 </head>
 <body>
@@ -183,6 +437,7 @@
   <button data-scope="global">Global</button>
   <button data-scope="project">Project</button>
   <button data-scope="device">Device</button>
+  <button id="toggle-links" class="active" title="Toggle concept relationship links">Links</button>
 </div>
 
 <div class="legend">
@@ -211,6 +466,10 @@
     <button class="drawer-tab" data-tab="agents" title="Agents">&#9775;</button>
     <button class="drawer-tab" data-tab="rules" title="Rules">&#9733;</button>
     <button class="drawer-tab" data-tab="setup" title="Setup">&#9874;</button>
+    <button class="drawer-tab" data-tab="admin" title="Admin Console">&#9881;&#65038;</button>
+    <button class="drawer-tab" data-tab="tasks" title="Working Memory Tasks">&#9745;</button>
+    <button class="drawer-tab" data-tab="feedback" title="Feedback Analytics">&#9733;</button>
+    <button class="drawer-tab" data-tab="knowledge" title="Knowledge Browser">&#128218;</button>
   </div>
   <div class="drawer-content">
     <button class="drawer-close" id="drawerClose">&times;</button>
@@ -279,6 +538,186 @@
       <h4>Live Health Check</h4>
       <div id="setup-health-live"></div>
     </div>
+
+    <div class="drawer-section" id="tab-admin">
+      <h3>Admin Console</h3>
+
+      <!-- API key input -->
+      <div class="admin-key-row">
+        <input type="password" id="admin-api-key" placeholder="Paste admin API key..." autocomplete="off" />
+        <button class="admin-btn" id="admin-key-save-btn">Save</button>
+      </div>
+      <div id="admin-key-status" style="font-size:10px;color:#555;margin-bottom:12px;"></div>
+
+      <!-- Synthesis -->
+      <div class="admin-section">
+        <h4>Concept Synthesis</h4>
+        <div class="admin-row">
+          <input type="text" id="admin-synth-ns" placeholder="Namespace (e.g. claude-shared)" value="claude-shared" />
+          <button class="admin-btn" id="admin-synth-btn">Trigger Synthesis</button>
+        </div>
+        <div class="admin-result" id="admin-synth-result"></div>
+      </div>
+
+      <!-- Dedup -->
+      <div class="admin-section">
+        <h4>Semantic Deduplication</h4>
+        <div class="admin-row">
+          <input type="text" id="admin-dedup-ns" placeholder="Namespace" value="claude-shared" />
+        </div>
+        <div class="admin-check-row">
+          <input type="checkbox" id="admin-dedup-dryrun" checked />
+          <label for="admin-dedup-dryrun">Dry run (preview only, no changes)</label>
+        </div>
+        <div class="admin-row">
+          <button class="admin-btn" id="admin-dedup-btn">Run Dedup</button>
+        </div>
+        <div class="admin-result" id="admin-dedup-result"></div>
+      </div>
+
+      <!-- Backfill embeddings -->
+      <div class="admin-section">
+        <h4>Backfill Embeddings</h4>
+        <div class="admin-row">
+          <input type="text" id="admin-backfill-ns" placeholder="Namespace" value="claude-shared" />
+          <select id="admin-backfill-scope">
+            <option value="knowledge">knowledge</option>
+            <option value="requirements">requirements</option>
+            <option value="events">events</option>
+            <option value="concepts">concepts</option>
+          </select>
+          <button class="admin-btn" id="admin-backfill-btn">Backfill</button>
+        </div>
+        <div class="admin-result" id="admin-backfill-result"></div>
+      </div>
+
+      <!-- Create namespace -->
+      <div class="admin-section">
+        <h4>Create Namespace</h4>
+        <div class="admin-row">
+          <input type="text" id="admin-ns-name" placeholder="New namespace name" />
+          <button class="admin-btn" id="admin-ns-btn">Create</button>
+        </div>
+        <div class="admin-result" id="admin-ns-result"></div>
+      </div>
+
+      <!-- API Keys -->
+      <div class="admin-section">
+        <h4>API Keys</h4>
+        <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+          <button class="admin-btn" id="admin-keys-load-btn">List Keys</button>
+        </div>
+        <div style="margin-bottom:8px;">
+          <div class="admin-row">
+            <input type="text" id="admin-newkey-name" placeholder="Key name" style="flex:1" />
+            <select id="admin-newkey-role">
+              <option value="writer">writer</option>
+              <option value="admin">admin</option>
+            </select>
+          </div>
+          <div class="admin-row">
+            <input type="text" id="admin-newkey-ns" placeholder="Namespaces (comma-separated)" style="flex:1" value="claude-shared" />
+            <button class="admin-btn" id="admin-newkey-btn">Create Key</button>
+          </div>
+        </div>
+        <div class="admin-result" id="admin-keys-result"></div>
+        <div id="admin-keys-table-wrap" style="overflow-x:auto;"></div>
+      </div>
+    </div>
+
+    <div class="drawer-section" id="tab-tasks">
+      <h3>
+        Working Memory
+        <button class="tasks-refresh-btn" id="tasks-refresh-btn" title="Refresh tasks">&#8635;</button>
+      </h3>
+      <div class="tasks-filters">
+        <select class="tasks-filter-select" id="tasks-filter-status">
+          <option value="all">All statuses</option>
+          <option value="pending">Pending</option>
+          <option value="in_progress">In Progress</option>
+          <option value="completed">Completed</option>
+          <option value="abandoned">Abandoned</option>
+        </select>
+        <select class="tasks-filter-select" id="tasks-filter-agent">
+          <option value="all">All agents</option>
+        </select>
+      </div>
+      <div class="tasks-count" id="tasks-count"></div>
+      <div id="tasks-list"></div>
+    </div>
+
+    <div class="drawer-section" id="tab-feedback">
+      <h3>Feedback Analytics</h3>
+
+      <!-- Summary stats -->
+      <div class="feedback-stats-grid">
+        <div class="feedback-stat-card span2">
+          <div class="feedback-stat-val" id="fb-total">—</div>
+          <div class="feedback-stat-label">Total Signals</div>
+        </div>
+        <div class="feedback-stat-card">
+          <div class="feedback-stat-val useful" id="fb-useful">—</div>
+          <div class="feedback-stat-label">Useful</div>
+        </div>
+        <div class="feedback-stat-card">
+          <div class="feedback-stat-val noted" id="fb-noted">—</div>
+          <div class="feedback-stat-label">Noted</div>
+        </div>
+        <div class="feedback-stat-card">
+          <div class="feedback-stat-val wrong" id="fb-wrong">—</div>
+          <div class="feedback-stat-label">Wrong</div>
+        </div>
+        <div class="feedback-stat-card">
+          <div class="feedback-stat-val contested" id="fb-contested">—</div>
+          <div class="feedback-stat-label">Contested</div>
+        </div>
+      </div>
+
+      <!-- Signal filter -->
+      <div class="feedback-filter-row" id="feedback-filter-row">
+        <button class="feedback-filter-btn active" data-fb-filter="all">All</button>
+        <button class="feedback-filter-btn f-useful" data-fb-filter="useful">Useful</button>
+        <button class="feedback-filter-btn f-noted" data-fb-filter="noted">Noted</button>
+        <button class="feedback-filter-btn f-wrong" data-fb-filter="wrong">Wrong</button>
+      </div>
+
+      <!-- Recent feedback list -->
+      <h4>Recent Feedback</h4>
+      <div class="feedback-list" id="feedback-list">
+        <div class="feedback-loading">Loading...</div>
+      </div>
+
+      <!-- Contested concepts -->
+      <h4>Contested Concepts</h4>
+      <div class="contested-section" id="contested-list">
+        <div class="feedback-loading">Loading...</div>
+      </div>
+    </div>
+
+    <div class="drawer-section" id="tab-knowledge">
+      <h3>Knowledge Browser</h3>
+      <div class="kb-controls">
+        <div class="kb-search-wrap">
+          <input class="kb-input" id="kb-query" type="text" placeholder="Search knowledge..." autocomplete="off" />
+          <button class="kb-mode-toggle" id="kb-mode-btn" title="Toggle keyword / semantic">KW</button>
+        </div>
+        <div class="kb-filter-row">
+          <select class="kb-select" id="kb-ns-select">
+            <option value="claude-shared">claude-shared</option>
+          </select>
+          <select class="kb-select" id="kb-cat-select">
+            <option value="">All categories</option>
+          </select>
+          <button class="kb-search-btn" id="kb-search-btn">Search</button>
+        </div>
+      </div>
+      <div class="kb-spinner" id="kb-spinner">&#9679; searching...</div>
+      <div class="kb-empty" id="kb-empty">No results found.</div>
+      <div class="kb-result-count" id="kb-result-count"></div>
+      <div id="kb-results"></div>
+      <button class="kb-load-more" id="kb-load-more">Load more</button>
+    </div>
+
   </div>
 </div>
 
@@ -302,6 +741,8 @@ let time = 0;
 let conceptMap = {};
 let POLL_INTERVAL = 10000;
 let pinnedNode = null;
+let conceptLinks = [];
+let showLinks = true;
 
 // --- Initial data load: seeds conceptMap and builds nodes from scratch ---
 async function loadData() {
@@ -390,6 +831,14 @@ async function loadData() {
     console.error('Failed to load concepts:', e);
   }
 
+  try {
+    const linksResp = await fetch('/cortex/links?namespace=claude-shared&limit=500&min_weight=0.3');
+    const linksData = await linksResp.json();
+    conceptLinks = linksData.links || [];
+  } catch (e) {
+    console.warn('Failed to load concept links:', e);
+  }
+
   try { if (typeof drawerOpen !== 'undefined' && drawerOpen) loadDrawerData(); } catch (_) {}
 }
 
@@ -464,6 +913,45 @@ function updatePositions() {
       n.flash = Math.max(0, n.flash - 0.02);
     }
   }
+}
+
+function drawConceptLinks() {
+  if (!showLinks || conceptLinks.length === 0) return;
+
+  // Build a lookup: concept id -> node (visible nodes only)
+  const nodeById = {};
+  for (const n of nodes) {
+    if (n.visible) nodeById[n.concept.id] = n;
+  }
+
+  ctx.save();
+  for (const link of conceptLinks) {
+    const na = nodeById[link.source];
+    const nb = nodeById[link.target];
+    if (!na || !nb) continue;
+
+    const weight = link.weight || 0.5;
+    // Map weight 0.3-1.0 to alpha 0.08-0.35
+    const alpha = 0.08 + (Math.min(Math.max(weight, 0.3), 1.0) - 0.3) / 0.7 * 0.27;
+    // Width: 1 + co_occurrences/10, max 3px
+    const coOcc = link.co_occurrences || 1;
+    const lineWidth = Math.min(1 + coOcc / 10, 3);
+
+    if (link.link_type === 'semantic') {
+      ctx.setLineDash([4, 8]);
+    } else {
+      ctx.setLineDash([]);
+    }
+
+    ctx.beginPath();
+    ctx.moveTo(na.x, na.y);
+    ctx.lineTo(nb.x, nb.y);
+    ctx.strokeStyle = 'rgba(255,255,255,' + alpha + ')';
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.restore();
 }
 
 function drawConnections() {
@@ -644,6 +1132,7 @@ function render() {
   ctx.fillRect(0, 0, W, H);
 
   updatePositions();
+  drawConceptLinks();
   drawConnections();
   drawNodes();
   findHovered();
@@ -687,6 +1176,11 @@ document.querySelectorAll('.controls button[data-scope]').forEach(function(btn) 
 
 document.getElementById('search').addEventListener('input', function(e) {
   searchTerm = e.target.value.toLowerCase();
+});
+
+document.getElementById('toggle-links').addEventListener('click', function() {
+  showLinks = !showLinks;
+  this.classList.toggle('active', showLinks);
 });
 
 // ---------------------------------------------------------------------------
@@ -873,6 +1367,941 @@ loadData().then(function() {
   render();
   setInterval(loadData, POLL_INTERVAL);
 });
+
+// ---------------------------------------------------------------------------
+// Tasks tab — Working Memory
+// ---------------------------------------------------------------------------
+(function() {
+  var tasksData = [];
+  var tasksRefreshTimer = null;
+  var expandedTaskIds = {};
+  var ADMIN_KEY_STORAGE = 'hive_admin_api_key';
+
+  function formatRelativeTime(isoString) {
+    if (!isoString) return 'unknown';
+    var now = Date.now();
+    var then = new Date(isoString).getTime();
+    var diff = Math.floor((now - then) / 1000);
+    if (isNaN(diff) || diff < 0) return 'just now';
+    if (diff < 60) return diff + 's ago';
+    if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+    if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+    return Math.floor(diff / 86400) + 'd ago';
+  }
+
+  function getTasksApiKey() {
+    var stored = localStorage.getItem(ADMIN_KEY_STORAGE);
+    if (stored) return stored;
+    var input = document.getElementById('admin-api-key');
+    if (input && input.value.trim()) return input.value.trim();
+    return 'ssot_cortex_viewer';
+  }
+
+  async function loadCortexTasks() {
+    var statusFilter = document.getElementById('tasks-filter-status').value;
+    var agentFilter  = document.getElementById('tasks-filter-agent').value;
+    var url = '/cortex/tasks?namespace=claude-shared';
+    if (statusFilter && statusFilter !== 'all') url += '&status=' + encodeURIComponent(statusFilter);
+    if (agentFilter  && agentFilter  !== 'all') url += '&agent_key=' + encodeURIComponent(agentFilter);
+    try {
+      var resp = await fetch(url, { headers: { 'X-API-Key': getTasksApiKey() } });
+      if (!resp.ok) {
+        var errMsg = resp.status === 401
+          ? 'Auth failed — set an admin API key in the Admin tab.'
+          : 'HTTP ' + resp.status + ': ' + resp.statusText;
+        renderTasksError(errMsg);
+        return;
+      }
+      var data = await resp.json();
+      tasksData = data.tasks || [];
+      rebuildAgentFilter(tasksData, agentFilter);
+      renderCortexTasks(tasksData);
+    } catch (e) {
+      renderTasksError('Fetch failed: ' + e.message);
+    }
+  }
+
+  function rebuildAgentFilter(tasks, currentSelection) {
+    var select = document.getElementById('tasks-filter-agent');
+    var agents = Array.from(new Set(tasks.map(function(t) { return t.agent_key; }))).sort();
+    select.textContent = '';
+    var allOpt = document.createElement('option');
+    allOpt.value = 'all';
+    allOpt.textContent = 'All agents';
+    select.appendChild(allOpt);
+    agents.forEach(function(ak) {
+      var opt = document.createElement('option');
+      opt.value = ak;
+      opt.textContent = ak.replace('device-', '').replace('-writer', '');
+      if (ak === currentSelection) opt.selected = true;
+      select.appendChild(opt);
+    });
+  }
+
+  function renderTasksError(msg) {
+    var list = document.getElementById('tasks-list');
+    list.textContent = '';
+    var div = document.createElement('div');
+    div.className = 'tasks-empty';
+    div.style.color = '#ef4444';
+    div.textContent = msg;
+    list.appendChild(div);
+    document.getElementById('tasks-count').textContent = '';
+  }
+
+  function renderCortexTasks(tasks) {
+    var list = document.getElementById('tasks-list');
+    var countEl = document.getElementById('tasks-count');
+    list.textContent = '';
+    if (!tasks || tasks.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'tasks-empty';
+      empty.textContent = 'No tasks found.';
+      list.appendChild(empty);
+      countEl.textContent = '';
+      return;
+    }
+    countEl.textContent = tasks.length + ' task' + (tasks.length !== 1 ? 's' : '');
+    tasks.forEach(function(task) { list.appendChild(renderTask(task)); });
+  }
+
+  function makeDetailSection(labelText, items, asCode) {
+    var section = document.createElement('div');
+    section.className = 'task-detail-section';
+    var lbl = document.createElement('div');
+    lbl.className = 'task-detail-label';
+    lbl.textContent = labelText;
+    section.appendChild(lbl);
+    if (items && items.length > 0) {
+      var ul = document.createElement('ul');
+      ul.className = 'task-detail-list';
+      items.forEach(function(text) {
+        var li = document.createElement('li');
+        if (asCode) {
+          var code = document.createElement('code');
+          code.style.cssText = 'background:rgba(139,92,246,0.1);padding:1px 4px;border-radius:3px;color:#c4b5fd;font-size:9px;';
+          code.textContent = text;
+          li.appendChild(code);
+        } else {
+          li.textContent = text;
+        }
+        ul.appendChild(li);
+      });
+      section.appendChild(ul);
+    } else {
+      var emptyEl = document.createElement('div');
+      emptyEl.className = 'task-detail-empty';
+      emptyEl.textContent = 'none';
+      section.appendChild(emptyEl);
+    }
+    return section;
+  }
+
+  function renderTask(task) {
+    var card = document.createElement('div');
+    card.className = 'task-card' + (expandedTaskIds[task.task_id] ? ' expanded' : '');
+    card.dataset.taskId = task.task_id;
+
+    // Header: status badge + title
+    var header = document.createElement('div');
+    header.className = 'task-card-header';
+    var badge = document.createElement('span');
+    badge.className = 'task-status-badge badge-' + task.status;
+    badge.textContent = task.status.replace('_', ' ');
+    var titleEl = document.createElement('div');
+    titleEl.className = 'task-title';
+    titleEl.textContent = task.task_title;
+    header.appendChild(badge);
+    header.appendChild(titleEl);
+
+    // Meta: agent / version / relative time
+    var meta = document.createElement('div');
+    meta.className = 'task-meta';
+    var agentSpan = document.createElement('span');
+    agentSpan.className = 'task-meta-agent';
+    agentSpan.textContent = task.agent_key.replace('device-', '').replace('-writer', '');
+    var versionSpan = document.createElement('span');
+    versionSpan.className = 'task-meta-version';
+    versionSpan.textContent = 'v' + task.version;
+    var timeSpan = document.createElement('span');
+    timeSpan.className = 'task-meta-time';
+    timeSpan.textContent = formatRelativeTime(task.updated_at);
+    meta.appendChild(agentSpan);
+    meta.appendChild(versionSpan);
+    meta.appendChild(timeSpan);
+
+    // Expandable details
+    var details = document.createElement('div');
+    details.className = 'task-details' + (expandedTaskIds[task.task_id] ? ' visible' : '');
+
+    details.appendChild(makeDetailSection('Decisions', task.decisions, false));
+    details.appendChild(makeDetailSection('Pending Actions', task.pending_actions, false));
+    details.appendChild(makeDetailSection('Artifacts', task.artifacts, true));
+
+    // Context snapshot (collapsible)
+    if (task.context_snapshot) {
+      var snapSection = document.createElement('div');
+      snapSection.className = 'task-detail-section';
+      var snapLabel = document.createElement('div');
+      snapLabel.className = 'task-detail-label';
+      snapLabel.textContent = 'Context Snapshot';
+      var toggleBtn = document.createElement('button');
+      toggleBtn.className = 'task-snapshot-toggle';
+      toggleBtn.textContent = 'Show context';
+      var snapBody = document.createElement('div');
+      snapBody.className = 'task-snapshot-body';
+      snapBody.textContent = task.context_snapshot;
+      toggleBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        var vis = snapBody.classList.toggle('visible');
+        toggleBtn.textContent = vis ? 'Hide context' : 'Show context';
+      });
+      snapSection.appendChild(snapLabel);
+      snapSection.appendChild(toggleBtn);
+      snapSection.appendChild(snapBody);
+      details.appendChild(snapSection);
+    }
+
+    // Task ID footer
+    var idRow = document.createElement('div');
+    idRow.style.cssText = 'font-size:9px;color:#333;margin-top:6px;';
+    idRow.textContent = 'id: ' + task.task_id;
+    details.appendChild(idRow);
+
+    card.appendChild(header);
+    card.appendChild(meta);
+    card.appendChild(details);
+
+    card.addEventListener('click', function() {
+      if (expandedTaskIds[task.task_id]) {
+        delete expandedTaskIds[task.task_id];
+        card.classList.remove('expanded');
+        details.classList.remove('visible');
+      } else {
+        expandedTaskIds[task.task_id] = true;
+        card.classList.add('expanded');
+        details.classList.add('visible');
+      }
+    });
+
+    return card;
+  }
+
+  function startTasksRefresh() {
+    if (tasksRefreshTimer) return;
+    loadCortexTasks();
+    tasksRefreshTimer = setInterval(loadCortexTasks, 30000);
+  }
+
+  function stopTasksRefresh() {
+    if (tasksRefreshTimer) { clearInterval(tasksRefreshTimer); tasksRefreshTimer = null; }
+  }
+
+  // Activate/deactivate refresh when switching tabs
+  document.querySelectorAll('.drawer-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      if (tab.dataset.tab === 'tasks') {
+        startTasksRefresh();
+      } else {
+        stopTasksRefresh();
+      }
+    });
+  });
+
+  // Refresh button
+  document.getElementById('tasks-refresh-btn').addEventListener('click', function(e) {
+    e.stopPropagation();
+    loadCortexTasks();
+  });
+
+  // Filter changes
+  document.getElementById('tasks-filter-status').addEventListener('change', loadCortexTasks);
+  document.getElementById('tasks-filter-agent').addEventListener('change', loadCortexTasks);
+
+  // Stop refresh when drawer closes
+  document.getElementById('drawerClose').addEventListener('click', function() {
+    stopTasksRefresh();
+  });
+})();
+
+// ---------------------------------------------------------------------------
+// Admin Console
+// ---------------------------------------------------------------------------
+(function() {
+  var ADMIN_KEY_STORAGE = 'hive_admin_api_key';
+
+  function getAdminKey() {
+    return document.getElementById('admin-api-key').value.trim() ||
+           localStorage.getItem(ADMIN_KEY_STORAGE) || '';
+  }
+
+  function showResult(elId, text, isOk) {
+    var el = document.getElementById(elId);
+    el.textContent = text;
+    el.className = 'admin-result ' + (isOk ? 'ok' : 'err');
+    el.style.display = 'block';
+  }
+
+  function setLoading(btn, loading) {
+    btn.disabled = loading;
+    btn.classList.toggle('loading', loading);
+  }
+
+  async function adminFetch(path, opts) {
+    var key = getAdminKey();
+    if (!key) { return { ok: false, error: 'No admin API key set. Paste your key above and click Save.' }; }
+    var headers = Object.assign({ 'X-API-Key': key, 'Content-Type': 'application/json' }, opts.headers || {});
+    try {
+      var resp = await fetch(path, Object.assign({}, opts, { headers: headers }));
+      var body = await resp.json().catch(function() { return { detail: 'Non-JSON response' }; });
+      return { ok: resp.ok, status: resp.status, body: body };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  }
+
+  // Load saved key on page load
+  var keyInput = document.getElementById('admin-api-key');
+  var keyStatus = document.getElementById('admin-key-status');
+  var savedKey = localStorage.getItem(ADMIN_KEY_STORAGE) || '';
+  if (savedKey) {
+    keyInput.value = savedKey;
+    keyStatus.textContent = 'Key loaded from storage (' + savedKey.substring(0, 8) + '...)';
+    keyStatus.style.color = '#555';
+  }
+
+  document.getElementById('admin-key-save-btn').addEventListener('click', function() {
+    var k = keyInput.value.trim();
+    if (!k) { keyStatus.textContent = 'Enter a key first.'; keyStatus.style.color = '#fca5a5'; return; }
+    localStorage.setItem(ADMIN_KEY_STORAGE, k);
+    keyStatus.textContent = 'Saved (' + k.substring(0, 8) + '...)';
+    keyStatus.style.color = '#86efac';
+  });
+  keyInput.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') document.getElementById('admin-key-save-btn').click();
+  });
+
+  // Synthesis
+  document.getElementById('admin-synth-btn').addEventListener('click', async function() {
+    var btn = this;
+    var ns = document.getElementById('admin-synth-ns').value.trim() || 'claude-shared';
+    setLoading(btn, true);
+    var r = await adminFetch('/admin/synthesize', { method: 'POST', body: JSON.stringify({ namespace: ns }) });
+    setLoading(btn, false);
+    if (r.error) { showResult('admin-synth-result', r.error, false); return; }
+    showResult('admin-synth-result',
+      r.ok ? JSON.stringify(r.body, null, 2) : 'Error ' + r.status + ': ' + JSON.stringify(r.body, null, 2),
+      r.ok);
+  });
+
+  // Dedup
+  document.getElementById('admin-dedup-btn').addEventListener('click', async function() {
+    var btn = this;
+    var ns = document.getElementById('admin-dedup-ns').value.trim() || 'claude-shared';
+    var dryRun = document.getElementById('admin-dedup-dryrun').checked;
+    setLoading(btn, true);
+    var r = await adminFetch('/admin/dedup', { method: 'POST', body: JSON.stringify({ namespace: ns, dry_run: dryRun }) });
+    setLoading(btn, false);
+    if (r.error) { showResult('admin-dedup-result', r.error, false); return; }
+    showResult('admin-dedup-result',
+      r.ok ? JSON.stringify(r.body, null, 2) : 'Error ' + r.status + ': ' + JSON.stringify(r.body, null, 2),
+      r.ok);
+  });
+
+  // Backfill embeddings
+  document.getElementById('admin-backfill-btn').addEventListener('click', async function() {
+    var btn = this;
+    var ns = document.getElementById('admin-backfill-ns').value.trim() || 'claude-shared';
+    var scope = document.getElementById('admin-backfill-scope').value;
+    setLoading(btn, true);
+    var r = await adminFetch('/admin/backfill-embeddings', { method: 'POST', body: JSON.stringify({ namespace: ns, scope: scope, limit: 500 }) });
+    setLoading(btn, false);
+    if (r.error) { showResult('admin-backfill-result', r.error, false); return; }
+    showResult('admin-backfill-result',
+      r.ok ? JSON.stringify(r.body, null, 2) : 'Error ' + r.status + ': ' + JSON.stringify(r.body, null, 2),
+      r.ok);
+  });
+
+  // Create namespace
+  document.getElementById('admin-ns-btn').addEventListener('click', async function() {
+    var btn = this;
+    var name = document.getElementById('admin-ns-name').value.trim();
+    if (!name) { showResult('admin-ns-result', 'Enter a namespace name.', false); return; }
+    setLoading(btn, true);
+    var r = await adminFetch('/admin/namespaces', { method: 'POST', body: JSON.stringify({ name: name }) });
+    setLoading(btn, false);
+    if (r.error) { showResult('admin-ns-result', r.error, false); return; }
+    showResult('admin-ns-result',
+      r.ok ? 'Namespace "' + name + '" created.' : 'Error ' + r.status + ': ' + JSON.stringify(r.body, null, 2),
+      r.ok);
+    if (r.ok) document.getElementById('admin-ns-name').value = '';
+  });
+
+  // Render keys table
+  function renderKeysTable(keys) {
+    var wrap = document.getElementById('admin-keys-table-wrap');
+    wrap.textContent = '';
+    if (!keys || keys.length === 0) {
+      var msg = document.createElement('div');
+      msg.style.color = '#555';
+      msg.style.fontSize = '10px';
+      msg.textContent = 'No keys found.';
+      wrap.appendChild(msg);
+      return;
+    }
+    var table = document.createElement('table');
+    table.className = 'admin-keys-table';
+    var thead = document.createElement('thead');
+    var hrow = document.createElement('tr');
+    ['Name', 'Role', 'Namespaces', 'Key Preview', 'Created'].forEach(function(h) {
+      var th = document.createElement('th');
+      th.textContent = h;
+      hrow.appendChild(th);
+    });
+    thead.appendChild(hrow);
+    table.appendChild(thead);
+    var tbody = document.createElement('tbody');
+    keys.forEach(function(k) {
+      var tr = document.createElement('tr');
+      var tdName = document.createElement('td');
+      tdName.textContent = k.name || '-';
+      var tdRole = document.createElement('td');
+      var badge = document.createElement('span');
+      badge.className = 'admin-role-badge' + (k.role === 'admin' ? ' admin' : '');
+      badge.textContent = k.role || 'writer';
+      tdRole.appendChild(badge);
+      var tdNs = document.createElement('td');
+      tdNs.textContent = (k.namespaces || []).join(', ') || '*';
+      var tdKey = document.createElement('td');
+      var preview = document.createElement('span');
+      preview.className = 'admin-keys-preview';
+      var raw = k.api_key || k.key || '';
+      preview.textContent = raw ? raw.substring(0, 12) + '...' + raw.slice(-4) : '(hidden)';
+      tdKey.appendChild(preview);
+      var tdCreated = document.createElement('td');
+      tdCreated.textContent = k.created_at ? new Date(k.created_at).toLocaleDateString() : '-';
+      tr.appendChild(tdName);
+      tr.appendChild(tdRole);
+      tr.appendChild(tdNs);
+      tr.appendChild(tdKey);
+      tr.appendChild(tdCreated);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+  }
+
+  // List API keys
+  document.getElementById('admin-keys-load-btn').addEventListener('click', async function() {
+    var btn = this;
+    setLoading(btn, true);
+    var r = await adminFetch('/admin/api-keys', { method: 'GET' });
+    setLoading(btn, false);
+    if (r.error) { showResult('admin-keys-result', r.error, false); return; }
+    if (!r.ok) { showResult('admin-keys-result', 'Error ' + r.status + ': ' + JSON.stringify(r.body, null, 2), false); return; }
+    document.getElementById('admin-keys-result').style.display = 'none';
+    var keys = Array.isArray(r.body) ? r.body : (r.body.keys || r.body.items || []);
+    renderKeysTable(keys);
+  });
+
+  // Create API key
+  document.getElementById('admin-newkey-btn').addEventListener('click', async function() {
+    var btn = this;
+    var name = document.getElementById('admin-newkey-name').value.trim();
+    var role = document.getElementById('admin-newkey-role').value;
+    var nsRaw = document.getElementById('admin-newkey-ns').value.trim();
+    var namespaces = nsRaw ? nsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean) : ['claude-shared'];
+    if (!name) { showResult('admin-keys-result', 'Enter a key name.', false); return; }
+    setLoading(btn, true);
+    var r = await adminFetch('/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: name, role: role, namespaces: namespaces }) });
+    setLoading(btn, false);
+    if (r.error) { showResult('admin-keys-result', r.error, false); return; }
+    if (!r.ok) { showResult('admin-keys-result', 'Error ' + r.status + ': ' + JSON.stringify(r.body, null, 2), false); return; }
+    showResult('admin-keys-result', 'Key created:\n' + JSON.stringify(r.body, null, 2), true);
+    document.getElementById('admin-newkey-name').value = '';
+  });
+})();
+
+// ---------------------------------------------------------------------------
+// Feedback Analytics
+// ---------------------------------------------------------------------------
+(function() {
+  var currentFbFilter = 'all';
+  var feedbackData = [];
+  var contestedData = [];
+
+  // ---- Highlight concept in graph (pulse + center view) ----
+  function highlightConceptInGraph(conceptId) {
+    var node = nodes.find(function(n) { return n.concept.id === conceptId; });
+    if (!node) return;
+    // Close drawer and pin node
+    drawerOpen = false;
+    document.getElementById('drawer').classList.remove('open');
+    node.flash = 1.0;
+    pinnedNode = node;
+    // Pan view: animate node toward screen center
+    var targetAngle = Math.atan2(H / 2 - node.y, W / 2 - node.x);
+    node.angle = targetAngle;
+    node.radius = 0.05;
+    // Mark visible
+    node.visible = true;
+    activeGroup = 'all';
+    activeScope = null;
+    searchTerm = '';
+    document.getElementById('search').value = '';
+    document.querySelectorAll('.controls button[data-group]').forEach(function(b) { b.classList.remove('active'); });
+    var allBtn = document.querySelector('.controls button[data-group="all"]');
+    if (allBtn) allBtn.classList.add('active');
+  }
+
+  // ---- Build stats from raw feedback rows ----
+  function computeStats(rows) {
+    var total = rows.length;
+    var useful = 0, noted = 0, wrong = 0;
+    rows.forEach(function(r) {
+      if (r.signal === 'useful') useful++;
+      else if (r.signal === 'noted') noted++;
+      else if (r.signal === 'wrong') wrong++;
+    });
+    return { total: total, useful: useful, noted: noted, wrong: wrong };
+  }
+
+  // ---- Render summary stats ----
+  function renderFeedbackStats(stats, contestedCount) {
+    document.getElementById('fb-total').textContent = stats.total;
+    document.getElementById('fb-useful').textContent = stats.useful;
+    document.getElementById('fb-noted').textContent = stats.noted;
+    document.getElementById('fb-wrong').textContent = stats.wrong;
+    document.getElementById('fb-contested').textContent = contestedCount;
+  }
+
+  // ---- Render feedback list ----
+  function renderFeedbackList(rows) {
+    var el = document.getElementById('feedback-list');
+    el.textContent = '';
+    if (!rows || rows.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'feedback-empty';
+      empty.textContent = 'No feedback signals found.';
+      el.appendChild(empty);
+      return;
+    }
+    rows.forEach(function(r) {
+      var item = document.createElement('div');
+      item.className = 'feedback-item';
+
+      var badge = document.createElement('span');
+      badge.className = 'signal-badge ' + r.signal;
+      badge.textContent = r.signal;
+
+      var body = document.createElement('div');
+      body.className = 'feedback-item-body';
+
+      var titleBtn = document.createElement('button');
+      titleBtn.className = 'feedback-concept-link';
+      titleBtn.textContent = r.concept_title || '(unknown concept)';
+      titleBtn.title = 'Jump to concept in graph';
+      titleBtn.addEventListener('click', function() {
+        highlightConceptInGraph(r.concept_id);
+      });
+
+      var agentShort = (r.agent_key || '').replace('device-', '').replace('-writer', '');
+      var ts = r.created_at ? new Date(r.created_at).toLocaleString() : '';
+      var meta = document.createElement('div');
+      meta.className = 'feedback-meta';
+      meta.textContent = agentShort + '  ·  ' + ts;
+
+      body.appendChild(titleBtn);
+      body.appendChild(meta);
+
+      if (r.note) {
+        var note = document.createElement('div');
+        note.className = 'feedback-note';
+        note.textContent = r.note;
+        body.appendChild(note);
+      }
+
+      item.appendChild(badge);
+      item.appendChild(body);
+      el.appendChild(item);
+    });
+  }
+
+  // ---- Render contested concepts ----
+  function renderContestedList(items) {
+    var el = document.getElementById('contested-list');
+    el.textContent = '';
+    if (!items || items.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'feedback-empty';
+      empty.textContent = 'No contested concepts — all signals agree.';
+      el.appendChild(empty);
+      return;
+    }
+    items.forEach(function(c) {
+      var card = document.createElement('div');
+      card.className = 'contested-item';
+      card.title = 'Click to highlight in graph';
+      card.addEventListener('click', function() { highlightConceptInGraph(c.concept_id); });
+
+      var title = document.createElement('div');
+      title.className = 'contested-title';
+      title.textContent = c.concept_title;
+
+      var counts = document.createElement('div');
+      counts.className = 'contested-counts';
+
+      var u = document.createElement('span');
+      u.className = 'c-useful';
+      u.textContent = '✓ ' + c.useful_count + ' useful';
+      var n = document.createElement('span');
+      n.className = 'c-noted';
+      n.textContent = '· ' + c.noted_count + ' noted';
+      var w = document.createElement('span');
+      w.className = 'c-wrong';
+      w.textContent = '✕ ' + c.wrong_count + ' wrong';
+
+      counts.appendChild(u);
+      counts.appendChild(n);
+      counts.appendChild(w);
+
+      card.appendChild(title);
+      card.appendChild(counts);
+      el.appendChild(card);
+    });
+  }
+
+  // ---- Load feedback stats ----
+  async function loadFeedbackStats() {
+    try {
+      var resp = await fetch('/admin/feedback?namespace=claude-shared&limit=200');
+      if (!resp.ok) { return; }
+      feedbackData = await resp.json();
+      var stats = computeStats(feedbackData);
+      renderFeedbackStats(stats, contestedData.length);
+    } catch (e) {
+      console.error('Feedback stats error:', e);
+    }
+  }
+
+  // ---- Load feedback list with filter ----
+  async function loadFeedbackList(filter) {
+    var listEl = document.getElementById('feedback-list');
+    listEl.textContent = '';
+    var loading = document.createElement('div');
+    loading.className = 'feedback-loading';
+    loading.textContent = 'Loading...';
+    listEl.appendChild(loading);
+
+    try {
+      var url = '/admin/feedback?namespace=claude-shared&limit=50';
+      if (filter && filter !== 'all') url += '&signal=' + filter;
+      var resp = await fetch(url);
+      if (!resp.ok) {
+        listEl.textContent = '';
+        var err = document.createElement('div');
+        err.className = 'feedback-empty';
+        err.textContent = 'Failed to load feedback (HTTP ' + resp.status + ').';
+        listEl.appendChild(err);
+        return;
+      }
+      var rows = await resp.json();
+      // Update full data if no filter for stats computation
+      if (!filter || filter === 'all') feedbackData = rows;
+      renderFeedbackList(rows);
+    } catch (e) {
+      listEl.textContent = '';
+      var errEl = document.createElement('div');
+      errEl.className = 'feedback-empty';
+      errEl.textContent = 'Error: ' + e.message;
+      listEl.appendChild(errEl);
+      console.error('Feedback list error:', e);
+    }
+  }
+
+  // ---- Load contested concepts ----
+  async function loadContestedConcepts() {
+    var el = document.getElementById('contested-list');
+    el.textContent = '';
+    var loading = document.createElement('div');
+    loading.className = 'feedback-loading';
+    loading.textContent = 'Loading...';
+    el.appendChild(loading);
+
+    try {
+      var resp = await fetch('/admin/feedback/contested?namespace=claude-shared&limit=30');
+      if (!resp.ok) {
+        el.textContent = '';
+        var err = document.createElement('div');
+        err.className = 'feedback-empty';
+        err.textContent = 'Failed to load contested concepts.';
+        el.appendChild(err);
+        return;
+      }
+      contestedData = await resp.json();
+      renderContestedList(contestedData);
+      // Update contested count in stats
+      document.getElementById('fb-contested').textContent = contestedData.length;
+    } catch (e) {
+      el.textContent = '';
+      var errEl = document.createElement('div');
+      errEl.className = 'feedback-empty';
+      errEl.textContent = 'Error: ' + e.message;
+      el.appendChild(errEl);
+      console.error('Contested load error:', e);
+    }
+  }
+
+  // ---- Full load (stats + list + contested) ----
+  async function loadFeedbackTab() {
+    await Promise.all([
+      loadFeedbackStats(),
+      loadFeedbackList(currentFbFilter),
+      loadContestedConcepts(),
+    ]);
+  }
+
+  // ---- Wire filter buttons ----
+  document.querySelectorAll('[data-fb-filter]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      document.querySelectorAll('[data-fb-filter]').forEach(function(b) { b.classList.remove('active'); });
+      btn.classList.add('active');
+      currentFbFilter = btn.dataset.fbFilter;
+      loadFeedbackList(currentFbFilter);
+    });
+  });
+
+  // ---- Load when feedback tab is opened ----
+  document.querySelectorAll('.drawer-tab').forEach(function(tab) {
+    tab.addEventListener('click', function() {
+      if (tab.dataset.tab === 'feedback') {
+        loadFeedbackTab();
+      }
+    });
+  });
+
+})();
+
+// ---------------------------------------------------------------------------
+// Knowledge Browser
+// ---------------------------------------------------------------------------
+(function() {
+  var kbMode = 'keyword'; // 'keyword' | 'semantic'
+  var kbOffset = 0;
+  var kbPageSize = 20;
+  var kbAllResults = [];
+  var kbCatsLoaded = false;
+
+  function kbApiKey() {
+    return localStorage.getItem('hive_admin_api_key') || '';
+  }
+
+  function kbHeaders() {
+    var h = { 'Content-Type': 'application/json' };
+    var k = kbApiKey();
+    if (k) h['X-API-Key'] = k;
+    return h;
+  }
+
+  function loadKnowledgeCategories() {
+    if (kbCatsLoaded) return;
+    fetch('/api/v1/knowledge/categories', { headers: kbHeaders() })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(data) {
+        if (!data) return;
+        var sel = document.getElementById('kb-cat-select');
+        var cats = data.categories || data || [];
+        cats.forEach(function(c) {
+          var opt = document.createElement('option');
+          opt.value = c;
+          opt.textContent = c;
+          sel.appendChild(opt);
+        });
+        kbCatsLoaded = true;
+      })
+      .catch(function() {});
+  }
+
+  async function searchKnowledge() {
+    var query = document.getElementById('kb-query').value.trim();
+    var ns = document.getElementById('kb-ns-select').value || 'claude-shared';
+    var cat = document.getElementById('kb-cat-select').value;
+    if (!query) return;
+
+    document.getElementById('kb-spinner').classList.add('show');
+    document.getElementById('kb-empty').classList.remove('show');
+    document.getElementById('kb-result-count').textContent = '';
+    document.getElementById('kb-results').textContent = '';
+    document.getElementById('kb-load-more').classList.remove('show');
+    kbAllResults = [];
+    kbOffset = 0;
+
+    try {
+      var data;
+      if (kbMode === 'semantic') {
+        var body = { query: query, namespace: ns, limit: 50 };
+        var resp = await fetch('/api/v1/knowledge/recall', {
+          method: 'POST',
+          headers: kbHeaders(),
+          body: JSON.stringify(body)
+        });
+        data = resp.ok ? await resp.json() : { results: [] };
+      } else {
+        var url = '/query?namespace=' + encodeURIComponent(ns) +
+          '&q=' + encodeURIComponent(query) + '&limit=50';
+        if (cat) url += '&category=' + encodeURIComponent(cat);
+        var resp2 = await fetch(url, { headers: kbHeaders() });
+        data = resp2.ok ? await resp2.json() : { results: [] };
+      }
+      kbAllResults = data.results || [];
+    } catch (e) {
+      kbAllResults = [];
+    }
+
+    document.getElementById('kb-spinner').classList.remove('show');
+
+    if (kbAllResults.length === 0) {
+      document.getElementById('kb-empty').classList.add('show');
+      return;
+    }
+
+    document.getElementById('kb-result-count').textContent =
+      kbAllResults.length + ' result' + (kbAllResults.length !== 1 ? 's' : '');
+    renderKnowledgePage();
+  }
+
+  function renderKnowledgePage() {
+    var container = document.getElementById('kb-results');
+    var page = kbAllResults.slice(kbOffset, kbOffset + kbPageSize);
+    page.forEach(function(item) {
+      container.appendChild(renderKnowledgeItem(item));
+    });
+    kbOffset += page.length;
+    var moreBtn = document.getElementById('kb-load-more');
+    if (kbOffset < kbAllResults.length) {
+      moreBtn.classList.add('show');
+      moreBtn.textContent = 'Load more (' + (kbAllResults.length - kbOffset) + ' remaining)';
+    } else {
+      moreBtn.classList.remove('show');
+    }
+  }
+
+  function makeBadge(cls, text) {
+    var s = document.createElement('span');
+    s.className = 'kb-badge ' + cls;
+    s.textContent = text;
+    return s;
+  }
+
+  function catBadgeClass(cat) {
+    if (!cat) return 'kb-badge-cat-def';
+    if (cat.startsWith('user_') || cat.startsWith('user-')) return 'kb-badge-cat-user';
+    if (cat.startsWith('agent_') || cat.startsWith('agent-')) return 'kb-badge-cat-agent';
+    return 'kb-badge-cat-def';
+  }
+
+  function layerBadgeClass(layer) {
+    if (layer === 'abstract') return 'kb-badge-layer-abstract';
+    if (layer === 'summary') return 'kb-badge-layer-summary';
+    return 'kb-badge-layer-full';
+  }
+
+  function formatDate(iso) {
+    if (!iso) return '';
+    try { return new Date(iso).toLocaleDateString(); } catch(_) { return ''; }
+  }
+
+  function renderKnowledgeItem(item) {
+    var el = document.createElement('div');
+    el.className = 'kb-item';
+
+    var header = document.createElement('div');
+    header.className = 'kb-item-header';
+
+    var title = document.createElement('div');
+    title.className = 'kb-item-title';
+    title.textContent = item.title || item.id || '(untitled)';
+    header.appendChild(title);
+
+    var snippet = item.snippet || item.content || '';
+    if (snippet) {
+      var snEl = document.createElement('div');
+      snEl.className = 'kb-item-snippet';
+      snEl.textContent = snippet.length > 200 ? snippet.substring(0, 200) + '…' : snippet;
+      header.appendChild(snEl);
+    }
+
+    var meta = document.createElement('div');
+    meta.className = 'kb-item-meta';
+
+    if (item.kind || item.memory_type) {
+      meta.appendChild(makeBadge('kb-badge-kind', item.kind || item.memory_type));
+    }
+    if (item.category) {
+      meta.appendChild(makeBadge(catBadgeClass(item.category), item.category));
+    }
+    if (item.layer) {
+      meta.appendChild(makeBadge(layerBadgeClass(item.layer), item.layer));
+    }
+    if (item.verbatim) {
+      meta.appendChild(makeBadge('kb-badge-verbatim', 'verbatim'));
+    }
+    if (item.tags && item.tags.length) {
+      item.tags.slice(0, 5).forEach(function(t) {
+        meta.appendChild(makeBadge('kb-badge-tag', t));
+      });
+    }
+    if (item.created_at) {
+      var d = document.createElement('span');
+      d.className = 'kb-item-date';
+      d.textContent = formatDate(item.created_at);
+      meta.appendChild(d);
+    }
+    header.appendChild(meta);
+    el.appendChild(header);
+
+    // Expand body with full content
+    var body = document.createElement('div');
+    body.className = 'kb-item-body';
+    var full = document.createElement('div');
+    full.className = 'kb-item-full';
+    full.textContent = item.content || item.snippet || '(no content)';
+    body.appendChild(full);
+    el.appendChild(body);
+
+    header.addEventListener('click', function() {
+      el.classList.toggle('expanded');
+    });
+
+    return el;
+  }
+
+  // Wire up events when DOM ready
+  document.addEventListener('DOMContentLoaded', function() {
+    var modeBtn = document.getElementById('kb-mode-btn');
+    modeBtn.addEventListener('click', function() {
+      kbMode = kbMode === 'keyword' ? 'semantic' : 'keyword';
+      modeBtn.textContent = kbMode === 'semantic' ? 'SEM' : 'KW';
+      modeBtn.classList.toggle('semantic', kbMode === 'semantic');
+    });
+
+    document.getElementById('kb-search-btn').addEventListener('click', searchKnowledge);
+    document.getElementById('kb-query').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') searchKnowledge();
+    });
+    document.getElementById('kb-load-more').addEventListener('click', renderKnowledgePage);
+
+    // Load categories and run initial search when tab is opened
+    document.querySelectorAll('.drawer-tab').forEach(function(tab) {
+      tab.addEventListener('click', function() {
+        if (tab.dataset.tab === 'knowledge') {
+          loadKnowledgeCategories();
+        }
+      });
+    });
+  });
+})();
+
 </script>
 </body>
 </html>

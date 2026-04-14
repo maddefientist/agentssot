@@ -474,3 +474,29 @@ class SessionCompleteResponse(BaseModel):
     session_id: str
     facts_extracted: int
     recall_events_completed: int
+
+
+# ── Settings API ───────────────────────────────────────────────────
+
+
+class SettingMeta(BaseModel):
+    """Metadata + current value for a single runtime setting."""
+    key: str
+    value: object  # masked for sensitive fields
+    type: str  # "bool" | "int" | "float" | "str"
+    runtime_configurable: bool
+    description: str
+
+
+class SettingsGetResponse(BaseModel):
+    settings: list[SettingMeta]
+    note: str = "Runtime-configurable settings can be updated via POST /admin/settings. Changes are session-only and lost on restart."
+
+
+class SettingsUpdateRequest(BaseModel):
+    updates: dict[str, object]
+
+
+class SettingsUpdateResponse(BaseModel):
+    applied: dict[str, object]   # key -> new value (masked if sensitive)
+    skipped: dict[str, str]      # key -> reason it was skipped
