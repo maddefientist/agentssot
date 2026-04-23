@@ -12,8 +12,10 @@ class DisabledRerankerProvider(RerankerProvider):
 
 def build_reranker_provider(settings) -> RerankerProvider:
     if settings.reranker_provider == "ollama":
+        # Use dedicated reranker URL if set, otherwise fall back to shared Ollama URL
+        base_url = settings.ollama_reranker_base_url or settings.ollama_base_url
         return OllamaRerankerProvider(
-            base_url=settings.ollama_base_url,
+            base_url=base_url,
             model=settings.ollama_reranker_model,
         )
     return DisabledRerankerProvider(reason="RERANKER_PROVIDER=none")

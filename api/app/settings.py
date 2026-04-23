@@ -31,6 +31,9 @@ class Settings(BaseSettings):
 
     # Reranker
     reranker_provider: Literal["none", "ollama"] = Field(default="none", alias="RERANKER_PROVIDER")
+    ollama_reranker_base_url: str = Field(
+        default="", alias="OLLAMA_RERANKER_BASE_URL"
+    )
     ollama_reranker_model: str = Field(
         default="dengcao/Qwen3-Reranker-8B:Q8_0", alias="OLLAMA_RERANKER_MODEL"
     )
