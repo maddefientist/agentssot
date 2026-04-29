@@ -500,3 +500,83 @@ class SettingsUpdateRequest(BaseModel):
 class SettingsUpdateResponse(BaseModel):
     applied: dict[str, object]   # key -> new value (masked if sensitive)
     skipped: dict[str, str]      # key -> reason it was skipped
+
+
+# ── Tiered / Bucketed recall (Plan 1, Phase 1) ─────────────────────
+
+# Memory tier values exposed to recall callers (subset of MemoryType for clarity)
+MemoryTierLiteral = Literal[
+    "command", "rule", "skill", "entity", "decision", "episodic",
+    # backwards-compat — older items may still be typed as these
+    "fact", "preference", "reference", "correction", "session_summary",
+]
+
+DEFAULT_RECALL_TIERS: list[str] = ["command", "rule", "skill", "entity", "decision"]
+DEFAULT_TOP_PER_TIER: dict[str, int] = {
+    "command": 3, "rule": 2, "skill": 5, "entity": 3, "decision": 2,
+}
+
+
+class BucketedRecallRequest(BaseModel):
+    """Tier-bucketed recall request. Layered on top of TieredRecallRequest semantics."""
+    query: str = Field(..., description="Search query")
+    namespace: str = Field("default")
+    tiers: list[MemoryTierLiteral] = Field(default_factory=lambda: list(DEFAULT_RECALL_TIERS))
+    top_per_tier: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_TOP_PER_TIER))
+    expand_layer: ContentLayerLiteral = Field("abstract")
+    include_superseded: bool = Field(False)
+    include_expired: bool = Field(False)
+
+
+class BucketedRecallItem(BaseModel):
+    id: UUID
+    memory_type: str
+    abstract: str | None
+    summary: str | None = None
+    content: str | None = None
+    score: float
+    confidence: float
+    entity_refs: list[UUID] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+
+
+class BucketedRecallDiagnostics(BaseModel):
+    candidates_per_tier: dict[str, int]
+    vec_ms: int
+    rerank_ms: int
+    reranker_used: str  # "qwen3-reranker-4b" | "qwen3-reranker-8b" | "none"
+
+
+class BucketedRecallResponse(BaseModel):
+    buckets: dict[str, list[BucketedRecallItem]]
+    diagnostics: BucketedRecallDiagnostics
+
+
+class ExpandResponse(BaseModel):
+    id: UUID
+    layer: ContentLayerLiteral  # which layer was returned
+    abstract: str | None
+    summary: str | None
+    content: str | None  # full L2 content if requested
+
+
+class LoadoutRequest(BaseModel):
+    cwd: str = Field(..., description="Working directory the agent is operating in")
+    device_id: str | None = Field(None, description="Calling device identifier, e.g. 'hari'")
+    namespace: str = Field("claude-shared")
+    token_budget: int = Field(750, ge=200, le=3000)
+
+
+class LoadoutItem(BaseModel):
+    id: UUID
+    memory_type: str
+    abstract: str
+    title: str
+    priority: int
+
+
+class LoadoutResponse(BaseModel):
+    items: dict[str, list[LoadoutItem]]   # keyed by memory_type
+    overflow_count: int
+    tokens_used: int
+    cache_key: str  # sha256 of inputs+items, useful for prompt cache
