@@ -1,9 +1,10 @@
 import enum
-from datetime import datetime
+import uuid as _uuid_mod
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import ARRAY, Boolean, DateTime, Enum, ForeignKey, Text, UniqueConstraint, func, text
+from sqlalchemy import ARRAY, Boolean, DateTime, Enum, Float, ForeignKey, Integer, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -55,6 +56,11 @@ class MemoryType(str, enum.Enum):
 
     Classifies knowledge by its origin and purpose to enable
     type-aware recall filtering and lifecycle management.
+
+    Confidence semantics: KnowledgeItem.confidence is the *lifecycle*
+    confidence ("was this the right answer?"), driven by the ingest
+    classifier and decayed on supersession/aging. It is distinct from
+    Concept.confidence which measures synthesis pattern strength.
     """
     fact = "fact"                    # general extracted knowledge (default)
     decision = "decision"            # architectural/design decisions
@@ -63,6 +69,11 @@ class MemoryType(str, enum.Enum):
     reference = "reference"          # documentation/API references
     correction = "correction"        # feedback-driven corrections
     session_summary = "session_summary"  # compaction output
+    # NEW (added 2026-04-24, plan 1 phase 0)
+    command = "command"              # exact invocations, ports, URLs, API refs
+    rule = "rule"                    # always/never directives, guardrails
+    entity = "entity"                # canonical hosts/services/people/projects
+    episodic = "episodic"            # session logs, reflections, run-insights
 
 
 class MemoryCategory(str, enum.Enum):
@@ -228,6 +239,47 @@ class KnowledgeItem(Base):
     verbatim: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false")
     )
+    # --- Plan 1 Phase 0: tier-memory lifecycle columns ---
+    # expires_at: soft expiration; item excluded from loadout/recall when past
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    # superseded_by: points to the item that replaced this one
+    superseded_by: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("knowledge_items.id"),
+        nullable=True,
+        index=True,
+    )
+    # confidence: lifecycle confidence (0..1); >=0.5 eligible for loadout
+    # Distinct from Concept.confidence which measures synthesis pattern strength.
+    confidence: Mapped[float] = mapped_column(
+        Float, nullable=False, default=1.0, server_default=text("1.0")
+    )
+    # entity_refs: list of entity UUIDs (as strings) this item references
+    entity_refs: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    # rule_refs: list of rule item UUIDs this item is governed by
+    rule_refs: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    # cwd_hints: glob patterns for directories where this item is relevant
+    cwd_hints: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    # device_hints: device slugs where this item is relevant
+    device_hints: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    # loadout_priority: higher = included first in the token-budget loadout pack
+    loadout_priority: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=text("0"), index=True
+    )
+    # last_classified_at: timestamp of last auto-classification run
+    last_classified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
 
 
 class EnrollmentToken(Base):
@@ -371,3 +423,102 @@ class AgentProfile(Base):
     total_feedback: Mapped[int] = mapped_column(nullable=False, default=0, server_default=text("0"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+# --- Plan 1 Phase 0: new tables ---
+
+
+class DeletionLog(Base):
+    """Audit log for hard-deleted KnowledgeItems.
+
+    Every hard delete writes a row here so the operator can reconstruct
+    what was removed and why. Never deleted; append-only.
+    """
+    __tablename__ = "deletion_log"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=_uuid_mod.uuid4
+    )
+    item_id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    namespace: Mapped[str] = mapped_column(Text, nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    deleted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+    )
+    deleted_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class ReviewQueueKind(str, enum.Enum):
+    """Category of review queue entry."""
+    low_conf = "low_conf"
+    dup = "dup"
+    supersede = "supersede"
+    contradiction = "contradiction"
+
+
+class ReviewQueueStatus(str, enum.Enum):
+    """Lifecycle state of a review queue entry."""
+    pending = "pending"
+    resolved = "resolved"
+    dismissed = "dismissed"
+
+
+class ReviewQueueItem(Base):
+    """Operator review queue for items needing human confirmation.
+
+    Populated by: auto-classifier (low_conf), dedup pass (dup),
+    supersession detector (supersede), contradiction detector (contradiction).
+    Drained by: operator via /review UI or hive_review_queue MCP tool.
+    """
+    __tablename__ = "review_queue"
+
+    id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=_uuid_mod.uuid4
+    )
+    namespace: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    kind: Mapped[ReviewQueueKind] = mapped_column(
+        Enum(
+            ReviewQueueKind,
+            name="review_queue_kind",
+            create_type=False,
+            native_enum=False,
+            values_callable=lambda e: [x.value for x in e],
+        ),
+        nullable=False,
+    )
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    primary_id: Mapped[UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("knowledge_items.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    secondary_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("knowledge_items.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[ReviewQueueStatus] = mapped_column(
+        Enum(
+            ReviewQueueStatus,
+            name="review_queue_status",
+            create_type=False,
+            native_enum=False,
+            values_callable=lambda e: [x.value for x in e],
+        ),
+        nullable=False,
+        default=ReviewQueueStatus.pending,
+        server_default="pending",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_by: Mapped[str | None] = mapped_column(Text, nullable=True)
