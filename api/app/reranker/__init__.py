@@ -21,9 +21,14 @@ def build_reranker_provider(settings) -> RerankerProvider:
     return DisabledRerankerProvider(reason="RERANKER_PROVIDER=none")
 
 
+from app.reranker.router import build_reranker_pair, pick_reranker, select_reranker_model
+
 __all__ = [
     "RerankerProvider",
     "RerankerProviderError",
     "DisabledRerankerProvider",
     "build_reranker_provider",
+    "build_reranker_pair",
+    "pick_reranker",
+    "select_reranker_model",
 ]

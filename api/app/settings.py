@@ -38,6 +38,17 @@ class Settings(BaseSettings):
         default="dengcao/Qwen3-Reranker-8B:Q8_0", alias="OLLAMA_RERANKER_MODEL"
     )
     reranker_candidate_multiplier: int = Field(default=3, alias="RERANKER_CANDIDATE_MULTIPLIER")
+    # Two-tier reranker: 4B for procedural-only queries, 8B for nuanced
+    ollama_reranker_fast_model: str = Field(
+        default="dengcao/Qwen3-Reranker-4B:Q4_K_M", alias="OLLAMA_RERANKER_FAST_MODEL"
+    )
+    ollama_reranker_fast_base_url: str = Field(
+        default="", alias="OLLAMA_RERANKER_FAST_BASE_URL"
+    )
+    procedural_tiers: list[str] = Field(
+        default=["command", "rule", "entity"],
+        description="Tiers that route to the fast reranker when queried alone",
+    )
 
     compaction_enabled: bool = Field(default=True, alias="COMPACTION_ENABLED")
     compaction_event_threshold: int = Field(default=80, alias="COMPACTION_EVENT_THRESHOLD")
