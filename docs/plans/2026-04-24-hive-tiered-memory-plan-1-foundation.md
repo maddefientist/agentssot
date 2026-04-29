@@ -82,8 +82,10 @@ api/app/
 - **Test runner:** `pytest -v api/tests/test_<name>.py`
 - **Smoke test setup:** tests requiring a live API set `SSOT_TEST_URL` and `SSOT_TEST_API_KEY` env vars; unit tests don't need DB (set dummy `DATABASE_URL` per existing `test_typed_memory.py` pattern).
 - **Commit cadence:** one commit per task. Persona-style commit messages (no `Co-Authored-By` per `~/.claude/CLAUDE.md`).
-- **DB iteration:** `docker compose exec api psql -U ssot -d ssot -f /db/init/005_tier_memory.sql` to apply; `docker compose up -d --build api` to reload code.
+- **DB iteration:** apply SQL via the `db` container, not `api` — `api` doesn't ship with `psql`. Use `docker compose exec db psql -U ssot -d ssot -f /docker-entrypoint-initdb.d/<file>.sql` (the `db/init/` host directory is mounted there) or pipe SQL via stdin: `docker compose exec -T db psql -U ssot -d ssot < db/init/<file>.sql`. Reload code with `docker compose up -d --build api`.
+- **Python imports** that pull in `pgvector`, `sqlalchemy` ORM models, or the FastAPI app must run **inside the `api` container** (`docker compose exec api python -c "..."`) — the host shell has no project venv.
 - **Fixture data:** use existing `claude-shared` namespace on the live dev DB (192.168.1.225:8088) with admin key from `~/.claude/agentssot/local/admin.json` for integration tests.
+- **Schema reality check (discovered during T0.1):** `KnowledgeItem.memory_type` is a **plain `TEXT` column**, not a Postgres enum — validation lives in the Python `MemoryType` enum. `KnowledgeItem.category` IS a Postgres enum (`memory_category`), and `KnowledgeItem.layer` IS a Postgres enum (`content_layer`). When generating filter SQL or running the classifier output through ORM, treat `memory_type` as freely-assignable text; classifier returns lowercase strings like `"command"` which round-trip cleanly. No `ALTER TYPE` needed for adding new tier values.
 
 ---
 
