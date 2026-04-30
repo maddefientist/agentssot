@@ -1,6 +1,7 @@
 from .base import LLMProvider, LLMProviderError
 from .ollama_provider import OllamaLLMProvider
 from .openai_provider import OpenAILLMProvider
+from .classifier import classify
 
 
 class DisabledLLMProvider(LLMProvider):
@@ -27,4 +28,5 @@ __all__ = [
     "LLMProviderError",
     "DisabledLLMProvider",
     "build_llm_provider",
+    "classify",
 ]

@@ -1,0 +1,54 @@
+{"content":"ssh unraid","expected_type":"command"}
+{"content":"docker compose up -d --build api","expected_type":"command"}
+{"content":"curl -H \"X-Api-Key: $KEY\" http://192.168.1.225:8088/health","expected_type":"command"}
+{"content":"Never use rm -rf with wildcards on system directories","expected_type":"rule"}
+{"content":"Always specify the namespace on /recall — namespaces are the privacy boundary","expected_type":"rule"}
+{"content":"When Gluetun port forwarding fails, restart Gluetun first then qbit (qbit shares Gluetun's netns)","expected_type":"skill"}
+{"content":"unraid (192.168.1.116, root@) — central storage hub, NFS exports /mnt/user/media to hari","expected_type":"entity"}
+{"content":"hari (192.168.1.225, hari@) — AI workhorse, Ollama host, runs the agentssot service on :8088","expected_type":"entity"}
+{"content":"Embeddings: switched to nomic-embed-text 768d on 2026-02-25 from qwen3-embedding 4096d. Reason: speed/recall tradeoff for the agent loop.","expected_type":"decision"}
+{"content":"Session: hari on harihome 2026-02-10. Files touched: .ssh/config, authorized_keys. User: 'connection refused still', 'fix it please'.","expected_type":"episodic"}
+{"content":"git rebase -i HEAD~3 && git push --force-with-lease origin main","expected_type":"command"}
+{"content":"brew services restart postgresql@15","expected_type":"command"}
+{"content":"rsync -avz --delete /mnt/user/media/photos/ hari@192.168.1.225:/opt/photos/","expected_type":"command"}
+{"content":"ollama run gemma4:31b --keepalive 30m","expected_type":"command"}
+{"content":"pyenv install 3.12.3 && pyenv global 3.12.3","expected_type":"command"}
+{"content":"python -m pip install --upgrade pip setuptools wheel","expected_type":"command"}
+{"content":"kubectl logs -f deployment/llm-gateway -n inference --tail=200","expected_type":"command"}
+{"content":"Always validate user inputs server-side, never trust client-side validation alone","expected_type":"rule"}
+{"content":"Never commit hardcoded secrets — use environment variables or a secrets manager","expected_type":"rule"}
+{"content":"Always use parameterized SQL queries; string concatenation into SQL is forbidden","expected_type":"rule"}
+{"content":"Explicit confirmation is required before destructive operations (delete, rm -rf, DROP TABLE)","expected_type":"rule"}
+{"content":"Sanitize all LLM outputs before rendering in HTML or executing as shell commands","expected_type":"rule"}
+{"content":"When postgres vector search returns no results, fall back to keyword search before failing","expected_type":"skill"}
+{"content":"When a Docker container exits immediately, check: 1) entrypoint syntax, 2) volume mounts, 3) env vars, 4) logs","expected_type":"skill"}
+{"content":"When FastAPI returns 422 on a model, check Pydantic alias_vs_name mismatches and jsonable_encoder defaults","expected_type":"skill"}
+{"content":"If pytest fails with 'ImportError: attempted relative import', check PYTHONPATH and that test files are not inside the package","expected_type":"skill"}
+{"content":"When the MCP plugin can't connect to the hive, verify: 1) network reachability, 2) api key validity, 3) namespace permissions","expected_type":"skill"}
+{"content":"If Ollama pulls a model but it won't load, check available VRAM and try a lower quant (Q4_K_M vs Q8_0)","expected_type":"skill"}
+{"content":"jellyfin (192.168.1.116:8096) — media server on unraid, hardware transcoding via Intel UHD P630, library mounted at /mnt/user/media","expected_type":"entity"}
+{"content":"dockers (192.168.1.230, docker@) — container host, runs jellyfin, qBittorrent, GluetunVPN, wireguard, homarr","expected_type":"entity"}
+{"content":"blink (192.168.1.235, hari@) — lightweight backup node, rsync target for agentssot DB dumps every 6h","expected_type":"entity"}
+{"content":"webvm (10.0.0.4, root@) — isolated browser VM for testing untrusted webapps, no egress except to hari:8088","expected_type":"entity"}
+{"content":"pourit (iOS app, React Native) — barcode-driven home bar inventory; backend on hari:8089, Postgres on dockers","expected_type":"entity"}
+{"content":"ezbar (iOS companion) — recipe scaling tool; shares pourit auth and inventory backend","expected_type":"entity"}
+{"content":"hive — tiered memory store for AI agents; Postgres+pgvector backend, FastAPI surface, Ollama for local inference","expected_type":"entity"}
+{"content":"Switched from OpenAI embeddings to local nomic-embed-text on 2025-11-12. Reason: cut token costs by ~99% and eliminate external dependency on the embedding write path","expected_type":"decision"}
+{"content":"Chose SQLAlchemy 2.x over 1.4 for the new models. Reason: Mapped[] syntax, better async support, and we already run Python 3.11+ everywhere","expected_type":"decision"}
+{"content":"Use httpx instead of requests for all outbound HTTP from the API. Reason: native async support, HTTP/2, and better timeout granularity","expected_type":"decision"}
+{"content":"Bucketed recall defaults to L0 abstract, with optional L1 summary and L2 full expansion behind a separate /expand call. Reason: keeps the default response small for the agent loop while preserving detail on demand","expected_type":"decision"}
+{"content":"Admin API key resolves from ~/.claude/agentssot/local/admin.json when MCP plugin is running locally. Reason: single source of truth for the bootstrap key, avoids env var drift between host and container","expected_type":"fact"}
+{"content":"2026-04-20 troubleshooting session: hive ingest pipeline started failing with 'duplicate key' on namespace+content hash. Root cause: concurrent ingest from two devices racing. Fix: added ON CONFLICT DO NOTHING and retry with existing id.","expected_type":"episodic"}
+{"content":"Late-night debugging 2026-04-18: docker compose build was caching stale layers because the .dockerignore didn't exclude api/tests. Added api/tests and .chain to .dockerignore.","expected_type":"episodic"}
+{"content":"Session log 2026-04-25: ran 'docker compose logs -f api | grep classifier' about 30 times while iterating the gemma4 prompt. Model consistently returned markdown fences even with format=json.","expected_type":"episodic"}
+{"content":"Decision: defer HNSW index activation until Phase 4. Rationale: profiling showed flat IVF-style search at 768d is fast enough for <50k vectors","expected_type":"decision"}
+{"content":"Decision: split tiered recall into buckets so commands and rules surface first. Rationale: rules were getting buried under episodic noise in recall","expected_type":"decision"}
+{"content":"The postgres pgvector extension max_supported dimensions are 16000 for halfvec and 2000 for sparsevec","expected_type":"fact"}
+{"content":"Ollama models are stored under ~/.ollama/models on the host and mounted into the Ollama container at /root/.ollama/models","expected_type":"fact"}
+{"content":"Postgres JSONB containment operator @> evaluates to true only when the right-hand side is a valid JSONB document, not a bare string","expected_type":"fact"}
+{"content":"FastAPI dependency injection caches settings per-request via lru_cache on get_settings(); this is safe because settings are immutable after load","expected_type":"fact"}
+{"content":"When a rule says 'always specify namespace' that's a guardrail not a recipe — it's a rule even though the sentence structure looks like a skill","expected_type":"fact"}
+{"content":"unraid (192.168.1.116) — exports /mnt/user/media via NFS v4, runs ZFS pool 'tank' with lz4 compression","expected_type":"entity"}
+{"content":"pip install --no-cache-dir -r requirements.txt && playwright install chromium","expected_type":"command"}
+{"content":"Classifier outputs with confidence below 0.6 must be enqueued to review_queue with kind='low_conf' rather than auto-committing the inferred type","expected_type":"rule"}
+{"content":"Docker Compose service names must be DNS-compatible (no underscores in network alias resolution on older Docker versions)","expected_type":"rule"}

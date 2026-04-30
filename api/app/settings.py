@@ -89,6 +89,23 @@ class Settings(BaseSettings):
     # existing item. Verbatim items bypass this check. 0.0 disables dedup.
     semantic_dedup_threshold: float = Field(default=0.0, alias="SEMANTIC_DEDUP_THRESHOLD")
 
+    # Auto-classifier (Plan 1 Phase 2)
+    classifier_provider: Literal["none", "ollama"] = Field(
+        default="ollama", alias="CLASSIFIER_PROVIDER"
+    )
+    classifier_model: str = Field(
+        default="gemma4:31b-cloud", alias="CLASSIFIER_MODEL"
+    )
+    classifier_base_url: str = Field(
+        default="", alias="CLASSIFIER_BASE_URL"
+    )
+    classifier_timeout_seconds: int = Field(
+        default=20, alias="CLASSIFIER_TIMEOUT_SECONDS"
+    )
+    classifier_min_confidence: float = Field(
+        default=0.6, alias="CLASSIFIER_MIN_CONFIDENCE"
+    )
+
     # Open enrollment passphrase (empty = no passphrase required)
     enrollment_passphrase: str = Field(default="", alias="ENROLLMENT_PASSPHRASE")
     expose_db_port: bool = Field(default=False, alias="EXPOSE_DB_PORT")
