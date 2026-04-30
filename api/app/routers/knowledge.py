@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import ValidationError
 from sqlalchemy import select, and_, func, or_
 from sqlalchemy.orm import Session
 from uuid import UUID
@@ -170,12 +171,15 @@ async def recall_dispatch(
     - bucketed=True: returns tier-bucketed response with per-tier reranking
       and diagnostics.
     """
-    if payload.get("bucketed") is True:
-        req = BucketedRecallRequest(**{k: v for k, v in payload.items() if k != "bucketed"})
-        return await _recall_bucketed(req, request, session, auth)
-    # Legacy flat path
-    legacy = TieredRecallRequest(**{k: v for k, v in payload.items() if k != "bucketed"})
-    return await recall_tiered(legacy, request, session, auth)
+    try:
+        if payload.get("bucketed") is True:
+            req = BucketedRecallRequest(**{k: v for k, v in payload.items() if k != "bucketed"})
+            return await _recall_bucketed(req, request, session, auth)
+        # Legacy flat path
+        legacy = TieredRecallRequest(**{k: v for k, v in payload.items() if k != "bucketed"})
+        return await recall_tiered(legacy, request, session, auth)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors())
 
 
 async def recall_tiered(
@@ -357,7 +361,7 @@ async def _recall_bucketed(
                 content=it.content if data.expand_layer == "full" else None,
                 score=float(s),
                 confidence=float(getattr(it, "confidence", 1.0)),
-                entity_refs=list(getattr(it, "entity_refs", []) or []),
+                entity_refs=[UUID(str(x)) for x in (getattr(it, 'entity_refs', None) or []) if x],
                 tags=list(it.tags or []),
             )
             for it, s in zip(items, scores)
@@ -428,7 +432,7 @@ async def compute_loadout(
     )
 
     # 1. Resolve entities for this cwd
-    ents = list(session.execute(select(Entity)).scalars())
+    ents = list(session.execute(select(Entity).where(Entity.namespace == namespace)).scalars())
     ent_dicts = [
         {"id": str(e.id), "slug": e.slug, "cwd_hints": (e.meta or {}).get("cwd_hints", [])}
         for e in ents

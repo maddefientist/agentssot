@@ -50,7 +50,9 @@ def fetch_loadout_candidates(
     Active = not superseded, not expired, confidence >= 0.5.
     Includes rules unconditionally (rules are global to the namespace).
     """
-    from sqlalchemy import select, or_, and_, func, text
+    from sqlalchemy import select, or_, and_, func, cast
+    from sqlalchemy.dialects.postgresql import ARRAY, TEXT
+    # PostgreSQL JSONB ?| operator — safe bindparam expansion, no string concat
     from datetime import datetime, timezone
     from app.models import KnowledgeItem, MemoryType
 
@@ -72,11 +74,9 @@ def fetch_loadout_candidates(
     if not entity_ids:
         return rules
 
-    # PostgreSQL JSONB ?| any-key-exists operator
-    entity_filter = func.jsonb_path_exists(
-        KnowledgeItem.entity_refs,
-        text("'$[*] ? (@ in (\"" + "\",\"".join(entity_ids) + "\"))'")
-    )
+    # PostgreSQL JSONB ?| operator — matches when any element in the JSONB array
+    # equals any of the supplied entity_ids. Safe bindparam expansion, no string concat.
+    entity_filter = func.jsonb_exists_any(KnowledgeItem.entity_refs, cast(entity_ids, ARRAY(TEXT)))
     others_stmt = select(KnowledgeItem).where(
         and_(*base_filters,
              KnowledgeItem.memory_type.in_([
