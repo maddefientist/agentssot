@@ -186,6 +186,135 @@ async def run(args) -> Counter:
     return results
 
 
+def sweep_entities(session) -> int:
+    """Resolve entity_mentions strings to Entity ids; insert missing entities.
+
+    After classify_one stores raw mention strings in entity_refs (e.g.
+    ['unraid','hari']), this sweep replaces them with canonical Entity UUIDs,
+    inserting Entity rows for unknown slugs.
+    """
+    from app.models import Entity, EntityType
+
+    ents = list(session.execute(select(Entity)).scalars())
+    by_slug = {e.slug: str(e.id) for e in ents}
+
+    items_needing = list(session.execute(
+        select(KnowledgeItem).where(KnowledgeItem.entity_refs != [])
+    ).scalars())
+
+    promoted = 0
+    for item in items_needing:
+        new_refs: list[str] = []
+        for raw in item.entity_refs or []:
+            if len(str(raw)) == 36 and "-" in str(raw):
+                new_refs.append(str(raw))
+                continue
+            slug = str(raw).lower().strip()
+            if slug in by_slug:
+                new_refs.append(by_slug[slug])
+            else:
+                ent = Entity(slug=slug, type=EntityType.other, name=slug)
+                session.add(ent)
+                session.flush()
+                by_slug[slug] = str(ent.id)
+                new_refs.append(str(ent.id))
+                promoted += 1
+        if new_refs != list(item.entity_refs or []):
+            item.entity_refs = new_refs
+    session.commit()
+    return promoted
+
+
+def sweep_supersession(session, namespace: str | None) -> int:
+    """Pairwise scan within (namespace, memory_type, entity_ref) groups.
+
+    Newer item supersedes older when entity_refs overlap and memory_type
+    matches. Excludes already-superseded items.
+    """
+    from app.services.lifecycle import find_supersession_candidates, apply_supersession
+
+    stmt = select(KnowledgeItem).where(
+        KnowledgeItem.superseded_by.is_(None),
+        KnowledgeItem.memory_type.in_([
+            MemoryType.command, MemoryType.rule, MemoryType.entity,
+            MemoryType.decision,
+        ]),
+    )
+    if namespace:
+        stmt = stmt.where(KnowledgeItem.namespace == namespace)
+    items = list(session.execute(stmt).scalars())
+    items.sort(key=lambda x: x.created_at, reverse=True)
+
+    seen_ids: set = set()
+    superseded_count = 0
+    for new in items:
+        if new.id in seen_ids:
+            continue
+        candidates = find_supersession_candidates(new, items)
+        for old in candidates:
+            apply_supersession(old, new)
+            seen_ids.add(old.id)
+            session.add(ReviewQueueItem(
+                namespace=new.namespace,
+                kind=ReviewQueueKind.supersede,
+                priority=5,
+                primary_id=new.id,
+                secondary_id=old.id,
+                reason="backfill supersession sweep",
+                status=ReviewQueueStatus.pending,
+            ))
+            superseded_count += 1
+    session.commit()
+    return superseded_count
+
+
+def sweep_contradictions(session, namespace: str | None) -> int:
+    """For every active command/skill, scan rules in same namespace for
+    negation against the same entities. Enqueue HIGH-priority review entries.
+    """
+    from app.services.contradiction import detect_contradictions
+
+    stmt = select(KnowledgeItem).where(
+        KnowledgeItem.superseded_by.is_(None),
+        KnowledgeItem.memory_type.in_([MemoryType.command, MemoryType.skill]),
+    )
+    if namespace:
+        stmt = stmt.where(KnowledgeItem.namespace == namespace)
+    items = list(session.execute(stmt).scalars())
+
+    rules_by_ns: dict[str, list] = {}
+    for item in items:
+        if item.namespace not in rules_by_ns:
+            rules_by_ns[item.namespace] = list(session.execute(
+                select(KnowledgeItem).where(
+                    KnowledgeItem.namespace == item.namespace,
+                    KnowledgeItem.memory_type == MemoryType.rule,
+                    KnowledgeItem.superseded_by.is_(None),
+                )
+            ).scalars())
+
+    contradictions_found = 0
+    for item in items:
+        contras = detect_contradictions(
+            new_type=item.memory_type.value if hasattr(item.memory_type, "value") else str(item.memory_type),
+            new_entity_refs=list(item.entity_refs or []),
+            existing_rules=rules_by_ns[item.namespace],
+        )
+        for rule in contras:
+            session.add(ReviewQueueItem(
+                namespace=item.namespace,
+                kind=ReviewQueueKind.contradiction,
+                priority=20,
+                primary_id=item.id,
+                secondary_id=rule.id,
+                reason="backfill contradiction sweep",
+                status=ReviewQueueStatus.pending,
+            ))
+            contradictions_found += 1
+    session.commit()
+    return contradictions_found
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--namespace", default=None,
@@ -210,6 +339,15 @@ def main():
     t0 = time.time()
     results = asyncio.run(run(args))
     elapsed = time.time() - t0
+
+    print("\n[backfill] post-classification sweeps")
+    with SessionLocal() as session:
+        promoted = sweep_entities(session)
+        print(f"  entities promoted: {promoted}")
+        sup = sweep_supersession(session, args.namespace)
+        print(f"  supersession candidates: {sup}")
+        contras = sweep_contradictions(session, args.namespace)
+        print(f"  contradictions flagged: {contras}")
 
     print()
     print("=" * 50)
