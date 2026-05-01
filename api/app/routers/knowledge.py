@@ -509,7 +509,6 @@ async def expand_item(
     Used when an agent saw an L0 abstract in loadout/recall and needs the
     concrete details. No side effects, idempotent.
     """
-    from sqlalchemy import select
     item = session.execute(
         select(KnowledgeItem).where(KnowledgeItem.id == item_id)
     ).scalar_one_or_none()
@@ -541,7 +540,6 @@ async def compute_loadout(
     via the Cortex /loadout page (Plan 2). Callable mid-session by an
     agent post-compaction to restore push context.
     """
-    from sqlalchemy import select
 
     namespace = data.namespace or "claude-shared"
     ensure_namespace_access(
