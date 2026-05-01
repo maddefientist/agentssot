@@ -580,3 +580,27 @@ class LoadoutResponse(BaseModel):
     overflow_count: int
     tokens_used: int
     cache_key: str  # sha256 of inputs+items, useful for prompt cache
+
+
+class ReviewQueueItemOut(BaseModel):
+    id: UUID
+    namespace: str
+    kind: str
+    priority: int
+    primary_id: UUID
+    secondary_id: UUID | None
+    reason: str | None
+    status: str
+    created_at: datetime
+
+
+class SupersedeRequest(BaseModel):
+    superseded_by: UUID
+
+
+class ExpireRequest(BaseModel):
+    reason: str = ""
+
+
+class PromoteRequest(BaseModel):
+    priority: int = Field(..., ge=0, le=100)

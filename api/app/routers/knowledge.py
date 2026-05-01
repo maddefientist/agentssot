@@ -10,8 +10,9 @@ from uuid import UUID
 from ..db import get_session
 from ..llm.classifier import classify
 from ..llm.layer_compute import compute_layers
-from ..services.lifecycle import find_supersession_candidates, apply_supersession
+from ..services.lifecycle import find_supersession_candidates, apply_supersession, soft_expire
 from ..services.contradiction import detect_contradictions
+from ..services.review_queue import list_pending as rq_list
 from ..models import (
     KnowledgeItem, MemoryCategory, ContentLayer, ApiRole, Entity,
     ReviewQueueItem, ReviewQueueKind, ReviewQueueStatus,
@@ -27,6 +28,7 @@ from ..schemas import (
     BucketedRecallDiagnostics, ExpandResponse, LoadoutRequest, LoadoutResponse,
     LoadoutItem, DEFAULT_RECALL_TIERS, DEFAULT_TOP_PER_TIER,
     ContentLayerLiteral,
+    ReviewQueueItemOut, SupersedeRequest, ExpireRequest, PromoteRequest,
 )
 from ..security import AuthContext, ensure_namespace_access, require_api_key
 from ..synthesis.summary_generator import generate_tiered_summaries
@@ -394,8 +396,6 @@ async def _recall_bucketed(
     auth: AuthContext,
 ) -> BucketedRecallResponse:
     import time
-    from sqlalchemy import select, and_, or_, func
-    from datetime import datetime, timezone
 
     namespace = data.namespace or "default"
     ensure_namespace_access(
@@ -611,3 +611,70 @@ async def list_categories(
             "agent": ["agent_patterns", "agent_tools", "agent_skills", "agent_cases"],
         },
     }
+
+
+@router.get("/admin/review-queue")
+async def get_review_queue(
+    namespace: str | None = None,
+    kind: str | None = None,
+    limit: int = 100,
+    session: Session = Depends(get_session),
+    auth: AuthContext = Depends(require_api_key),
+) -> list[ReviewQueueItemOut]:
+    """List pending review-queue items. Admin-only."""
+    if auth.role != ApiRole.admin.value:
+        raise HTTPException(status_code=403, detail="admin role required")
+    items = rq_list(session, namespace, kind, limit)
+    return [ReviewQueueItemOut.model_validate(i, from_attributes=True) for i in items]
+
+
+@router.post("/items/{item_id}/supersede")
+async def supersede_endpoint(
+    item_id: UUID,
+    body: SupersedeRequest,
+    session: Session = Depends(get_session),
+    auth: AuthContext = Depends(require_api_key),
+):
+    """Manually mark an item as superseded by another."""
+    old = session.get(KnowledgeItem, item_id)
+    new = session.get(KnowledgeItem, body.superseded_by)
+    if old is None or new is None:
+        raise HTTPException(status_code=404, detail="item not found")
+    ensure_namespace_access(auth, old.namespace, {ApiRole.writer.value, ApiRole.admin.value})
+    apply_supersession(old, new)
+    session.commit()
+    return {"status": "ok", "old_id": str(item_id), "new_id": str(body.superseded_by)}
+
+
+@router.post("/items/{item_id}/expire")
+async def expire_endpoint(
+    item_id: UUID,
+    body: ExpireRequest,
+    session: Session = Depends(get_session),
+    auth: AuthContext = Depends(require_api_key),
+):
+    """Soft-expire (sets expires_at = now). Item stays in DB for audit."""
+    item = session.get(KnowledgeItem, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="item not found")
+    ensure_namespace_access(auth, item.namespace, {ApiRole.writer.value, ApiRole.admin.value})
+    soft_expire(item, body.reason)
+    session.commit()
+    return {"status": "ok", "id": str(item_id), "expires_at": item.expires_at.isoformat()}
+
+
+@router.post("/items/{item_id}/promote")
+async def promote_endpoint(
+    item_id: UUID,
+    body: PromoteRequest,
+    session: Session = Depends(get_session),
+    auth: AuthContext = Depends(require_api_key),
+):
+    """Bump loadout_priority."""
+    item = session.get(KnowledgeItem, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="item not found")
+    ensure_namespace_access(auth, item.namespace, {ApiRole.writer.value, ApiRole.admin.value})
+    item.loadout_priority = body.priority
+    session.commit()
+    return {"status": "ok", "id": str(item_id), "priority": body.priority}
