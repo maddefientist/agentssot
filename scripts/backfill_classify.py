@@ -315,6 +315,90 @@ def sweep_contradictions(session, namespace: str | None) -> int:
     return contradictions_found
 
 
+def distribution_report(session, namespace: str | None) -> dict:
+    """Generate the gate report shown to the operator before Phase 4 ships."""
+    from sqlalchemy import func
+
+    where = []
+    if namespace:
+        where.append(KnowledgeItem.namespace == namespace)
+
+    base = select(func.count(KnowledgeItem.id))
+    if where:
+        base = base.where(*where)
+    total = session.execute(base).scalar_one()
+
+    types: dict[str, int] = {}
+    type_stmt = select(KnowledgeItem.memory_type, func.count(KnowledgeItem.id)) \
+        .group_by(KnowledgeItem.memory_type)
+    if where:
+        type_stmt = type_stmt.where(*where)
+    for t, n in session.execute(type_stmt):
+        key = t.value if hasattr(t, "value") and t else (str(t) if t else "null")
+        types[key] = n
+
+    rq_stmt = select(ReviewQueueItem.kind, func.count(ReviewQueueItem.id)) \
+        .where(ReviewQueueItem.status == ReviewQueueStatus.pending) \
+        .group_by(ReviewQueueItem.kind)
+    if namespace:
+        rq_stmt = rq_stmt.where(ReviewQueueItem.namespace == namespace)
+    rq_counts = {(k.value if hasattr(k, "value") else str(k)): n for k, n in session.execute(rq_stmt)}
+
+    superseded = session.execute(
+        select(func.count(KnowledgeItem.id))
+        .where(KnowledgeItem.superseded_by.isnot(None))
+    ).scalar_one()
+
+    high_conf = session.execute(
+        select(func.count(KnowledgeItem.id))
+        .where(KnowledgeItem.last_classified_at.isnot(None),
+               KnowledgeItem.confidence >= 0.6)
+    ).scalar_one()
+
+    low_conf = session.execute(
+        select(func.count(KnowledgeItem.id))
+        .where(KnowledgeItem.last_classified_at.isnot(None),
+               KnowledgeItem.confidence < 0.6)
+    ).scalar_one()
+
+    return {
+        "total_items": total,
+        "classified_high_conf": high_conf,
+        "classified_low_conf": low_conf,
+        "type_distribution": types,
+        "superseded_count": superseded,
+        "review_queue_counts": rq_counts,
+    }
+
+
+def print_report(report: dict) -> None:
+    print()
+    print("=" * 60)
+    print("BACKFILL DISTRIBUTION REPORT")
+    print("=" * 60)
+    print(f"  total items:                {report['total_items']}")
+    if report['total_items']:
+        print(f"  classified high-confidence: {report['classified_high_conf']} ({report['classified_high_conf']/report['total_items']:.1%})")
+        print(f"  classified low-confidence:  {report['classified_low_conf']} ({report['classified_low_conf']/report['total_items']:.1%})")
+    else:
+        print("  (no items)")
+    print()
+    print("  type distribution:")
+    for t, n in sorted(report["type_distribution"].items(), key=lambda x: -x[1]):
+        print(f"    {t:20s}  {n}")
+    print()
+    print(f"  supersession marked: {report['superseded_count']}")
+    print(f"  review queue (pending):")
+    for k, n in report["review_queue_counts"].items():
+        print(f"    {k:20s}  {n}")
+    print("=" * 60)
+    print()
+    print("OPERATOR GATE: review the type distribution above.")
+    print("If it looks wrong (e.g. >80% episodic, <5 commands total), tune")
+    print("the SYSTEM_PROMPT in api/app/llm/classifier.py and re-run with")
+    print("--resume. Otherwise: proceed to Plan 2 Phase 4 (loadout hook).")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--namespace", default=None,
@@ -348,6 +432,15 @@ def main():
         print(f"  supersession candidates: {sup}")
         contras = sweep_contradictions(session, args.namespace)
         print(f"  contradictions flagged: {contras}")
+
+    import json as _json
+    with SessionLocal() as session:
+        report = distribution_report(session, args.namespace)
+    report_path = Path(f"./backups/backfill-report-{datetime.now().strftime('%Y%m%dT%H%M%S')}.json")
+    report_path.parent.mkdir(exist_ok=True)
+    report_path.write_text(_json.dumps(report, indent=2))
+    print_report(report)
+    print(f"  report: {report_path}")
 
     print()
     print("=" * 50)
