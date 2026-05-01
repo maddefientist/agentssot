@@ -117,6 +117,20 @@ def _stub_low_conf(reason: str, content: str) -> dict[str, Any]:
     }
 
 
+def _normalize_list_fields(val: Any) -> list[str]:
+    """Coerce a classifier list-field value to a proper list.
+
+    None → [], str → [str], list → list, other → [].
+    """
+    if val is None:
+        return []
+    if isinstance(val, str):
+        return [val]
+    if isinstance(val, list):
+        return val
+    return []
+
+
 def classify(content: str, tags: list[str] | None = None, hint: str | None = None) -> dict[str, Any]:
     """Classify a single item. Always returns a dict with the 8 schema keys.
 
@@ -157,6 +171,9 @@ def classify(content: str, tags: list[str] | None = None, hint: str | None = Non
         if not _OUTPUT_KEYS.issubset(parsed.keys()):
             return _stub_low_conf("missing_keys", content)
         parsed["confidence"] = max(0.0, min(1.0, float(parsed["confidence"])))
+        # Normalize list-typed fields: coerce None → [], str → [str], scalar → []
+        for key in ("cwd_hints", "device_hints", "entity_mentions"):
+            parsed[key] = _normalize_list_fields(parsed.get(key))
         return parsed
     except (httpx.HTTPError, json.JSONDecodeError, ValueError) as e:
         return _stub_low_conf(f"classifier_error:{type(e).__name__}", content)

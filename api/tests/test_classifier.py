@@ -47,3 +47,17 @@ def test_classifier_corpus_accuracy():
         f"classifier accuracy {accuracy:.1%} below target {TARGET_ACCURACY:.0%}; "
         f"{len(misses)} miss(es) — see stdout"
     )
+
+
+def test_classifier_list_field_normalization():
+    """List-typed fields must always be lists even if the model returns null/string/scalar."""
+    from app.llm.classifier import _normalize_list_fields
+
+    # None → []
+    assert _normalize_list_fields(None) == []
+    # str → [str]
+    assert _normalize_list_fields("/home/user") == ["/home/user"]
+    # list passes through
+    assert _normalize_list_fields(["a", "b"]) == ["a", "b"]
+    # scalar (int) → []
+    assert _normalize_list_fields(42) == []
