@@ -21,8 +21,11 @@ def _truncate(text: str | None, cap: int) -> str | None:
     text = text.strip()
     if len(text) <= cap:
         return text
-    # Cut at last full word boundary before cap
+    # Cut at last full word boundary before cap; if no space found
+    # (rsplit returned the original), reserve 1 char for ellipsis.
     head = text[:cap].rsplit(" ", 1)[0]
+    if not head or len(head) == cap:
+        head = text[:cap - 1]
     return head + "…"
 
 
@@ -37,7 +40,7 @@ def _heuristic_summary(content: str) -> str:
     return _truncate(content, _SUMMARY_CHAR_CAP) or content[:_SUMMARY_CHAR_CAP]
 
 
-def compute_layers(content: str, classifier_out: dict[str, Any] | None) -> dict[str, str | None]:
+def compute_layers(content: str, classifier_out: dict[str, Any] | None) -> dict[str, str]:
     """Return {abstract, summary, full_content} for an ingest payload.
 
     classifier_out: the dict returned by classifier.classify(). May have

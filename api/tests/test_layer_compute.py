@@ -39,3 +39,24 @@ def test_fallback_heuristic_when_classifier_empty():
 def test_full_content_always_preserved():
     result = compute_layers("verbatim original", {"abstract": "ok", "summary": "ok"})
     assert result["full_content"] == "verbatim original"
+
+
+def test_truncate_no_space_edge_case():
+    """_truncate must not exceed cap when no space is found."""
+    from app.llm.layer_compute import _truncate
+    assert len(_truncate("a" * 300, 220)) <= 220
+
+
+def test_summary_cap_enforced():
+    """Summary must be capped at 2200 chars even with long classifier output."""
+    long_summary = "word " * 2000  # ~10000 chars
+    classifier_out = {"abstract": "ok", "summary": long_summary}
+    result = compute_layers("content", classifier_out)
+    assert len(result["summary"]) <= 2200
+
+
+def test_no_space_long_content_all_fields_capped():
+    """No-space edge case: abstract ≤ 220, summary ≤ 2200."""
+    result = compute_layers("a" * 5000, {})
+    assert len(result["abstract"]) <= 220
+    assert len(result["summary"]) <= 2200
