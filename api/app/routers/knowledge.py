@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
 from sqlalchemy import select, and_, func, or_
@@ -6,7 +8,12 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from ..db import get_session
-from ..models import KnowledgeItem, MemoryCategory, ContentLayer, ApiRole, Entity
+from ..llm.classifier import classify
+from ..llm.layer_compute import compute_layers
+from ..models import (
+    KnowledgeItem, MemoryCategory, ContentLayer, ApiRole, Entity,
+    ReviewQueueItem, ReviewQueueKind, ReviewQueueStatus,
+)
 from ..settings import get_settings
 from ..schemas import (
     TieredKnowledgeCreate,
@@ -70,16 +77,11 @@ async def ingest_tiered(
     category_enum = MemoryCategory(category_value) if category_value else None
 
     # Plan 1 T2.3: auto-classify if caller didn't provide explicit type/abstract/summary
-    from app.llm.classifier import classify
-    from app.llm.layer_compute import compute_layers
-    from app.models import ReviewQueueItem, ReviewQueueKind, ReviewQueueStatus
-    from app.settings import get_settings
-
     settings = get_settings()
     classifier_out: dict | None = None
     needs_review = False
     if (data.abstract is None and data.summary is None and not data.verbatim):
-        classifier_out = classify(data.content, tags=data.tags, hint=data.memory_type)
+        classifier_out = await asyncio.to_thread(classify, data.content, tags=data.tags, hint=data.memory_type)
         if classifier_out.get("confidence", 0.0) < settings.classifier_min_confidence:
             needs_review = True
         # If caller didn't pin a memory_type, accept classifier's decision
@@ -156,6 +158,10 @@ async def ingest_tiered(
     # abstract/summary are optional metadata (not separate layers).
     layer = ContentLayer.full
 
+    # Ensure every persisted item has a non-null memory_type
+    if data.memory_type is None:
+        data.memory_type = 'fact'
+
     ki = KnowledgeItem(
         namespace=namespace,
         content=data.content,
@@ -170,13 +176,13 @@ async def ingest_tiered(
         embedding=embedding,
         verbatim=data.verbatim,
         confidence=float(classifier_out.get("confidence", 1.0)) if classifier_out else 1.0,
-        cwd_hints=list(classifier_out.get("cwd_hints", [])) if classifier_out else [],
-        device_hints=list(classifier_out.get("device_hints", [])) if classifier_out else [],
+        cwd_hints=(list(classifier_out.get("cwd_hints", []) or [])[:50]) if classifier_out else [],
+        device_hints=(list(classifier_out.get("device_hints", []) or [])[:50]) if classifier_out else [],
         last_classified_at=datetime.now(timezone.utc) if classifier_out else None,
     )
 
     session.add(ki)
-    session.commit()
+    session.flush()
     session.refresh(ki)
 
     if needs_review:
@@ -189,7 +195,8 @@ async def ingest_tiered(
             status=ReviewQueueStatus.pending,
         )
         session.add(rq)
-        session.commit()
+
+    session.commit()
 
     wal.log_event(
         "knowledge.ingest",
