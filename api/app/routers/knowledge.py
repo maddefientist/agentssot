@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
 from sqlalchemy import select, and_, func, or_
 from sqlalchemy.orm import Session
+from datetime import datetime, timezone
 from uuid import UUID
 
 from ..db import get_session
@@ -68,6 +69,28 @@ async def ingest_tiered(
     category_value = _map_memory_type(data.category, data.memory_type)
     category_enum = MemoryCategory(category_value) if category_value else None
 
+    # Plan 1 T2.3: auto-classify if caller didn't provide explicit type/abstract/summary
+    from app.llm.classifier import classify
+    from app.llm.layer_compute import compute_layers
+    from app.models import ReviewQueueItem, ReviewQueueKind, ReviewQueueStatus
+    from app.settings import get_settings
+
+    settings = get_settings()
+    classifier_out: dict | None = None
+    needs_review = False
+    if (data.abstract is None and data.summary is None and not data.verbatim):
+        classifier_out = classify(data.content, tags=data.tags, hint=data.memory_type)
+        if classifier_out.get("confidence", 0.0) < settings.classifier_min_confidence:
+            needs_review = True
+        # If caller didn't pin a memory_type, accept classifier's decision
+        if data.memory_type is None and classifier_out.get("confidence", 0.0) >= settings.classifier_min_confidence:
+            data.memory_type = classifier_out.get("memory_type")
+
+    layers = compute_layers(data.content, classifier_out)
+    # Compose layer fields onto the persisted record
+    abstract_to_store = data.abstract or layers["abstract"]
+    summary_to_store = data.summary or layers["summary"]
+
     # Semantic dedup: if this item is near-identical to an existing one in the
     # same namespace, return the existing record instead of inserting. Verbatim
     # items bypass — the user explicitly asked for exact-text preservation, so
@@ -111,17 +134,23 @@ async def ingest_tiered(
     if data.verbatim:
         abstract = None
         summary = None
+        abstract_to_store = None
+        summary_to_store = None
     else:
         abstract = data.abstract
         summary = data.summary
+        abstract_to_store = abstract or layers["abstract"]
+        summary_to_store = summary or layers["summary"]
 
         if data.generate_summaries and (not abstract or not summary):
             llm_provider = getattr(request.app.state, 'llm_provider', None)
             gen_abstract, gen_summary = await generate_tiered_summaries(data.content, llm_provider)
             if not abstract and gen_abstract:
                 abstract = gen_abstract
+                abstract_to_store = abstract or layers["abstract"]
             if not summary and gen_summary:
                 summary = gen_summary
+                summary_to_store = summary or layers["summary"]
 
     # Persist layer=full because the record always stores full content;
     # abstract/summary are optional metadata (not separate layers).
@@ -130,8 +159,8 @@ async def ingest_tiered(
     ki = KnowledgeItem(
         namespace=namespace,
         content=data.content,
-        abstract=abstract,
-        summary=summary,
+        abstract=abstract_to_store,
+        summary=summary_to_store,
         category=category_enum,
         layer=layer,
         source=data.source,
@@ -140,11 +169,27 @@ async def ingest_tiered(
         memory_type=data.memory_type,
         embedding=embedding,
         verbatim=data.verbatim,
+        confidence=float(classifier_out.get("confidence", 1.0)) if classifier_out else 1.0,
+        cwd_hints=list(classifier_out.get("cwd_hints", [])) if classifier_out else [],
+        device_hints=list(classifier_out.get("device_hints", [])) if classifier_out else [],
+        last_classified_at=datetime.now(timezone.utc) if classifier_out else None,
     )
 
     session.add(ki)
     session.commit()
     session.refresh(ki)
+
+    if needs_review:
+        rq = ReviewQueueItem(
+            namespace=namespace,
+            kind=ReviewQueueKind.low_conf,
+            priority=10,
+            primary_id=ki.id,
+            reason=f"classifier_confidence={classifier_out.get('confidence', 0.0):.2f}; reason={classifier_out.get('_reason','low_conf')}",
+            status=ReviewQueueStatus.pending,
+        )
+        session.add(rq)
+        session.commit()
 
     wal.log_event(
         "knowledge.ingest",
