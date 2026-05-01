@@ -10,6 +10,8 @@ from uuid import UUID
 from ..db import get_session
 from ..llm.classifier import classify
 from ..llm.layer_compute import compute_layers
+from ..services.lifecycle import find_supersession_candidates, apply_supersession
+from ..services.contradiction import detect_contradictions
 from ..models import (
     KnowledgeItem, MemoryCategory, ContentLayer, ApiRole, Entity,
     ReviewQueueItem, ReviewQueueKind, ReviewQueueStatus,
@@ -197,6 +199,71 @@ async def ingest_tiered(
         session.add(rq)
 
     session.commit()
+
+    # Plan 1 T2.5: supersession + contradiction scans
+    new_entity_refs: list[str] = []
+    if classifier_out:
+        new_entity_refs = list(classifier_out.get("entity_mentions") or [])
+    if new_entity_refs:
+        ki.entity_refs = new_entity_refs
+        session.commit()
+
+    if ki.memory_type and new_entity_refs:
+        cand_stmt = (
+            select(KnowledgeItem)
+            .where(
+                KnowledgeItem.namespace == namespace,
+                KnowledgeItem.memory_type == ki.memory_type,
+                KnowledgeItem.id != ki.id,
+                KnowledgeItem.superseded_by.is_(None),
+                KnowledgeItem.entity_refs.op("?|")(new_entity_refs),
+            )
+            .limit(20)
+        )
+        candidates = list(session.execute(cand_stmt).scalars())
+        superseded = find_supersession_candidates(ki, candidates)
+        for old in superseded:
+            apply_supersession(old, ki)
+            session.add(ReviewQueueItem(
+                namespace=namespace,
+                kind=ReviewQueueKind.supersede,
+                priority=5,
+                primary_id=ki.id,
+                secondary_id=old.id,
+                reason="auto-supersession on entity+type match",
+                status=ReviewQueueStatus.pending,
+            ))
+        if superseded:
+            session.commit()
+
+    if str(ki.memory_type) in ("command", "skill") and new_entity_refs:
+        rule_stmt = (
+            select(KnowledgeItem)
+            .where(
+                KnowledgeItem.namespace == namespace,
+                KnowledgeItem.memory_type == "rule",
+                KnowledgeItem.entity_refs.op("?|")(new_entity_refs),
+                KnowledgeItem.superseded_by.is_(None),
+            )
+        )
+        rules = list(session.execute(rule_stmt).scalars())
+        contras = detect_contradictions(
+            new_type=str(ki.memory_type),
+            new_entity_refs=new_entity_refs,
+            existing_rules=rules,
+        )
+        for rule in contras:
+            session.add(ReviewQueueItem(
+                namespace=namespace,
+                kind=ReviewQueueKind.contradiction,
+                priority=20,
+                primary_id=ki.id,
+                secondary_id=rule.id,
+                reason=f"new {ki.memory_type} contradicts negation rule",
+                status=ReviewQueueStatus.pending,
+            ))
+        if contras:
+            session.commit()
 
     wal.log_event(
         "knowledge.ingest",
@@ -475,7 +542,6 @@ async def compute_loadout(
     agent post-compaction to restore push context.
     """
     from sqlalchemy import select
-    from app.models import Entity
 
     namespace = data.namespace or "claude-shared"
     ensure_namespace_access(

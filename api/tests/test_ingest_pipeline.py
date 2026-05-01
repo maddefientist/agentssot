@@ -56,3 +56,35 @@ def test_low_confidence_ingest_lands_in_review_queue():
     )
     assert r.status_code == 200
     # Review queue check happens in T2.7 once /admin/review-queue exists
+
+
+@pytest.mark.integration
+def test_contradiction_creates_review_queue_entry():
+    if not KEY:
+        pytest.skip("no test key")
+    seed = httpx.post(
+        f"{BASE}/api/v1/knowledge/ingest",
+        headers={"X-Api-Key": KEY},
+        json={
+            "content": "Never access fakeunraid — this host is OFF LIMITS",
+            "namespace": "claude-shared",
+            "memory_type": "rule",
+            "tags": ["plan1-contradiction-test", "rule"],
+        },
+        timeout=30,
+    )
+    assert seed.status_code == 200, seed.text
+
+    cmd = httpx.post(
+        f"{BASE}/api/v1/knowledge/ingest",
+        headers={"X-Api-Key": KEY},
+        json={
+            "content": "ssh fakeunraid",
+            "namespace": "claude-shared",
+            "memory_type": "command",
+            "tags": ["plan1-contradiction-test", "command"],
+        },
+        timeout=30,
+    )
+    assert cmd.status_code == 200
+    # Review Queue verification happens in T2.7 once /admin/review-queue exists
