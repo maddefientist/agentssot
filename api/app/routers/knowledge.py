@@ -508,7 +508,7 @@ async def _recall_bucketed(
 @router.get("/items/{item_id}/expand", response_model=ExpandResponse)
 async def expand_item(
     item_id: UUID,
-    layer: ContentLayerLiteral = "full",
+    layer: ContentLayerLiteral = "summary",
     session: Session = Depends(get_session),
     auth: AuthContext = Depends(require_api_key),
 ):
