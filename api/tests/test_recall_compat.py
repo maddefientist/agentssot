@@ -1,6 +1,8 @@
-"""Default /recall (no bucketed flag) returns the existing TieredRecallResponse shape.
+"""Legacy /recall path (bucketed=False opt-out) still returns the flat
+TieredRecallResponse shape for callers that haven't migrated to bucketed=True.
 
-Critical: existing callers must keep working through Phase 1.
+After T6.1 the default is bucketed=True; this test locks the explicit-opt-out
+path so legacy callers (UI Search tab, scripts) keep working.
 """
 import os
 import pytest
@@ -11,7 +13,7 @@ KEY = os.environ.get("SSOT_TEST_API_KEY", "")
 
 
 @pytest.mark.integration
-def test_recall_default_returns_flat_results():
+def test_recall_legacy_path_with_bucketed_false():
     if not KEY:
         pytest.skip("SSOT_TEST_API_KEY not set")
     r = httpx.post(

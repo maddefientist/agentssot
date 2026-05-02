@@ -287,10 +287,9 @@ async def recall_dispatch(
 ):
     """Recall dispatcher.
 
-    - bucketed=False (default, for backwards compat): delegates to the existing
-      flat TieredRecallResponse path.
-    - bucketed=True: returns tier-bucketed response with per-tier reranking
-      and diagnostics.
+    - bucketed=True (default, since T6.1): returns tier-bucketed response with
+      per-tier reranking, episodic excluded by default, and diagnostics.
+    - bucketed=False: opt-out legacy path returning the flat TieredRecallResponse.
     """
     try:
         # Default: bucketed=True (bucketed path). Only bucketed=False goes legacy.
