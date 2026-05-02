@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import crud, schemas, wal
-from .background import compaction_loop
+from .background import compaction_loop, lifecycle_sweep_loop
 from .db import get_session
 from .embeddings import build_embedding_provider
 from .llm import LLMProviderError, build_llm_provider
@@ -67,6 +67,11 @@ async def lifespan(app: FastAPI):
 
     app.state.synthesis_task = synthesis_task
 
+    # Lifecycle sweep loop — runs at 03:00 UTC daily
+    lifecycle_task = asyncio.create_task(lifecycle_sweep_loop(app), name="lifecycle-sweep-loop")
+    logger.info("background lifecycle sweep loop started (03:00 UTC)")
+    app.state.lifecycle_task = lifecycle_task
+
     yield
 
     if task:
@@ -80,6 +85,13 @@ async def lifespan(app: FastAPI):
         synthesis_task.cancel()
         try:
             await synthesis_task
+        except asyncio.CancelledError:
+            pass
+
+    if lifecycle_task:
+        lifecycle_task.cancel()
+        try:
+            await lifecycle_task
         except asyncio.CancelledError:
             pass
 

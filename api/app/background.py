@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
@@ -83,3 +84,22 @@ def _run_compaction_cycle(app) -> None:
                     "unexpected compaction failure",
                     extra={"namespace": candidate["namespace"], "session_id": candidate["session_id"]},
                 )
+
+
+async def lifecycle_sweep_loop(app) -> None:
+    """Run lifecycle_sweep at 03:00 UTC daily."""
+    from .services.lifecycle_sweep import run_sweep
+    while True:
+        now = datetime.now(timezone.utc)
+        next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)
+        if next_run <= now:
+            next_run = next_run + timedelta(days=1)
+        sleep_seconds = (next_run - now).total_seconds()
+        logger.info("lifecycle_sweep next run at %s UTC (sleep %.0fs)", next_run, sleep_seconds)
+        await asyncio.sleep(sleep_seconds)
+        try:
+            with SessionLocal() as s:
+                result = run_sweep(s, namespace="claude-shared", dry_run=False)
+            logger.info("lifecycle_sweep complete: %s", result)
+        except Exception:
+            logger.exception("lifecycle_sweep failed")
