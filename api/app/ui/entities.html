@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hive Entities</title>
+<link rel="stylesheet" href="/ui/assets/styles.css">
+<link rel="stylesheet" href="/ui/assets/tier-styles.css">
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="dark">
+<div x-data="entitiesApp()" x-init="load()">
+  <header>
+    <h1>Hive Entities</h1>
+    <nav>
+      <a href="/cortex">Cortex</a>
+      <a href="/review">Review</a>
+      <a href="/loadout">Loadout</a>
+      <a href="/entities" class="active">Entities</a>
+    </nav>
+  </header>
+
+  <section class="controls-bar">
+    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()">
+    <input type="text" placeholder="Search slug or name..." x-model="search" @input="filter()">
+    <span class="count" x-text="filtered.length + ' / ' + items.length + ' entities'"></span>
+  </section>
+
+  <section class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Slug</th>
+          <th>Type</th>
+          <th>Name</th>
+          <th>Refs</th>
+          <th>IPs</th>
+          <th>CWD Hints</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="e in filtered" :key="e.id">
+          <tr>
+            <td><code x-text="e.slug"></code></td>
+            <td><span class="tier-entity" x-text="e.entity_type"></span></td>
+            <td x-text="e.name"></td>
+            <td x-text="e.ref_count"></td>
+            <td><code x-text="(e.ips||[]).join(', ') || '—'"></code></td>
+            <td class="hints-cell"><code x-text="(e.cwd_hints||[]).join(', ') || '—'"></code></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </section>
+</div>
+
+<style>
+  body.dark { background: var(--bg, #0d1117); color: var(--text, #e6edf3); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 2rem; border-bottom: 1px solid var(--border, #30363d); }
+  header h1 { margin: 0; font-size: 1.2rem; }
+  nav { display: flex; gap: 1rem; }
+  nav a { color: var(--text-muted, #8b949e); text-decoration: none; font-size: 0.85rem; }
+  nav a.active, nav a:hover { color: var(--accent, #58a6ff); }
+  .controls-bar { display: flex; gap: 1rem; align-items: center; padding: 1rem 2rem; }
+  .controls-bar input { padding: 6px 12px; background: var(--surface, #161b22); border: 1px solid var(--border, #30363d); border-radius: 6px; color: var(--text); }
+  .count { color: var(--text-muted); font-size: 0.85rem; margin-left: auto; }
+  .table-wrap { padding: 0 2rem 2rem; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  th { text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--border); color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.5px; }
+  td { padding: 8px 12px; border-bottom: 1px solid rgba(48,54,61,0.4); }
+  td code { font-size: 0.75rem; color: var(--text-muted); }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  .hints-cell { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>
+
+<script>
+function entitiesApp() {
+  return {
+    apiKey: localStorage.getItem("hiveWriterKey") || "",
+    items: [],
+    search: "",
+    filtered: [],
+    async load() {
+      if (!this.apiKey) { this.items = []; this.filtered = []; return; }
+      localStorage.setItem("hiveWriterKey", this.apiKey);
+      try {
+        const r = await fetch("/api/v1/entities/?limit=500", {
+          headers: { "X-Api-Key": this.apiKey },
+        });
+        this.items = r.ok ? await r.json() : [];
+      } catch { this.items = []; }
+      this.filter();
+    },
+    filter() {
+      const q = this.search.toLowerCase();
+      this.filtered = q
+        ? this.items.filter(e =>
+            (e.slug || "").toLowerCase().includes(q) ||
+            (e.name || "").toLowerCase().includes(q))
+        : this.items;
+    },
+  };
+}
+</script>
+</body>
+</html>

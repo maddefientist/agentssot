@@ -26,6 +26,7 @@ from .cortex import router as cortex_router
 from .sync import router as sync_router
 from .routers import knowledge_router
 from .routers.agent_guide import router as agent_guide_router
+from .routers.entities import router as entities_router
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -105,6 +106,7 @@ app.include_router(cortex_router)
 app.include_router(sync_router)
 app.include_router(knowledge_router, prefix="/api/v1")
 app.include_router(agent_guide_router)
+app.include_router(entities_router)
 
 
 @app.middleware("http")
@@ -186,6 +188,11 @@ def review_page():
 @app.get("/loadout", include_in_schema=False)
 def loadout_page():
     return FileResponse(UI_DIR / "loadout.html")
+
+
+@app.get("/entities", include_in_schema=False)
+def entities_page():
+    return FileResponse(UI_DIR / "entities.html")
 
 
 @app.get("/cortex/data", include_in_schema=False)
