@@ -17,7 +17,7 @@ def test_recall_default_returns_flat_results():
     r = httpx.post(
         f"{BASE}/api/v1/knowledge/recall",
         headers={"X-Api-Key": KEY},
-        json={"query": "ssh unraid", "namespace": "claude-shared", "limit": 3},
+        json={"query": "ssh unraid", "namespace": "claude-shared", "bucketed": False, "limit": 3},
         timeout=15,
     )
     assert r.status_code == 200

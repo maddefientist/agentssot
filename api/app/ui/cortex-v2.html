@@ -3019,7 +3019,7 @@ loadData().then(function() {
     try {
       var data;
       if (kbMode === 'semantic') {
-        var body = { query: query, namespace: ns, limit: 50 };
+        var body = { query: query, namespace: ns, bucketed: false, limit: 50 };
         var resp = await fetch('/api/v1/knowledge/recall', {
           method: 'POST',
           headers: kbHeaders(),

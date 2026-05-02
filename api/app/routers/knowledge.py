@@ -293,10 +293,11 @@ async def recall_dispatch(
       and diagnostics.
     """
     try:
-        if payload.get("bucketed") is True:
-            req = BucketedRecallRequest(**{k: v for k, v in payload.items() if k != "bucketed"})
+        # Default: bucketed=True (bucketed path). Only bucketed=False goes legacy.
+        if payload.get("bucketed") is not False:
+            req = BucketedRecallRequest(**{k: v for k, v in payload.items()})
             return await _recall_bucketed(req, request, session, auth)
-        # Legacy flat path
+        # Legacy flat path — caller explicitly set bucketed=False
         legacy = TieredRecallRequest(**{k: v for k, v in payload.items() if k != "bucketed"})
         return await recall_tiered(legacy, request, session, auth)
     except ValidationError as exc:
@@ -426,15 +427,22 @@ async def _recall_bucketed(
             or_(KnowledgeItem.expires_at.is_(None), KnowledgeItem.expires_at > now)
         )
 
+    # Resolve tiers: None with exclude_episodic=True → 5 non-episodic tiers
+    tiers = data.tiers
+    if tiers is None and data.exclude_episodic:
+        tiers = list(DEFAULT_RECALL_TIERS)
+    elif tiers is None:
+        tiers = list(DEFAULT_RECALL_TIERS) + ["episodic"]
+
     buckets: dict[str, list[BucketedRecallItem]] = {}
     candidates_per_tier: dict[str, int] = {}
 
     fast_provider, deep_provider = build_reranker_pair(get_settings())
-    reranker_name, reranker = pick_reranker(data.tiers, fast_provider, deep_provider)
+    reranker_name, reranker = pick_reranker(tiers, fast_provider, deep_provider)
     multiplier = get_settings().reranker_candidate_multiplier or 3
 
     rerank_total_ms = 0
-    for tier in data.tiers:
+    for tier in tiers:
         top_k = data.top_per_tier.get(tier, 5)
         candidate_pool = top_k * multiplier
         dist_col = KnowledgeItem.embedding.cosine_distance(query_embedding).label("distance")

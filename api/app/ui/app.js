@@ -221,7 +221,7 @@ async function doSearch() {
   try {
     const data = await api("/recall", {
       method: "POST",
-      body: { namespace: ns, scope: "knowledge", query_text: text, top_k: topK }
+      body: { namespace: ns, scope: "knowledge", query_text: text, top_k: topK, bucketed: false }
     });
     const items = data.items || [];
     grid.textContent = "";

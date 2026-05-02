@@ -521,11 +521,13 @@ class BucketedRecallRequest(BaseModel):
     """Tier-bucketed recall request. Layered on top of TieredRecallRequest semantics."""
     query: str = Field(..., description="Search query")
     namespace: str = Field("default")
-    tiers: list[MemoryTierLiteral] = Field(default_factory=lambda: list(DEFAULT_RECALL_TIERS))
+    bucketed: bool = Field(True, description="Return tier-bucketed response (default True)")
+    tiers: list[MemoryTierLiteral] | None = Field(None, description="Tiers to recall; None means all non-episodic")
     top_per_tier: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_TOP_PER_TIER))
     expand_layer: ContentLayerLiteral = Field("abstract")
     include_superseded: bool = Field(False)
     include_expired: bool = Field(False)
+    exclude_episodic: bool = Field(True, description="Exclude episodic tier by default")
 
 
 class BucketedRecallItem(BaseModel):
