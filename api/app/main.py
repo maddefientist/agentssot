@@ -183,6 +183,11 @@ def review_page():
     return FileResponse(UI_DIR / "review.html")
 
 
+@app.get("/loadout", include_in_schema=False)
+def loadout_page():
+    return FileResponse(UI_DIR / "loadout.html")
+
+
 @app.get("/cortex/data", include_in_schema=False)
 def cortex_data(
     namespace: str = Query(default="claude-shared"),

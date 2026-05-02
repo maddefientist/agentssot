@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hive Loadout</title>
+<link rel="stylesheet" href="/ui/assets/styles.css">
+<link rel="stylesheet" href="/ui/assets/tier-styles.css">
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="dark">
+<div x-data="loadoutApp()">
+  <header>
+    <h1>Hive Loadout</h1>
+    <nav>
+      <a href="/cortex">Cortex</a>
+      <a href="/review">Review</a>
+      <a href="/loadout" class="active">Loadout</a>
+      <a href="/entities">Entities</a>
+    </nav>
+  </header>
+
+  <section class="form-section">
+    <div class="form-grid">
+      <label>
+        <span>API Key</span>
+        <input type="password" x-model="apiKey" placeholder="ssot_...">
+      </label>
+      <label>
+        <span>CWD</span>
+        <input type="text" x-model="cwd" placeholder="/opt/agentssot">
+      </label>
+      <label>
+        <span>Device ID</span>
+        <input type="text" x-model="deviceId" placeholder="hari">
+      </label>
+      <label>
+        <span>Token Budget</span>
+        <input type="number" x-model.number="budget" min="100" max="3000" step="50">
+      </label>
+    </div>
+    <button @click="compute()" class="btn-compute">Compute Loadout</button>
+  </section>
+
+  <section class="result-section" x-show="rendered">
+    <div class="result-header">
+      <h3>Rendered Loadout</h3>
+      <button @click="copy()" class="btn-copy">Copy to Clipboard</button>
+    </div>
+    <pre class="loadout-preview" x-text="rendered"></pre>
+  </section>
+
+  <section class="result-section" x-show="error">
+    <p class="error-msg" x-text="error"></p>
+  </section>
+</div>
+
+<style>
+  body.dark { background: var(--bg, #0d1117); color: var(--text, #e6edf3); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 2rem; border-bottom: 1px solid var(--border, #30363d); }
+  header h1 { margin: 0; font-size: 1.2rem; }
+  nav { display: flex; gap: 1rem; }
+  nav a { color: var(--text-muted, #8b949e); text-decoration: none; font-size: 0.85rem; }
+  nav a.active, nav a:hover { color: var(--accent, #58a6ff); }
+  .form-section { padding: 1.5rem 2rem; }
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+  .form-grid label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8rem; color: var(--text-muted); }
+  .form-grid input { padding: 8px 12px; background: var(--surface, #161b22); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: monospace; font-size: 0.85rem; }
+  .btn-compute { padding: 8px 24px; background: var(--accent, #58a6ff); color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+  .btn-compute:hover { opacity: 0.9; }
+  .result-section { padding: 0 2rem 2rem; }
+  .result-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+  .result-header h3 { margin: 0; font-size: 1rem; }
+  .btn-copy { padding: 4px 16px; border: 1px solid var(--border); background: var(--surface); color: var(--text-muted); border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
+  .btn-copy:hover { color: var(--text); border-color: var(--accent); }
+  .loadout-preview { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1.5rem; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 0.8rem; line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-height: 70vh; overflow-y: auto; }
+  .error-msg { color: var(--red, #f85149); padding: 1rem; }
+</style>
+
+<script>
+function loadoutApp() {
+  return {
+    apiKey: localStorage.getItem("hiveApiKey") || "",
+    cwd: "/opt/agentssot",
+    deviceId: "hari",
+    budget: 750,
+    rendered: "",
+    error: "",
+    async compute() {
+      this.error = "";
+      this.rendered = "";
+      if (!this.apiKey) { this.error = "API key required"; return; }
+      localStorage.setItem("hiveApiKey", this.apiKey);
+      try {
+        const r = await fetch("/api/v1/knowledge/loadout", {
+          method: "POST",
+          headers: { "X-Api-Key": this.apiKey, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            cwd: this.cwd,
+            device_id: this.deviceId,
+            namespace: "claude-shared",
+            token_budget: this.budget,
+          }),
+        });
+        if (!r.ok) { this.error = `Error: ${r.status} ${await r.text()}`; return; }
+        const b = await r.json();
+        this.rendered = this.format(b);
+      } catch (e) {
+        this.error = `Connection error: ${e.message}`;
+      }
+    },
+    format(b) {
+      const lines = [`cwd=${b.cwd || this.cwd} device=${b.device_id || this.deviceId} tokens=${b.tokens_used || 0} overflow=${b.overflow_count || 0}`];
+      for (const [tier, items] of Object.entries(b.items || {})) {
+        if (!items || !items.length) continue;
+        lines.push(`\n[${tier}] (${items.length})`);
+        for (const it of items) {
+          lines.push(`- ${it.title || ""} — ${it.abstract || ""} (id=${it.id})`);
+        }
+      }
+      if (b.overflow_count) {
+        lines.push(`\n+${b.overflow_count} more items over budget — call hive_expand or hive_recall`);
+      }
+      return lines.join("\n");
+    },
+    copy() {
+      navigator.clipboard.writeText(this.rendered).then(() => {
+        // brief flash
+      });
+    },
+  };
+}
+</script>
+</body>
+</html>
