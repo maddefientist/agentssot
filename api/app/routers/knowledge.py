@@ -12,7 +12,7 @@ from ..llm.classifier import classify
 from ..llm.layer_compute import compute_layers
 from ..services.lifecycle import find_supersession_candidates, apply_supersession, soft_expire
 from ..services.contradiction import detect_contradictions
-from ..services.review_queue import list_pending as rq_list
+from ..services.review_queue import list_pending as rq_list, resolve as rq_resolve, dismiss as rq_dismiss
 from ..models import (
     KnowledgeItem, MemoryCategory, ContentLayer, ApiRole, Entity,
     ReviewQueueItem, ReviewQueueKind, ReviewQueueStatus,
@@ -624,6 +624,36 @@ async def get_review_queue(
         raise HTTPException(status_code=403, detail="admin role required")
     items = rq_list(session, namespace, kind, limit)
     return [ReviewQueueItemOut.model_validate(i, from_attributes=True) for i in items]
+
+
+@router.post("/admin/review-queue/{queue_id}/resolve")
+async def review_queue_resolve(
+    queue_id: UUID,
+    session: Session = Depends(get_session),
+    auth: AuthContext = Depends(require_api_key),
+):
+    """Accept/review-queue item. Admin-only."""
+    if auth.role != ApiRole.admin.value:
+        raise HTTPException(status_code=403, detail="admin role required")
+    item = rq_resolve(session, str(queue_id), by=auth.key_name)
+    if item is None:
+        raise HTTPException(status_code=404, detail="review queue item not found")
+    return {"status": "ok"}
+
+
+@router.post("/admin/review-queue/{queue_id}/dismiss")
+async def review_queue_dismiss(
+    queue_id: UUID,
+    session: Session = Depends(get_session),
+    auth: AuthContext = Depends(require_api_key),
+):
+    """Dismiss/review-queue item. Admin-only."""
+    if auth.role != ApiRole.admin.value:
+        raise HTTPException(status_code=403, detail="admin role required")
+    item = rq_dismiss(session, str(queue_id), by=auth.key_name)
+    if item is None:
+        raise HTTPException(status_code=404, detail="review queue item not found")
+    return {"status": "ok"}
 
 
 @router.post("/items/{item_id}/supersede")

@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hive Review</title>
+<link rel="stylesheet" href="/ui/assets/styles.css">
+<link rel="stylesheet" href="/ui/assets/tier-styles.css">
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="dark">
+<div x-data="reviewApp()" x-init="load()">
+  <header>
+    <h1>Hive Review</h1>
+    <nav>
+      <a href="/cortex">Cortex</a>
+      <a href="/review" class="active">Review</a>
+      <a href="/loadout">Loadout</a>
+      <a href="/entities">Entities</a>
+    </nav>
+  </header>
+
+  <section class="controls-bar">
+    <input type="password" placeholder="Admin API key" x-model="adminKey" @change="load()">
+    <select x-model="kind" @change="load()">
+      <option value="">All kinds</option>
+      <option value="low_conf">Low confidence</option>
+      <option value="dup">Duplicates</option>
+      <option value="supersede">Supersession</option>
+      <option value="contradiction">Contradiction</option>
+    </select>
+    <span class="count" x-text="items.length + ' items'"></span>
+  </section>
+
+  <section class="queue-list">
+    <template x-if="items.length === 0">
+      <p class="empty">No pending review items.</p>
+    </template>
+    <template x-for="it in items" :key="it.id">
+      <article class="card" :class="'kind-' + it.kind">
+        <div class="card-header">
+          <span class="kind-badge" x-text="it.kind"></span>
+          <span class="priority">p=<span x-text="it.priority"></span></span>
+          <span class="status" x-text="it.status"></span>
+        </div>
+        <p class="reason" x-text="it.reason"></p>
+        <div class="card-meta">
+          <code class="id-text" x-text="'primary: ' + (it.primary_id || '').slice(0,8) + '...'"></code>
+          <code class="id-text" x-show="it.secondary_id" x-text="'secondary: ' + (it.secondary_id || '').slice(0,8) + '...'"></code>
+        </div>
+        <div class="card-actions">
+          <button class="btn-accept" @click="resolve(it)">Accept</button>
+          <button class="btn-dismiss" @click="dismiss(it)">Dismiss</button>
+        </div>
+      </article>
+    </template>
+  </section>
+</div>
+
+<style>
+  body.dark { background: var(--bg, #0d1117); color: var(--text, #e6edf3); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 2rem; border-bottom: 1px solid var(--border, #30363d); }
+  header h1 { margin: 0; font-size: 1.2rem; }
+  nav { display: flex; gap: 1rem; }
+  nav a { color: var(--text-muted, #8b949e); text-decoration: none; font-size: 0.85rem; }
+  nav a.active, nav a:hover { color: var(--accent, #58a6ff); }
+  .controls-bar { display: flex; gap: 1rem; align-items: center; padding: 1rem 2rem; }
+  .controls-bar input { padding: 6px 12px; background: var(--surface, #161b22); border: 1px solid var(--border, #30363d); border-radius: 6px; color: var(--text); }
+  .controls-bar select { padding: 6px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; color: var(--text); }
+  .count { color: var(--text-muted); font-size: 0.85rem; }
+  .queue-list { padding: 0 2rem 2rem; display: flex; flex-direction: column; gap: 0.75rem; }
+  .empty { color: var(--text-muted); text-align: center; padding: 3rem; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+  .card-header { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 0.5rem; }
+  .kind-badge { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px; padding: 2px 8px; border-radius: 4px; background: rgba(255,255,255,0.08); }
+  .priority { font-size: 0.75rem; color: var(--text-muted); }
+  .status { font-size: 0.7rem; margin-left: auto; color: var(--text-muted); }
+  .reason { margin: 0.5rem 0; font-size: 0.85rem; line-height: 1.4; }
+  .card-meta { display: flex; gap: 1rem; margin: 0.5rem 0; }
+  .id-text { font-size: 0.7rem; color: var(--text-muted); }
+  .card-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+  .btn-accept { padding: 4px 16px; border: 1px solid var(--green); background: transparent; color: var(--green); border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
+  .btn-accept:hover { background: rgba(63,185,80,0.1); }
+  .btn-dismiss { padding: 4px 16px; border: 1px solid var(--red); background: transparent; color: var(--red); border-radius: 6px; cursor: pointer; font-size: 0.8rem; }
+  .btn-dismiss:hover { background: rgba(248,81,73,0.1); }
+</style>
+
+<script>
+function reviewApp() {
+  return {
+    adminKey: localStorage.getItem("hiveAdminKey") || "",
+    kind: "",
+    items: [],
+    async load() {
+      if (!this.adminKey) { this.items = []; return; }
+      localStorage.setItem("hiveAdminKey", this.adminKey);
+      const url = new URL("/api/v1/knowledge/admin/review-queue", location.origin);
+      if (this.kind) url.searchParams.set("kind", this.kind);
+      url.searchParams.set("limit", "100");
+      try {
+        const r = await fetch(url, { headers: { "X-Api-Key": this.adminKey } });
+        this.items = r.ok ? await r.json() : [];
+      } catch { this.items = []; }
+    },
+    async resolve(it) {
+      try {
+        await fetch(`/api/v1/knowledge/admin/review-queue/${it.id}/resolve`,
+          { method: "POST", headers: { "X-Api-Key": this.adminKey } });
+      } catch {}
+      this.load();
+    },
+    async dismiss(it) {
+      try {
+        await fetch(`/api/v1/knowledge/admin/review-queue/${it.id}/dismiss`,
+          { method: "POST", headers: { "X-Api-Key": this.adminKey } });
+      } catch {}
+      this.load();
+    },
+  };
+}
+</script>
+</body>
+</html>

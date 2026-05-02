@@ -30,6 +30,9 @@
 
   .hud-title { font-size: 14px; letter-spacing: 2px; color: #8b5cf6; text-transform: uppercase; }
   .hud-subtitle { font-size: 11px; color: #555; margin-top: 4px; }
+  .hud-nav { margin-top: 8px; display: flex; gap: 12px; }
+  .hud-nav a { color: #666; text-decoration: none; font-size: 10px; letter-spacing: 1px; text-transform: uppercase; transition: color 0.2s; }
+  .hud-nav a:hover { color: #8b5cf6; }
 
   .hud-stats { display: flex; gap: 24px; font-size: 12px; }
   .stat { text-align: center; }
@@ -257,6 +260,12 @@
   <div>
     <div class="hud-title">Hive Cortex</div>
     <div class="hud-subtitle">Neural Memory Map</div>
+    <nav class="hud-nav">
+      <a href="/review">Review</a>
+      <a href="/loadout">Loadout</a>
+      <a href="/entities">Entities</a>
+      <a href="/agent-guide">Guide</a>
+    </nav>
   </div>
   <div class="hud-stats">
     <div class="stat stat-principles"><div class="stat-value" id="s-prin">0</div><div class="stat-label">Principles</div></div>

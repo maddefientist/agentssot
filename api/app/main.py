@@ -178,6 +178,11 @@ def ui_cortex():
     return RedirectResponse(url="/")
 
 
+@app.get("/review", include_in_schema=False)
+def review_page():
+    return FileResponse(UI_DIR / "review.html")
+
+
 @app.get("/cortex/data", include_in_schema=False)
 def cortex_data(
     namespace: str = Query(default="claude-shared"),
