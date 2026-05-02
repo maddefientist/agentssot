@@ -186,7 +186,7 @@ async def run(args) -> Counter:
     return results
 
 
-def sweep_entities(session) -> int:
+def sweep_entities(session, default_namespace: str = "claude-shared") -> int:
     """Resolve entity_mentions strings to Entity ids; insert missing entities.
 
     After classify_one stores raw mention strings in entity_refs (e.g.
@@ -213,7 +213,7 @@ def sweep_entities(session) -> int:
             if slug in by_slug:
                 new_refs.append(by_slug[slug])
             else:
-                ent = Entity(slug=slug, type=EntityType.other, name=slug)
+                ent = Entity(namespace=default_namespace, slug=slug, type=EntityType.other, name=slug)
                 session.add(ent)
                 session.flush()
                 by_slug[slug] = str(ent.id)
@@ -426,7 +426,7 @@ def main():
 
     print("\n[backfill] post-classification sweeps")
     with SessionLocal() as session:
-        promoted = sweep_entities(session)
+        promoted = sweep_entities(session, args.namespace or "claude-shared")
         print(f"  entities promoted: {promoted}")
         sup = sweep_supersession(session, args.namespace)
         print(f"  supersession candidates: {sup}")
