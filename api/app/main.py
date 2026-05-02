@@ -25,6 +25,7 @@ from .startup import initialize_system
 from .cortex import router as cortex_router
 from .sync import router as sync_router
 from .routers import knowledge_router
+from .routers.agent_guide import router as agent_guide_router
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -91,6 +92,7 @@ if UI_DIR.exists():
 app.include_router(cortex_router)
 app.include_router(sync_router)
 app.include_router(knowledge_router, prefix="/api/v1")
+app.include_router(agent_guide_router)
 
 
 @app.middleware("http")

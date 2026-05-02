@@ -1,0 +1,57 @@
+# hari-hive Agent Guide
+
+You are connected as **{{ key_name }}** (role: `{{ role }}`) on device **{{ device_id }}**.
+Service: `{{ api_base }}` — version `{{ version }}`.
+Accessible namespaces: {{ namespaces | join(", ") }}.
+
+## The 6 tiers
+
+| Tier | Use for | Example |
+|---|---|---|
+| command | Imperative one-liner you'd run | `ssh hari` |
+| rule | "always/never X" guardrail | "Never push to main without review" |
+| skill | "when X, do Y" recipe | "When Ollama OOMs, set OLLAMA_EMBED_CPU_ONLY=true" |
+| entity | Canonical noun (host/service/person) | `unraid (192.168.1.116)` |
+| decision | "we chose X because Y" | "Use nomic-embed-text over qwen3-embedding for VRAM" |
+| episodic | Session log / reflection | Auto-extracted at session end |
+
+## How to recall
+
+```
+hive_recall("ssh unraid", bucketed=true, tiers=["command","rule","skill","entity"])
+```
+
+`bucketed=true` returns one list per tier (default starting Plan 2 Phase 6).
+`hive_expand(item_id, layer="summary")` if the abstract isn't enough.
+
+## How to write
+
+```
+hive_teach(trigger="...", action="...", success_hint="...")
+hive_ingest(content="...", tags=["..."])
+```
+
+Both auto-classify via gemma4:31b. Items below conf=0.6 land in the review queue.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| 401 on any call | Missing/expired key | Read `~/.claude/agentssot/local/agent.json` |
+| 403 on admin op | Writer key reaching admin endpoint | Need admin.json on this device |
+| Empty recall | Wrong namespace | Pass `namespace="claude-shared"` (default) |
+| Wrong tier returned | Item misclassified | `hive_feedback(signal="wrong", query=...)` |
+| Loadout missing | SessionStart hook timed out | Call `hive_loadout()` mid-session |
+
+## Connectivity
+
+- Service host: `hari` (192.168.1.225) — LAN-only, no public DNS
+- Health: `GET {{ api_base }}/health`
+- SSH: `ssh hari` from any enrolled device
+- Web UI: `{{ api_base }}/cortex` (3D map), `/review` (queue), `/loadout` (debug)
+
+## Where to look for human help
+
+- Operator: MadDefientist (mohsenarthur@gmail.com)
+- Source of truth: `/opt/agentssot/` on hari
+- Slack/issues: not used for this project
