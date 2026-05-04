@@ -122,6 +122,7 @@ class KnowledgeItemIn(BaseModel):
     memory_type: Literal[
         "fact", "decision", "preference", "skill",
         "reference", "correction", "session_summary",
+        "episodic", "entity", "rule", "command",
     ] | None = None
     # Extraction provenance (optional)
     extraction_source: str | None = None
@@ -182,6 +183,7 @@ class RecallRequest(BaseModel):
     memory_type: Literal[
         "fact", "decision", "preference", "skill",
         "reference", "correction", "session_summary",
+        "episodic", "entity", "rule", "command",
     ] | None = None
     max_staleness: float | None = None  # exclude items with staleness_score above this
 
@@ -203,6 +205,7 @@ class RecallItem(BaseModel):
     memory_type: Literal[
         "fact", "decision", "preference", "skill",
         "reference", "correction", "session_summary",
+        "episodic", "entity", "rule", "command",
     ] | None = None
     last_verified_at: datetime | None = None
     staleness_score: float | None = None
