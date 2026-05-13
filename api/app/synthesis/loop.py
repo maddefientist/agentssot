@@ -326,7 +326,12 @@ async def synthesis_loop(app) -> None:
 
             for ns in namespaces:
                 try:
-                    stats = _run_synthesis_for_namespace(
+                    # Synthesis is CPU/IO-heavy and uses synchronous DB/LLM clients.
+                    # Run it in a worker thread so the FastAPI event loop can keep
+                    # serving health checks and recall/ingest requests while the
+                    # daily background job is processing namespaces.
+                    stats = await asyncio.to_thread(
+                        _run_synthesis_for_namespace,
                         namespace=ns,
                         settings=settings,
                         llm_provider=llm_provider,
