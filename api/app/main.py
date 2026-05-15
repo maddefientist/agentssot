@@ -55,6 +55,43 @@ def _load_nav_partial() -> str:
     return _NAV_CACHE["html"]
 
 
+def _asset_version() -> str:
+    """Stamp derived from the newest mtime among the shared UI assets so any
+    edit invalidates the browser cache via a query string on the asset URL."""
+    candidates = ["styles.css", "tier-styles.css", "cortex-shell.js", "_nav.html"]
+    latest = 0.0
+    for name in candidates:
+        try:
+            m = (UI_DIR / name).stat().st_mtime
+            if m > latest:
+                latest = m
+        except FileNotFoundError:
+            continue
+    return str(int(latest))
+
+
+def _bust(html: str, version: str) -> str:
+    """Append/refresh ?v=<version> on the shared cortex asset URLs."""
+    targets = [
+        "/ui/assets/styles.css",
+        "/ui/assets/tier-styles.css",
+        "/ui/assets/cortex-shell.js",
+    ]
+    for url in targets:
+        # if already has ?v=, replace the value; else append fresh
+        marker_with_q = url + "?v="
+        if marker_with_q in html:
+            import re
+            html = re.sub(
+                re.escape(url) + r"\?v=\d+",
+                f"{url}?v={version}",
+                html,
+            )
+        else:
+            html = html.replace(url, f"{url}?v={version}")
+    return html
+
+
 def render_with_nav(page_filename: str, active: str) -> HTMLResponse:
     page = (UI_DIR / page_filename).read_text()
     nav = _load_nav_partial()
@@ -65,6 +102,7 @@ def render_with_nav(page_filename: str, active: str) -> HTMLResponse:
             1,
         )
     rendered = page.replace("<!-- cortex-nav -->", nav, 1)
+    rendered = _bust(rendered, _asset_version())
     return HTMLResponse(rendered)
 
 
