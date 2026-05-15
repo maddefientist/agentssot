@@ -135,3 +135,7 @@ def require_api_key(
 
     _auth_cache_set(x_api_key, auth)
     return auth
+
+
+def clear_auth_cache() -> None:
+    _auth_cache.clear()

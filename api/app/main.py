@@ -18,8 +18,8 @@ from .embeddings import build_embedding_provider
 from .llm import LLMProviderError, build_llm_provider
 from .reranker import build_reranker_provider
 from .logging_config import configure_logging
-from .models import ApiRole
-from .security import AuthContext, ensure_namespace_access, require_admin, require_api_key
+from .models import ApiKey, ApiRole
+from .security import AuthContext, clear_auth_cache, ensure_namespace_access, require_admin, require_api_key
 from .settings import get_settings
 from .startup import initialize_system
 from .cortex import router as cortex_router
@@ -771,6 +771,17 @@ def admin_create_namespace(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Namespace name is required")
 
     namespace = crud.create_namespace(session, name)
+
+    from uuid import UUID as _UUID
+    from sqlalchemy import text as _text
+    if auth.key_id:
+        session.execute(
+            _text("UPDATE api_keys SET namespaces = array_append(namespaces, :ns) WHERE id = :kid AND :ns != ALL(namespaces) AND '*' != ALL(namespaces)"),
+            {"ns": name, "kid": auth.key_id},
+        )
+        session.commit()
+        clear_auth_cache()
+
     return schemas.NamespaceCreateResponse(name=namespace.name, created_at=namespace.created_at)
 
 
