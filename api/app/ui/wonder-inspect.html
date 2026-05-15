@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wonder Inspector</title>
+<link rel="stylesheet" href="/ui/assets/styles.css">
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  .insp-wrap { padding: 1rem; max-width: 920px; margin: 0 auto; }
+  .insp-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-bottom: 1rem;
+  }
+  .insp-title { font-size: 1.2rem; color: var(--text); }
+  .insp-sub { color: var(--text-muted); font-size: 0.8rem; }
+  .insp-section {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.9rem 1.1rem;
+    margin-bottom: 0.8rem;
+  }
+  .insp-section h3 {
+    margin: 0 0 0.5rem 0;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .insp-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.3rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+  }
+  .insp-row:last-child { border-bottom: none; }
+  .insp-row .k { color: var(--text-muted); }
+  .insp-row .v { color: var(--text); font-variant-numeric: tabular-nums; }
+  .insp-row .v.ok { color: #88e088; }
+  .insp-row .v.warn { color: #e6dc8a; }
+  .insp-row .v.err { color: #ff8888; }
+  .insp-pre {
+    background: var(--surface-2);
+    color: var(--text);
+    padding: 0.6rem 0.8rem;
+    border-radius: var(--radius);
+    font-size: 0.82rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    margin: 0.4rem 0;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  .insp-card {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.7rem 0.9rem;
+    margin: 0.4rem 0;
+  }
+  .insp-card.doctrine { border-left: 3px solid #ffc857; }
+  .insp-card .ttl { color: var(--text); font-weight: 600; font-size: 0.9rem; }
+  .insp-card .meta { color: var(--text-muted); font-size: 0.75rem; margin-top: 0.2rem; }
+  .insp-card .body { color: var(--text); font-size: 0.82rem; margin-top: 0.3rem; }
+  .insp-card a { color: var(--accent); text-decoration: none; font-size: 0.78rem; }
+  .insp-empty { color: var(--text-muted); font-size: 0.85rem; padding: 0.4rem 0; }
+  .insp-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+  .insp-tags .tag {
+    background: var(--surface-2);
+    color: var(--text-muted);
+    padding: 0.1rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.7rem;
+  }
+  .insp-stage-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.5rem;
+    margin-top: 0.4rem;
+  }
+  .insp-stage {
+    background: var(--surface-2);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.7rem;
+    text-align: center;
+  }
+  .insp-stage .label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .insp-stage .val { color: var(--text); font-size: 0.9rem; font-weight: 500; margin-top: 0.2rem; }
+  .insp-stage.ok .val { color: #88e088; }
+  .insp-stage.skip .val { color: var(--text-muted); }
+  .err-banner {
+    background: #3a1a1a;
+    color: #ff8888;
+    border: 1px solid #6a2f2f;
+    border-radius: var(--radius);
+    padding: 0.8rem;
+    text-align: center;
+  }
+</style>
+</head>
+<body class="dark">
+<!-- cortex-nav -->
+
+<div x-data="inspector()" x-init="init()">
+  <div class="insp-wrap">
+    <div x-show="loading" class="insp-empty">Loading lineage...</div>
+    <div x-show="error" class="err-banner" x-text="error"></div>
+
+    <template x-if="data && data.ki">
+      <div>
+        <div class="insp-head">
+          <a href="/wonder" style="color: var(--text-muted); font-size: 0.78rem; text-decoration: none;">&larr; back to wonder queue</a>
+          <div class="insp-title" x-text="data.ki.title"></div>
+          <div class="insp-sub">
+            <span x-text="data.ki.memory_type || '(unclassified)'"></span>
+            · <span x-text="data.ki.namespace"></span>
+            · <span x-text="formatDate(data.ki.created_at)"></span>
+            · status: <span x-text="data.ki.status"></span>
+          </div>
+        </div>
+
+        <!-- Ingest receipt -->
+        <section class="insp-section">
+          <h3>Ingest receipt</h3>
+          <div class="insp-stage-grid">
+            <div class="insp-stage" :class="data.ingest_receipt.source !== 'unknown' ? 'ok' : 'skip'">
+              <div class="label">Source</div>
+              <div class="val" x-text="data.ingest_receipt.source"></div>
+            </div>
+            <div class="insp-stage" :class="data.ingest_receipt.classified_as !== '(unclassified)' ? 'ok' : 'skip'">
+              <div class="label">Classified</div>
+              <div class="val" x-text="data.ingest_receipt.classified_as"></div>
+            </div>
+            <div class="insp-stage" :class="data.ingest_receipt.embedding_generated ? 'ok' : 'skip'">
+              <div class="label">Embedding</div>
+              <div class="val" x-text="data.ingest_receipt.embedding_generated ? 'present' : 'none'"></div>
+            </div>
+            <div class="insp-stage" :class="data.ingest_receipt.abstract_generated ? 'ok' : 'skip'">
+              <div class="label">Abstract</div>
+              <div class="val" x-text="data.ingest_receipt.abstract_generated ? 'L0' : '—'"></div>
+            </div>
+            <div class="insp-stage" :class="data.ingest_receipt.summary_generated ? 'ok' : 'skip'">
+              <div class="label">Summary</div>
+              <div class="val" x-text="data.ingest_receipt.summary_generated ? 'L1' : '—'"></div>
+            </div>
+            <div class="insp-stage" :class="data.ingest_receipt.verbatim_mode ? 'ok' : 'skip'">
+              <div class="label">Verbatim</div>
+              <div class="val" x-text="data.ingest_receipt.verbatim_mode ? 'yes' : 'no'"></div>
+            </div>
+          </div>
+          <div x-show="data.ingest_receipt.initial_tags.length > 0" style="margin-top: 0.6rem;">
+            <div class="insp-tags">
+              <template x-for="t in data.ingest_receipt.initial_tags" :key="t">
+                <span class="tag" x-text="t"></span>
+              </template>
+            </div>
+          </div>
+        </section>
+
+        <!-- Content -->
+        <section class="insp-section">
+          <h3>Content</h3>
+          <div x-show="data.ki.summary">
+            <div style="color: var(--text-muted); font-size: 0.7rem; margin-bottom: 0.2rem;">SUMMARY (L1)</div>
+            <div class="insp-pre" x-text="data.ki.summary"></div>
+          </div>
+          <div style="color: var(--text-muted); font-size: 0.7rem; margin: 0.4rem 0 0.2rem;">FULL</div>
+          <div class="insp-pre" x-text="data.ki.content"></div>
+        </section>
+
+        <!-- Origin -->
+        <section class="insp-section" x-show="data.origin_concept">
+          <h3>Promoted from concept</h3>
+          <template x-if="data.origin_concept">
+            <div class="insp-card">
+              <div class="ttl" x-text="data.origin_concept.title"></div>
+              <div class="meta">
+                <span x-text="data.origin_concept.type"></span>
+                · conf <span x-text="data.origin_concept.confidence.toFixed(2)"></span>
+                · v<span x-text="data.origin_concept.version"></span>
+                · <span x-text="data.origin_concept.evidence_count"></span> evidence KIs
+              </div>
+              <div class="body" x-text="data.origin_concept.content"></div>
+            </div>
+          </template>
+        </section>
+
+        <!-- Concepts that used this KI -->
+        <section class="insp-section">
+          <h3>Used as evidence in <span x-text="data.derived_concepts.length"></span> concept(s)</h3>
+          <template x-if="data.derived_concepts.length === 0">
+            <div class="insp-empty">No concept has cited this item as evidence yet. Either it's too new for the synthesis loop to have clustered it, or it ended up in a singleton cluster that didn't propose a concept.</div>
+          </template>
+          <template x-for="c in data.derived_concepts" :key="c.id">
+            <div class="insp-card">
+              <div class="ttl" x-text="c.title"></div>
+              <div class="meta">
+                <span x-text="c.type"></span>
+                · conf <span x-text="c.confidence.toFixed(2)"></span>
+                · v<span x-text="c.version"></span>
+                · <span x-text="c.evidence_count"></span> evidence KIs
+                · agents: <span x-text="(c.confirming_agents || []).join(', ') || '—'"></span>
+              </div>
+              <div class="body" x-text="(c.content || '').slice(0, 280) + ((c.content || '').length > 280 ? '…' : '')"></div>
+            </div>
+          </template>
+        </section>
+
+        <!-- Doctrine derived -->
+        <section class="insp-section">
+          <h3>Promoted to doctrine: <span x-text="data.derived_doctrine.length"></span> item(s)</h3>
+          <template x-if="data.derived_doctrine.length === 0">
+            <div class="insp-empty">None of the concepts above crossed the 0.8 doctrine-promotion threshold. This item is upstream of synthesis but hasn't yet shaped a loaded principle.</div>
+          </template>
+          <template x-for="d in data.derived_doctrine" :key="d.id">
+            <div class="insp-card doctrine">
+              <div class="ttl" x-text="d.title"></div>
+              <div class="meta">
+                doctrine · prio <span x-text="d.loadout_priority"></span>
+                · conf <span x-text="d.confidence.toFixed(2)"></span>
+                · recalls <span x-text="d.recall_count"></span>
+                · <a :href="'/wonder/inspect/' + d.id">inspect →</a>
+              </div>
+              <div class="body" x-text="(d.summary || d.content || '').slice(0, 280) + ((d.content || '').length > 280 ? '…' : '')"></div>
+            </div>
+          </template>
+        </section>
+
+        <!-- Recall + feedback stats -->
+        <section class="insp-section">
+          <h3>Recall &amp; feedback</h3>
+          <div class="insp-row">
+            <span class="k">Recall count</span>
+            <span class="v" x-text="data.ki.recall_count"></span>
+          </div>
+          <div class="insp-row">
+            <span class="k">Last recalled</span>
+            <span class="v" x-text="data.ki.last_recalled_at ? formatDate(data.ki.last_recalled_at) : 'never'"></span>
+          </div>
+          <div class="insp-row">
+            <span class="k">Positive feedback</span>
+            <span class="v ok" x-text="'+' + data.ki.positive_feedback"></span>
+          </div>
+          <div class="insp-row">
+            <span class="k">Negative feedback</span>
+            <span class="v" :class="data.ki.negative_feedback > 0 ? 'err' : ''" x-text="'−' + data.ki.negative_feedback"></span>
+          </div>
+          <div class="insp-row">
+            <span class="k">Confidence / Strength</span>
+            <span class="v" x-text="data.ki.confidence.toFixed(2) + ' / ' + data.ki.strength.toFixed(2)"></span>
+          </div>
+          <div class="insp-row">
+            <span class="k">Loadout priority</span>
+            <span class="v" x-text="data.ki.loadout_priority"></span>
+          </div>
+        </section>
+
+        <!-- Supersession -->
+        <section class="insp-section" x-show="data.superseded_by_ki">
+          <h3>Superseded by</h3>
+          <template x-if="data.superseded_by_ki">
+            <div class="insp-card">
+              <div class="ttl" x-text="data.superseded_by_ki.title"></div>
+              <div class="meta">
+                <span x-text="data.superseded_by_ki.memory_type"></span>
+                · <a :href="'/wonder/inspect/' + data.superseded_by_ki.id">inspect →</a>
+              </div>
+            </div>
+          </template>
+        </section>
+      </div>
+    </template>
+  </div>
+</div>
+
+<script>
+function inspector() {
+  return {
+    kiId: '',
+    data: null,
+    loading: false,
+    error: null,
+
+    async init() {
+      // Path is /wonder/inspect/<uuid>
+      const parts = location.pathname.split('/').filter(Boolean);
+      this.kiId = parts[parts.length - 1] || '';
+      if (!this.kiId) {
+        this.error = 'No KI id in URL.';
+        return;
+      }
+      setTimeout(() => this.load(), 100); // let shell migrate key first
+    },
+
+    async load() {
+      if (!window.cortexAuth || !window.cortexAuth.getKey()) {
+        this.error = 'No API key set. Click the connection pill in the header above.';
+        return;
+      }
+      this.loading = true;
+      this.error = null;
+      try {
+        const r = await fetch(`/wonder/lineage/${this.kiId}`, {
+          headers: { 'X-API-Key': window.cortexAuth.getKey() }
+        });
+        if (r.status === 401) {
+          this.error = 'Auth failed — replace your API key via the header pill.';
+          window.cortexAuth.showError('Auth failed loading lineage.');
+          return;
+        }
+        if (r.status === 404) {
+          this.error = 'Knowledge item not found in this namespace, or you lack access.';
+          return;
+        }
+        if (!r.ok) {
+          this.error = `Failed to load lineage (HTTP ${r.status}).`;
+          return;
+        }
+        this.data = await r.json();
+      } catch (e) {
+        this.error = 'Network error: ' + (e.message || e);
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    formatDate(iso) {
+      if (!iso) return '';
+      try {
+        const d = new Date(iso);
+        return d.toLocaleString();
+      } catch { return iso; }
+    }
+  };
+}
+</script>
+</body>
+</html>

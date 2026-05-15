@@ -31,6 +31,7 @@ from .routers.signals import router as signals_router
 from .routers.doctrine import router as doctrine_router
 from .routers.adherence import router as adherence_router
 from .routers.review import router as review_router
+from .routers.wonder import router as wonder_router
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -143,6 +144,7 @@ app.include_router(signals_router)
 app.include_router(doctrine_router)
 app.include_router(adherence_router)
 app.include_router(review_router)
+app.include_router(wonder_router)
 
 
 @app.middleware("http")
@@ -309,6 +311,11 @@ def decay_page():
 @app.get("/wonder", include_in_schema=False)
 def wonder_page():
     return render_with_nav("wonder.html", active="wonder")
+
+
+@app.get("/wonder/inspect/{ki_id}", include_in_schema=False)
+def wonder_inspect_page(ki_id: str):
+    return render_with_nav("wonder-inspect.html", active="wonder")
 
 
 @app.get("/signals", include_in_schema=False)

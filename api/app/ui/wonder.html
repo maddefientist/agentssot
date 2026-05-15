@@ -30,14 +30,16 @@
         </div>
         <div class="lane-items">
           <template x-for="item in lane.items" :key="item.id">
-            <div class="wonder-card">
-              <div class="card-trigger" x-text="extractTrigger(item.content)"></div>
-              <div class="card-preview" x-text="extractBody(item.content)"></div>
-              <div class="card-meta">
-                <span x-text="item.created_at ? item.created_at.slice(0,10) : ''"></span>
-                <span class="ns-badge" x-text="item.namespace"></span>
+            <a class="wonder-card-link" :href="'/wonder/inspect/' + item.id">
+              <div class="wonder-card">
+                <div class="card-trigger" x-text="extractTrigger(item.content)"></div>
+                <div class="card-preview" x-text="extractBody(item.content)"></div>
+                <div class="card-meta">
+                  <span x-text="item.created_at ? item.created_at.slice(0,10) : ''"></span>
+                  <span class="ns-badge" x-text="item.namespace"></span>
+                </div>
               </div>
-            </div>
+            </a>
           </template>
           <div x-show="lane.items.length === 0" class="empty-lane">empty</div>
         </div>
@@ -72,6 +74,10 @@
   .card-meta { display: flex; justify-content: space-between; font-size: 0.65rem; color: #8b949e; }
   .ns-badge { background: #21262d; padding: 1px 6px; border-radius: 8px; }
   .empty-lane { text-align: center; color: #30363d; font-size: 0.75rem; padding: 1rem 0; }
+
+  .wonder-card-link { display: block; text-decoration: none; color: inherit; }
+  .wonder-card-link:hover .wonder-card { border-color: var(--accent); }
+
 </style>
 
 <script>
