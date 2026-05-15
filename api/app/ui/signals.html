@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cortex Signals</title>
+<link rel="stylesheet" href="/ui/assets/styles.css">
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  .signal-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.9rem 1rem;
+    margin-bottom: 0.7rem;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 0.8rem;
+    align-items: start;
+  }
+  .signal-type {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 600;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+  .signal-type.manual  { background: #2b3a5a; color: #c9d9ff; }
+  .signal-type.wonder  { background: #4a3a5a; color: #e9d9ff; }
+  .signal-type.error   { background: #5a2b2b; color: #ffd9d9; }
+  .signal-type.pattern { background: #2b5a3a; color: #d9ffe9; }
+  .signal-body h3 { margin: 0 0 0.25rem 0; font-size: 0.95rem; color: var(--text); }
+  .signal-meta { font-size: 0.75rem; color: var(--text-muted); }
+  .signal-content { margin-top: 0.4rem; font-size: 0.85rem; color: var(--text); white-space: pre-wrap; }
+  .signal-actions { display: flex; flex-direction: column; gap: 0.3rem; }
+  .signal-actions button {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 0.25rem 0.6rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 0.75rem;
+    transition: all 120ms;
+  }
+  .signal-actions button:hover { color: var(--text); border-color: var(--accent); }
+  .signal-actions button.danger:hover { color: #ff8888; border-color: #ff8888; }
+  .filter-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 0.5rem 0 1rem; }
+  .filter-chip {
+    padding: 0.25rem 0.7rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 0.75rem;
+    user-select: none;
+  }
+  .filter-chip.on { background: var(--accent-dim); color: var(--text); border-color: var(--accent); }
+  .manual-form { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .manual-form input, .manual-form textarea {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.4rem 0.6rem;
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: 0.85rem;
+  }
+  .manual-form input { flex: 1 1 200px; }
+  .manual-form textarea { flex: 1 1 100%; min-height: 60px; resize: vertical; }
+  .empty-state { padding: 2rem; text-align: center; color: var(--text-muted); }
+</style>
+</head>
+<body class="dark">
+<div x-data="signalsApp()" x-init="load()">
+  <header>
+    <h1>Cortex Signals</h1>
+    <!-- cortex-nav -->
+  </header>
+
+  <section class="controls-bar">
+    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()">
+    <input type="text" placeholder="Namespace" x-model="namespace" @change="load()">
+    <button @click="load()">Refresh</button>
+    <span class="count" x-text="items.length + ' signals'"></span>
+  </section>
+
+  <section style="padding: 0 1rem;">
+    <div class="filter-chips">
+      <template x-for="t in allTypes" :key="t">
+        <span class="filter-chip" :class="{on: enabled[t]}" @click="toggle(t)" x-text="t"></span>
+      </template>
+    </div>
+
+    <details style="margin-bottom: 1rem;">
+      <summary style="cursor: pointer; color: var(--text-muted); font-size: 0.85rem; padding: 0.4rem 0;">+ Add manual lead</summary>
+      <div class="manual-form">
+        <input type="text" placeholder="Title" x-model="newTitle">
+        <textarea placeholder="Note / context" x-model="newNote"></textarea>
+        <button @click="submitManual()" :disabled="!newTitle || !newNote">Add Lead</button>
+      </div>
+    </details>
+
+    <div x-show="loading" class="empty-state">Loading...</div>
+    <div x-show="!loading && items.length === 0" class="empty-state">No signals. Quiet day.</div>
+
+    <template x-for="item in filteredItems" :key="item.id + ':' + item.type">
+      <div class="signal-card">
+        <span class="signal-type" :class="item.type" x-text="item.type"></span>
+        <div class="signal-body">
+          <h3 x-text="item.title"></h3>
+          <div class="signal-meta">
+            <span x-text="formatAge(item.age_seconds)"></span>
+            · <span x-text="item.source"></span>
+            · <span x-text="item.namespace"></span>
+          </div>
+          <div class="signal-content" x-show="item.payload && item.payload.content" x-text="item.payload && item.payload.content"></div>
+        </div>
+        <div class="signal-actions">
+          <template x-for="a in item.actions" :key="a">
+            <button @click="doAction(item, a)" :class="{danger: a === 'dismiss'}" x-text="a"></button>
+          </template>
+        </div>
+      </div>
+    </template>
+  </section>
+</div>
+
+<script>
+function signalsApp() {
+  return {
+    apiKey: localStorage.getItem('apiKey') || '',
+    namespace: localStorage.getItem('signalsNs') || 'claude-shared',
+    items: [],
+    loading: false,
+    newTitle: '',
+    newNote: '',
+    allTypes: ['manual', 'wonder', 'error', 'pattern'],
+    enabled: { manual: true, wonder: true, error: true, pattern: true },
+
+    get filteredItems() {
+      return this.items.filter(i => this.enabled[i.type]);
+    },
+
+    toggle(t) { this.enabled[t] = !this.enabled[t]; },
+
+    formatAge(s) {
+      if (s < 60) return s + 's ago';
+      if (s < 3600) return Math.floor(s / 60) + 'm ago';
+      if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+      return Math.floor(s / 86400) + 'd ago';
+    },
+
+    async load() {
+      if (!this.apiKey) return;
+      localStorage.setItem('apiKey', this.apiKey);
+      localStorage.setItem('signalsNs', this.namespace);
+      this.loading = true;
+      try {
+        const r = await fetch(`/signals/feed?namespace=${encodeURIComponent(this.namespace)}&limit=100`, {
+          headers: { 'X-API-Key': this.apiKey }
+        });
+        if (!r.ok) {
+          this.items = [];
+          console.error('signals load failed', r.status);
+          return;
+        }
+        const j = await r.json();
+        this.items = j.items || [];
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async submitManual() {
+      if (!this.newTitle || !this.newNote) return;
+      const r = await fetch('/signals/manual', {
+        method: 'POST',
+        headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: this.newTitle, note: this.newNote, namespace: this.namespace })
+      });
+      if (r.ok) {
+        this.newTitle = '';
+        this.newNote = '';
+        await this.load();
+      } else {
+        alert('Add failed: ' + r.status);
+      }
+    },
+
+    async doAction(item, action) {
+      const kind = item.type === 'pattern' ? 'concept' : 'knowledge';
+      const r = await fetch(`/signals/${item.id}/action`, {
+        method: 'POST',
+        headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, kind })
+      });
+      if (r.ok) {
+        await this.load();
+      } else {
+        const err = await r.text();
+        alert(`Action failed: ${r.status} ${err}`);
+      }
+    }
+  };
+}
+</script>
+</body>
+</html>

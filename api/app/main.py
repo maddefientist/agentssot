@@ -27,6 +27,7 @@ from .sync import router as sync_router
 from .routers import knowledge_router
 from .routers.agent_guide import router as agent_guide_router
 from .routers.entities import router as entities_router
+from .routers.signals import router as signals_router
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -135,6 +136,7 @@ app.include_router(sync_router)
 app.include_router(knowledge_router, prefix="/api/v1")
 app.include_router(agent_guide_router)
 app.include_router(entities_router)
+app.include_router(signals_router)
 
 
 @app.middleware("http")
@@ -295,6 +297,11 @@ def decay_page():
 @app.get("/wonder", include_in_schema=False)
 def wonder_page():
     return render_with_nav("wonder.html", active="wonder")
+
+
+@app.get("/signals", include_in_schema=False)
+def signals_page():
+    return render_with_nav("signals.html", active="signals")
 
 
 
