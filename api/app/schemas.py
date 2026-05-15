@@ -34,6 +34,12 @@ class TieredKnowledgeCreate(BaseModel):
         False,
         description="Suppress all L0/L1 synthesis for this item. Wins over generate_summaries.",
     )
+    # Loadout-routing fields: callers may set these explicitly; the ingest
+    # handler passes them through to the model. Classifier-derived values
+    # win when not set by the caller.
+    loadout_priority: int = Field(0, description="Higher = included earlier in token-budget loadout packing")
+    cwd_hints: list[str] = Field(default_factory=list, description="Glob/prefix paths where this item is relevant")
+    entity_refs: list[str] = Field(default_factory=list, description="Entity UUIDs (as strings) this item references")
 
 
 class TieredKnowledgeResponse(BaseModel):

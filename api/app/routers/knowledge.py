@@ -180,10 +180,20 @@ async def ingest_tiered(
         embedding=embedding,
         verbatim=data.verbatim,
         confidence=float(classifier_out.get("confidence", 1.0)) if classifier_out else 1.0,
-        cwd_hints=(list(classifier_out.get("cwd_hints", []) or [])[:50]) if classifier_out else [],
+        # cwd_hints: caller-supplied wins; fall back to classifier output.
+        cwd_hints=(
+            list(data.cwd_hints)[:50]
+            if data.cwd_hints
+            else (list(classifier_out.get("cwd_hints", []) or [])[:50] if classifier_out else [])
+        ),
         device_hints=(list(classifier_out.get("device_hints", []) or [])[:50]) if classifier_out else [],
         last_classified_at=datetime.now(timezone.utc) if classifier_out else None,
+        # loadout_priority: caller-supplied value overrides the default 0.
+        loadout_priority=data.loadout_priority,
     )
+
+    # entity_refs: merge caller-supplied refs with classifier-extracted refs after flush.
+    _caller_entity_refs = list(data.entity_refs) if data.entity_refs else []
 
     session.add(ki)
     session.flush()
@@ -206,8 +216,11 @@ async def ingest_tiered(
     new_entity_refs: list[str] = []
     if classifier_out:
         new_entity_refs = list(classifier_out.get("entity_mentions") or [])
-    if new_entity_refs:
-        ki.entity_refs = new_entity_refs
+    # Merge caller-supplied entity_refs with classifier-extracted ones (deduplicated).
+    merged_entity_refs = list(dict.fromkeys(_caller_entity_refs + new_entity_refs))
+    if merged_entity_refs:
+        ki.entity_refs = merged_entity_refs
+        new_entity_refs = merged_entity_refs  # use merged set for supersession scan
         session.commit()
 
     if ki.memory_type and new_entity_refs:
