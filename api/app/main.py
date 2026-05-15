@@ -181,6 +181,16 @@ async def access_log_middleware(request: Request, call_next):
     return response
 
 
+@app.get("/whoami")
+def whoami(auth: AuthContext = Depends(require_api_key)):
+    return {
+        "key_id": auth.key_id,
+        "key_name": auth.key_name,
+        "role": auth.role,
+        "namespaces": auth.namespaces,
+    }
+
+
 @app.get("/health")
 def health() -> dict:
     return {
@@ -251,21 +261,17 @@ def doctor(session: Session = Depends(get_session)) -> dict:
 
 @app.get("/", include_in_schema=False)
 def ui_home():
-    index_file = UI_DIR / "index.html"
-    if index_file.exists():
-        return FileResponse(index_file)
+    if (UI_DIR / "index.html").exists():
+        return render_with_nav("index.html", active="home")
     return RedirectResponse(url="/docs")
 
 
 @app.get("/cortex", include_in_schema=False)
 def ui_cortex():
-    cortex_file = UI_DIR / "cortex-v2.html"
-    if cortex_file.exists():
-        return FileResponse(cortex_file)
-    # fallback to original
-    cortex_file = UI_DIR / "cortex.html"
-    if cortex_file.exists():
-        return FileResponse(cortex_file)
+    if (UI_DIR / "cortex-v2.html").exists():
+        return render_with_nav("cortex-v2.html", active="cortex")
+    if (UI_DIR / "cortex.html").exists():
+        return render_with_nav("cortex.html", active="cortex")
     return RedirectResponse(url="/")
 
 

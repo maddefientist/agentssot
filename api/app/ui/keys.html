@@ -15,7 +15,7 @@
   </header>
 
   <section class="controls-bar">
-    <input type="password" placeholder="Admin API key" x-model="apiKey" @change="load()">
+    <input type="password" placeholder="Admin API key" x-model="apiKey" @change="load()" style="display:none"><!-- per-page key input hidden by P7 cortex-shell; key managed via header pill -->
     <input type="text" placeholder="Filter by name..." x-model="search" @input="filter()">
     <select x-model="roleFilter" @change="filter()">
       <option value="">All roles</option>
@@ -86,14 +86,13 @@
 <script>
 function keysApp() {
   return {
-    apiKey: localStorage.getItem("hiveAdminKey") || "",
+    apiKey: (window.cortexAuth ? window.cortexAuth.getKey() : ""),
     items: [],
     search: "",
     roleFilter: "",
     filtered: [],
     async load() {
       if (!this.apiKey) { this.items = []; this.filtered = []; return; }
-      localStorage.setItem("hiveAdminKey", this.apiKey);
       try {
         const r = await fetch("/admin/api-keys", { headers: { "X-Api-Key": this.apiKey } });
         this.items = r.ok ? await r.json() : [];

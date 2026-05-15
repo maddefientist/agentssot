@@ -15,7 +15,7 @@
   </header>
 
   <section class="controls-bar">
-    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()">
+    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()" style="display:none"><!-- per-page key input hidden by P7 cortex-shell; key managed via header pill -->
     <span class="count" x-text="allItems.length + ' wonder items'"></span>
   </section>
 
@@ -77,7 +77,7 @@
 <script>
 function wonderApp() {
   return {
-    apiKey: localStorage.getItem("hiveWriterKey") || "",
+    apiKey: (window.cortexAuth ? window.cortexAuth.getKey() : ""),
     allItems: [],
     loading: false,
     lanes: [
@@ -87,7 +87,6 @@ function wonderApp() {
     ],
     async load() {
       if (!this.apiKey) { this.allItems = []; this._buildLanes([]); return; }
-      localStorage.setItem("hiveWriterKey", this.apiKey);
       this.loading = true;
       let all = [];
       const namespaces = ["claude-shared", "madi-self"];

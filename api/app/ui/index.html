@@ -1,131 +1,316 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>AgentSSOT</title>
-    <link rel="stylesheet" href="/ui/assets/styles.css" />
-  </head>
-  <body>
-    <header>
-      <div class="header-left">
-        <h1>AgentSSOT</h1>
-        <span class="health-dot" id="healthDot" title="checking..."></span>
-      </div>
-      <nav>
-        <button class="tab active" data-tab="browse">Browse</button>
-        <button class="tab" data-tab="search">Search</button>
-        <button class="tab" data-tab="admin">Admin</button>
-      </nav>
-      <div class="header-right">
-        <button class="icon-btn" id="settingsToggle" title="Connection settings">&#9881;</button>
-      </div>
-    </header>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cortex</title>
+<link rel="stylesheet" href="/ui/assets/styles.css">
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  .dash-wrap { padding: 1rem; }
+  .dash-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 0.8rem;
+  }
+  .dash-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+  .dash-card.tall { grid-column: span 2; }
+  .dash-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .dash-head h2 { margin: 0; font-size: 0.95rem; color: var(--text); }
+  .dash-head a { color: var(--text-muted); text-decoration: none; font-size: 0.78rem; }
+  .dash-head a:hover { color: var(--accent); }
+  .dash-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.35rem 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.82rem;
+  }
+  .dash-row:last-child { border-bottom: none; }
+  .dash-row .label { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-right: 0.6rem; }
+  .dash-row .badge {
+    background: var(--surface-2);
+    color: var(--text-muted);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.7rem;
+    flex-shrink: 0;
+  }
+  .dash-empty { color: var(--text-muted); font-size: 0.8rem; padding: 0.6rem 0; }
+  .dash-stat {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .dash-stat .num { font-size: 1.4rem; font-weight: 600; color: var(--text); }
+  .dash-stat .lbl { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .dash-quick {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    padding: 0.4rem 0;
+  }
+  .dash-quick a {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.4rem 0.8rem;
+    text-decoration: none;
+    font-size: 0.85rem;
+  }
+  .dash-quick a:hover { border-color: var(--accent); color: var(--accent); }
+  .dash-doctrine {
+    font-size: 0.85rem;
+    color: var(--text);
+    line-height: 1.45;
+  }
+  .dash-doctrine .title { font-weight: 600; margin-bottom: 0.3rem; }
+  .dash-doctrine .body { color: var(--text-muted); }
+  .auth-prompt {
+    background: #2b2b2b;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 1.2rem 1rem;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 1rem;
+  }
+  .auth-prompt strong { color: var(--text); }
+</style>
+</head>
+<body class="dark">
+<!-- cortex-nav -->
 
-    <div class="settings-drawer" id="settingsDrawer">
-      <label>API URL <input id="apiBase" type="text" placeholder="http://localhost:8088" /></label>
-      <label>API Key <input id="apiKey" type="password" placeholder="ssot_..." /></label>
-      <button id="saveConn" class="sm">Save</button>
+<div x-data="dashboard()" x-init="init()">
+  <div class="dash-wrap">
+    <div x-show="!hasKey" class="auth-prompt">
+      <p><strong>No API key set.</strong></p>
+      <p>Click the <em>No key</em> pill in the header above to paste your <code>ssot_…</code> key. It persists across all cortex pages.</p>
     </div>
 
-    <!-- BROWSE TAB -->
-    <main id="tab-browse" class="tab-content active">
-      <div class="stats-bar" id="statsBar">
-        <div class="stat" id="statItems">--</div>
-        <div class="stat" id="statProjects">--</div>
-        <div class="stat" id="statDevices">--</div>
-      </div>
+    <div class="dash-quick">
+      <a href="/signals">Signals</a>
+      <a href="/doctrine">Doctrine</a>
+      <a href="/adherence">Adherence</a>
+      <a href="/review">Review</a>
+      <a href="/wonder">Wonder</a>
+      <a href="/loadout">Loadout</a>
+      <a href="/entities">Entities</a>
+      <a href="/namespaces">Namespaces</a>
+      <a href="/keys">Keys</a>
+      <a href="/decay">Decay</a>
+      <a href="/cortex">3D Cortex</a>
+    </div>
 
-      <div class="filter-row">
-        <select id="browseNamespace">
-          <option value="default">default</option>
-        </select>
-        <input id="browseFilter" type="text" placeholder="Filter by text..." />
-        <input id="browseLimit" type="number" value="30" min="1" max="200" />
-        <button id="browseBtn">Load</button>
-      </div>
-
-      <div class="tags-row" id="tagsRow"></div>
-
-      <div class="items-grid" id="itemsGrid">
-        <p class="hint">Click Load to browse knowledge items</p>
-      </div>
-    </main>
-
-    <!-- SEARCH TAB -->
-    <main id="tab-search" class="tab-content">
-      <div class="search-box">
-        <input id="searchText" type="text" placeholder="Natural language search across all memory..." />
-        <select id="searchNamespace">
-          <option value="default">default</option>
-        </select>
-        <input id="searchTopK" type="number" value="10" min="1" max="50" />
-        <button id="searchBtn">Recall</button>
-      </div>
-      <div class="items-grid" id="searchResults">
-        <p class="hint">Semantic search across your unified memory</p>
-      </div>
-    </main>
-
-    <!-- ADMIN TAB -->
-    <main id="tab-admin" class="tab-content">
-      <div class="admin-grid">
-        <div class="card">
-          <h3>Health</h3>
-          <pre id="healthOutput">--</pre>
-        </div>
-        <div class="card">
-          <h3>Namespace Stats</h3>
-          <div class="inline-row">
-            <input id="statsNamespace" type="text" value="default" placeholder="namespace" />
-            <button id="statsBtn" class="secondary">Load Stats</button>
+    <div class="dash-grid" x-show="hasKey">
+      <!-- Today's doctrine -->
+      <div class="dash-card">
+        <div class="dash-head"><h2>Today's doctrine</h2><a href="/doctrine">browse all →</a></div>
+        <template x-if="doctrineToday">
+          <div class="dash-doctrine">
+            <div class="title" x-text="doctrineToday.title"></div>
+            <div class="body" x-text="(doctrineToday.summary || doctrineToday.content || '').slice(0, 240) + ((doctrineToday.content||'').length > 240 ? '…' : '')"></div>
           </div>
-          <pre id="statsOutput">--</pre>
-        </div>
-        <div class="card">
-          <h3>Dedup</h3>
-          <div class="inline-row">
-            <input id="dedupNamespace" type="text" value="default" placeholder="namespace" />
-            <button id="dedupScanBtn" class="secondary">Scan</button>
-            <button id="dedupRunBtn">Clean</button>
-          </div>
-          <pre id="dedupOutput">--</pre>
-        </div>
-        <div class="card">
-          <h3>Create Namespace</h3>
-          <label>Name <input id="newNs" type="text" placeholder="team-private" /></label>
-          <button id="createNsBtn">Create</button>
-        </div>
-        <div class="card">
-          <h3>Create API Key</h3>
-          <label>Name <input id="keyName" type="text" placeholder="device-name-writer" /></label>
-          <label>Role
-            <select id="keyRole">
-              <option value="writer">writer</option>
-              <option value="reader">reader</option>
-              <option value="admin">admin</option>
-            </select>
-          </label>
-          <label>Namespaces <input id="keyNs" type="text" value="default" placeholder="comma-separated" /></label>
-          <button id="createKeyBtn">Create Key</button>
-        </div>
-        <div class="card">
-          <h3>API Keys</h3>
-          <button id="listKeysBtn" class="secondary">List Keys</button>
-          <pre id="keysOutput">--</pre>
-        </div>
-        <div class="card wide">
-          <h3>Raw Ingest</h3>
-          <textarea id="ingestPayload" rows="6" placeholder='{"namespace":"default","knowledge_items":[...]}'></textarea>
-          <button id="ingestBtn">Ingest</button>
-        </div>
-        <div class="card wide">
-          <h3>Response</h3>
-          <pre id="adminOutput">--</pre>
-        </div>
+        </template>
+        <template x-if="!doctrineToday">
+          <div class="dash-empty" x-text="loading.doctrine ? 'loading...' : 'no doctrine item rotated today'"></div>
+        </template>
       </div>
-    </main>
 
-    <script src="/ui/assets/app.js"></script>
-  </body>
+      <!-- Adherence rollup -->
+      <div class="dash-card">
+        <div class="dash-head"><h2>Adherence</h2><a href="/adherence">detail →</a></div>
+        <template x-if="adherence">
+          <div>
+            <div class="dash-stat">
+              <span class="num" x-text="adherence.coverage_pct + '%'"></span>
+              <span class="lbl">Recall coverage</span>
+            </div>
+            <div class="dash-row">
+              <span class="label">Under-fetched</span>
+              <span class="badge" x-text="adherence.under_fetched_count"></span>
+            </div>
+            <div class="dash-row">
+              <span class="label">Promotion candidates</span>
+              <span class="badge" x-text="adherence.promotion_candidates_count"></span>
+            </div>
+            <div class="dash-row">
+              <span class="label">False positives</span>
+              <span class="badge" x-text="adherence.false_positives_count"></span>
+            </div>
+          </div>
+        </template>
+        <template x-if="!adherence">
+          <div class="dash-empty" x-text="loading.adherence ? 'loading...' : 'no adherence data'"></div>
+        </template>
+      </div>
+
+      <!-- Recent signals -->
+      <div class="dash-card tall">
+        <div class="dash-head"><h2>Recent signals</h2><a href="/signals">inbox →</a></div>
+        <template x-if="signals.length > 0">
+          <div>
+            <template x-for="s in signals" :key="s.id + ':' + s.type">
+              <div class="dash-row">
+                <span class="label" x-text="s.title"></span>
+                <span class="badge" x-text="s.type"></span>
+              </div>
+            </template>
+          </div>
+        </template>
+        <template x-if="signals.length === 0">
+          <div class="dash-empty" x-text="loading.signals ? 'loading...' : 'quiet — no signals'"></div>
+        </template>
+      </div>
+
+      <!-- System health -->
+      <div class="dash-card">
+        <div class="dash-head"><h2>System</h2><a href="/keys">manage →</a></div>
+        <template x-if="health">
+          <div>
+            <div class="dash-row">
+              <span class="label">Embedding</span>
+              <span class="badge" x-text="health.embedding_available ? 'OK' : 'down'"></span>
+            </div>
+            <div class="dash-row">
+              <span class="label">LLM</span>
+              <span class="badge" x-text="health.llm_available ? 'OK' : 'down'"></span>
+            </div>
+            <div class="dash-row">
+              <span class="label">Reranker</span>
+              <span class="badge" x-text="health.reranker_available ? 'OK' : 'down'"></span>
+            </div>
+            <div class="dash-row">
+              <span class="label">Synthesis</span>
+              <span class="badge" x-text="health.synthesis_enabled ? 'enabled' : 'off'"></span>
+            </div>
+          </div>
+        </template>
+        <template x-if="!health"><div class="dash-empty">loading...</div></template>
+      </div>
+
+      <!-- Synthesis band -->
+      <div class="dash-card">
+        <div class="dash-head"><h2>Band concepts</h2><a href="/review">review →</a></div>
+        <template x-if="band.length > 0">
+          <div>
+            <template x-for="c in band.slice(0, 5)" :key="c.id">
+              <div class="dash-row">
+                <span class="label" x-text="c.title"></span>
+                <span class="badge" x-text="c.confidence.toFixed(2)"></span>
+              </div>
+            </template>
+            <div class="dash-empty" x-show="band.length > 5" x-text="(band.length - 5) + ' more in review'"></div>
+          </div>
+        </template>
+        <template x-if="band.length === 0">
+          <div class="dash-empty" x-text="loading.band ? 'loading...' : 'no band concepts pending'"></div>
+        </template>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function dashboard() {
+  return {
+    namespace: 'claude-shared',
+    hasKey: false,
+    health: null,
+    doctrineToday: null,
+    adherence: null,
+    signals: [],
+    band: [],
+    loading: { doctrine: false, adherence: false, signals: false, band: false, health: false },
+
+    async init() {
+      // Wait a tick for cortex-shell.js to run migration + validate
+      setTimeout(() => this.checkAndLoad(), 100);
+    },
+
+    async checkAndLoad() {
+      this.hasKey = !!(window.cortexAuth && window.cortexAuth.getKey());
+      // Always fetch unauthenticated health
+      this.loadHealth();
+      if (!this.hasKey) return;
+      this.loadAll();
+    },
+
+    async loadHealth() {
+      try {
+        const r = await fetch('/health');
+        if (r.ok) this.health = await r.json();
+      } catch {}
+    },
+
+    async loadAll() {
+      this.loadDoctrineToday();
+      this.loadAdherence();
+      this.loadSignals();
+      this.loadBand();
+    },
+
+    async _fetch(path) {
+      try {
+        const r = await fetch(path, { headers: { 'X-API-Key': window.cortexAuth.getKey() } });
+        if (r.status === 401) {
+          window.cortexAuth.showError('Auth failed loading dashboard data.');
+          return null;
+        }
+        if (!r.ok) return null;
+        return await r.json();
+      } catch { return null; }
+    },
+
+    async loadDoctrineToday() {
+      this.loading.doctrine = true;
+      // Pull the full list and find is_today; small N (it returns metadata for paginated window)
+      const j = await this._fetch(`/doctrine/list?namespace=${this.namespace}&limit=500`);
+      this.loading.doctrine = false;
+      if (!j) return;
+      this.doctrineToday = (j.items || []).find(i => i.is_today) || null;
+    },
+
+    async loadAdherence() {
+      this.loading.adherence = true;
+      const j = await this._fetch(`/adherence/stats?namespace=${this.namespace}&days=30&limit=10`);
+      this.loading.adherence = false;
+      if (!j) return;
+      this.adherence = j.rollup;
+    },
+
+    async loadSignals() {
+      this.loading.signals = true;
+      const j = await this._fetch(`/signals/feed?namespace=${this.namespace}&limit=10`);
+      this.loading.signals = false;
+      if (!j) return;
+      this.signals = (j.items || []).slice(0, 10);
+    },
+
+    async loadBand() {
+      this.loading.band = true;
+      const j = await this._fetch(`/review/concepts?namespace=${this.namespace}&limit=50`);
+      this.loading.band = false;
+      if (!j) return;
+      this.band = j.items || [];
+    },
+  };
+}
+</script>
+</body>
 </html>

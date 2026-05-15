@@ -16,7 +16,7 @@
   </header>
 
   <section class="controls-bar">
-    <input type="password" placeholder="Admin API key" x-model="adminKey" @change="load(); loadBand()">
+    <input type="password" placeholder="Admin API key" x-model="adminKey" @change="load(); loadBand()" style="display:none"><!-- per-page key input hidden by P7 cortex-shell; key managed via header pill -->
     <input type="text" placeholder="Namespace" x-model="namespace" @change="loadBand()">
     <select x-model="kind" @change="load()">
       <option value="">All kinds</option>
@@ -126,7 +126,7 @@
 <script>
 function reviewApp() {
   return {
-    adminKey: localStorage.getItem("hiveAdminKey") || "",
+    adminKey: (window.cortexAuth ? window.cortexAuth.getKey() : ""),
     namespace: localStorage.getItem("reviewNs") || "claude-shared",
     kind: "",
     items: [],
@@ -134,7 +134,6 @@ function reviewApp() {
 
     async load() {
       if (!this.adminKey) { this.items = []; return; }
-      localStorage.setItem("hiveAdminKey", this.adminKey);
       const url = new URL("/api/v1/knowledge/admin/review-queue", location.origin);
       if (this.kind) url.searchParams.set("kind", this.kind);
       url.searchParams.set("limit", "100");

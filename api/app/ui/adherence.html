@@ -73,7 +73,7 @@
   </header>
 
   <section class="controls-bar">
-    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()">
+    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()" style="display:none"><!-- per-page key input hidden by P7 cortex-shell; key managed via header pill -->
     <input type="text" placeholder="Namespace" x-model="namespace" @change="load()">
     <select x-model="windowDays" @change="load()">
       <option value="7">Last 7d</option>
@@ -166,7 +166,7 @@
 <script>
 function adherenceApp() {
   return {
-    apiKey: localStorage.getItem('apiKey') || '',
+    apiKey: (window.cortexAuth ? window.cortexAuth.getKey() : ""),
     namespace: localStorage.getItem('adherenceNs') || 'claude-shared',
     windowDays: 30,
     rollup: null,
@@ -185,7 +185,6 @@ function adherenceApp() {
 
     async load() {
       if (!this.apiKey) return;
-      localStorage.setItem('apiKey', this.apiKey);
       localStorage.setItem('adherenceNs', this.namespace);
       this.loading = true;
       try {

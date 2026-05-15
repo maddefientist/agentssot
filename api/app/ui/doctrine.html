@@ -86,7 +86,7 @@
   </header>
 
   <section class="controls-bar">
-    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()">
+    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()" style="display:none"><!-- per-page key input hidden by P7 cortex-shell; key managed via header pill -->
     <input type="text" placeholder="Namespace" x-model="namespace" @change="reset()">
     <input type="text" placeholder="Search title/content..." x-model="search" @input.debounce.400ms="reset()">
     <button @click="load()">Refresh</button>
@@ -148,7 +148,7 @@
 <script>
 function doctrineApp() {
   return {
-    apiKey: localStorage.getItem('apiKey') || '',
+    apiKey: (window.cortexAuth ? window.cortexAuth.getKey() : ""),
     namespace: localStorage.getItem('doctrineNs') || 'claude-shared',
     search: '',
     items: [],
@@ -167,7 +167,6 @@ function doctrineApp() {
 
     async load() {
       if (!this.apiKey) return;
-      localStorage.setItem('apiKey', this.apiKey);
       localStorage.setItem('doctrineNs', this.namespace);
       this.loading = true;
       try {

@@ -15,7 +15,7 @@
   </header>
 
   <section class="controls-bar">
-    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()">
+    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()" style="display:none"><!-- per-page key input hidden by P7 cortex-shell; key managed via header pill -->
     <input type="text" placeholder="Filter by content..." x-model="search" @input="filter()">
     <span class="count" x-text="filtered.length + ' flagged items'"></span>
     <span class="hint">Items tagged [decay-review] in claude-shared</span>
@@ -62,14 +62,13 @@
 <script>
 function decayApp() {
   return {
-    apiKey: localStorage.getItem("hiveWriterKey") || "",
+    apiKey: (window.cortexAuth ? window.cortexAuth.getKey() : ""),
     items: [],
     search: "",
     filtered: [],
     loading: false,
     async load() {
       if (!this.apiKey) { this.items = []; this.filtered = []; return; }
-      localStorage.setItem("hiveWriterKey", this.apiKey);
       this.loading = true;
       try {
         const r = await fetch("/query?namespace=claude-shared&q=decay-review&limit=200", {

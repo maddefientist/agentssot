@@ -19,7 +19,7 @@
     <div class="form-grid">
       <label>
         <span>API Key</span>
-        <input type="password" x-model="apiKey" placeholder="ssot_...">
+        <input type="password" x-model="apiKey" placeholder="ssot_..." style="display:none"><!-- per-page key input hidden by P7 cortex-shell; key managed via header pill -->
       </label>
       <label>
         <span>CWD</span>
@@ -75,7 +75,7 @@
 <script>
 function loadoutApp() {
   return {
-    apiKey: localStorage.getItem("hiveApiKey") || "",
+    apiKey: (window.cortexAuth ? window.cortexAuth.getKey() : ""),
     cwd: "/opt/agentssot",
     deviceId: "hari",
     budget: 750,
@@ -85,7 +85,6 @@ function loadoutApp() {
       this.error = "";
       this.rendered = "";
       if (!this.apiKey) { this.error = "API key required"; return; }
-      localStorage.setItem("hiveApiKey", this.apiKey);
       try {
         const r = await fetch("/api/v1/knowledge/loadout", {
           method: "POST",

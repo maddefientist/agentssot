@@ -95,7 +95,7 @@
   </header>
 
   <section class="controls-bar">
-    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()">
+    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()" style="display:none"><!-- per-page key input hidden by P7 cortex-shell; key managed via header pill -->
     <input type="text" placeholder="Namespace" x-model="namespace" @change="load()">
     <button @click="load()">Refresh</button>
     <span class="count" x-text="items.length + ' signals'"></span>
@@ -150,7 +150,7 @@
 <script>
 function signalsApp() {
   return {
-    apiKey: localStorage.getItem('apiKey') || '',
+    apiKey: (window.cortexAuth ? window.cortexAuth.getKey() : ""),
     namespace: localStorage.getItem('signalsNs') || 'claude-shared',
     items: [],
     loading: false,
@@ -174,7 +174,6 @@ function signalsApp() {
 
     async load() {
       if (!this.apiKey) return;
-      localStorage.setItem('apiKey', this.apiKey);
       localStorage.setItem('signalsNs', this.namespace);
       this.loading = true;
       try {

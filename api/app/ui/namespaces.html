@@ -15,7 +15,7 @@
   </header>
 
   <section class="controls-bar">
-    <input type="password" placeholder="Admin API key" x-model="apiKey" @change="load()">
+    <input type="password" placeholder="Admin API key" x-model="apiKey" @change="load()" style="display:none"><!-- per-page key input hidden by P7 cortex-shell; key managed via header pill -->
     <input type="text" placeholder="Filter namespace..." x-model="search" @input="filter()">
     <span class="count" x-text="filtered.length + ' / ' + items.length + ' namespaces'"></span>
   </section>
@@ -72,13 +72,12 @@
 <script>
 function nsApp() {
   return {
-    apiKey: localStorage.getItem("hiveAdminKey") || "",
+    apiKey: (window.cortexAuth ? window.cortexAuth.getKey() : ""),
     items: [],
     search: "",
     filtered: [],
     async load() {
       if (!this.apiKey) { this.items = []; this.filtered = []; return; }
-      localStorage.setItem("hiveAdminKey", this.apiKey);
       try {
         const r = await fetch("/admin/namespaces", { headers: { "X-Api-Key": this.apiKey } });
         this.items = r.ok ? await r.json() : [];

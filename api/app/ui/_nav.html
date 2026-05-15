@@ -1,13 +1,40 @@
-<nav class="cortex-nav">
-  <a href="/cortex" data-page="cortex">Cortex</a>
-  <a href="/review" data-page="review">Review</a>
-  <a href="/loadout" data-page="loadout">Loadout</a>
-  <a href="/entities" data-page="entities">Entities</a>
-  <a href="/namespaces" data-page="namespaces">Namespaces</a>
-  <a href="/keys" data-page="keys">Keys</a>
-  <a href="/decay" data-page="decay">Decay</a>
-  <a href="/wonder" data-page="wonder">Wonder</a>
-  <a href="/signals" data-page="signals">Signals</a>
-  <a href="/doctrine" data-page="doctrine">Doctrine</a>
-  <a href="/adherence" data-page="adherence">Adherence</a>
-</nav>
+<div class="cortex-shell-chrome">
+  <a href="/" class="cortex-brand" title="Cortex home">Cortex</a>
+  <nav class="cortex-nav">
+    <a href="/" data-page="home">Home</a>
+    <a href="/signals" data-page="signals">Signals</a>
+    <a href="/doctrine" data-page="doctrine">Doctrine</a>
+    <a href="/adherence" data-page="adherence">Adherence</a>
+    <a href="/review" data-page="review">Review</a>
+    <a href="/wonder" data-page="wonder">Wonder</a>
+    <a href="/loadout" data-page="loadout">Loadout</a>
+    <a href="/entities" data-page="entities">Entities</a>
+    <a href="/namespaces" data-page="namespaces">Namespaces</a>
+    <a href="/keys" data-page="keys">Keys</a>
+    <a href="/decay" data-page="decay">Decay</a>
+    <a href="/cortex" data-page="cortex">3D</a>
+  </nav>
+  <span id="cortex-conn-pill" class="cortex-pill none" title="Click to set API key">No key</span>
+</div>
+
+<div id="cortex-error-bar" class="cortex-error-bar"></div>
+
+<div id="cortex-conn-drawer" class="cortex-drawer">
+  <div class="cortex-drawer-inner">
+    <div class="cortex-drawer-head">
+      <strong>Cortex connection</strong>
+      <button id="cortex-conn-close" type="button" aria-label="close">&times;</button>
+    </div>
+    <p class="cortex-drawer-help">
+      Paste your hive API key (starts with <code>ssot_</code>). Stored in this browser
+      only. Used as <code>X-API-Key</code> on every cortex page.
+    </p>
+    <input id="cortex-conn-input" type="password" placeholder="ssot_..." autocomplete="off" />
+    <div class="cortex-drawer-actions">
+      <button id="cortex-conn-save" type="button">Save &amp; validate</button>
+      <button id="cortex-conn-clear" type="button" class="ghost">Clear</button>
+    </div>
+  </div>
+</div>
+
+<script src="/ui/assets/cortex-shell.js"></script>
