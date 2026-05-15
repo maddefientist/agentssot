@@ -30,10 +30,20 @@
     color: var(--text-muted);
     white-space: nowrap;
   }
-  .signal-type.manual  { background: #2b3a5a; color: #c9d9ff; }
-  .signal-type.wonder  { background: #4a3a5a; color: #e9d9ff; }
-  .signal-type.error   { background: #5a2b2b; color: #ffd9d9; }
-  .signal-type.pattern { background: #2b5a3a; color: #d9ffe9; }
+  .signal-type.manual    { background: #2b3a5a; color: #c9d9ff; }
+  .signal-type.wonder    { background: #4a3a5a; color: #e9d9ff; }
+  .signal-type.error     { background: #5a2b2b; color: #ffd9d9; }
+  .signal-type.pattern   { background: #2b5a3a; color: #d9ffe9; }
+  .signal-type.adherence { background: #5a4a2b; color: #ffe9c9; }
+  .signal-subtype {
+    display: inline-block;
+    margin-left: 0.4rem;
+    padding: 0.05rem 0.4rem;
+    border-radius: 3px;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    font-size: 0.7rem;
+  }
   .signal-body h3 { margin: 0 0 0.25rem 0; font-size: 0.95rem; color: var(--text); }
   .signal-meta { font-size: 0.75rem; color: var(--text-muted); }
   .signal-content { margin-top: 0.4rem; font-size: 0.85rem; color: var(--text); white-space: pre-wrap; }
@@ -114,11 +124,16 @@
       <div class="signal-card">
         <span class="signal-type" :class="item.type" x-text="item.type"></span>
         <div class="signal-body">
-          <h3 x-text="item.title"></h3>
+          <h3>
+            <span x-text="item.title"></span>
+            <span class="signal-subtype" x-show="item.payload && item.payload.miss_class" x-text="item.payload && item.payload.miss_class"></span>
+            <span class="signal-subtype" x-show="item.payload && item.payload.occurrence_count" x-text="item.payload && ('x' + item.payload.occurrence_count)"></span>
+          </h3>
           <div class="signal-meta">
             <span x-text="formatAge(item.age_seconds)"></span>
             · <span x-text="item.source"></span>
             · <span x-text="item.namespace"></span>
+            <span x-show="item.payload && item.payload.miss_reason">· <span x-text="item.payload.miss_reason"></span></span>
           </div>
           <div class="signal-content" x-show="item.payload && item.payload.content" x-text="item.payload && item.payload.content"></div>
         </div>
@@ -141,8 +156,8 @@ function signalsApp() {
     loading: false,
     newTitle: '',
     newNote: '',
-    allTypes: ['manual', 'wonder', 'error', 'pattern'],
-    enabled: { manual: true, wonder: true, error: true, pattern: true },
+    allTypes: ['manual', 'wonder', 'error', 'pattern', 'adherence'],
+    enabled: { manual: true, wonder: true, error: true, pattern: true, adherence: true },
 
     get filteredItems() {
       return this.items.filter(i => this.enabled[i.type]);

@@ -5,14 +5,16 @@ recurring errors, pattern detections, wonder queue digest.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
-from datetime import datetime, timezone
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select, desc, or_, func
+from sqlalchemy import select, desc, or_, and_, func
 from sqlalchemy.orm import Session
 
 from app.db import get_session
@@ -106,6 +108,10 @@ async def list_signals(
             out.append(_ki_to_signal(ki, "wonder"))
 
     if "error" in requested:
+        # Pull recent error/incident KIs, cluster by content-prefix hash, surface
+        # only clusters with count >= 2 (recurring). Single-occurrence errors are
+        # not noise-worthy.
+        recent_window = datetime.now(timezone.utc) - timedelta(days=30)
         q = (
             base_ki.where(
                 or_(
@@ -113,11 +119,69 @@ async def list_signals(
                     KnowledgeItem.tags.any("incident"),
                 )
             )
+            .where(KnowledgeItem.created_at >= recent_window)
             .order_by(desc(KnowledgeItem.created_at))
-            .limit(limit)
+            .limit(500)
         )
+        clusters: dict[str, list[KnowledgeItem]] = defaultdict(list)
         for ki in session.execute(q).scalars():
-            out.append(_ki_to_signal(ki, "error"))
+            prefix = (ki.content or "")[:80].lower().strip()
+            key = hashlib.sha256(prefix.encode()).hexdigest()[:16]
+            clusters[key].append(ki)
+
+        for cluster_items in clusters.values():
+            if len(cluster_items) < 2:
+                continue
+            representative = cluster_items[0]  # most recent (query was desc created_at)
+            sig = _ki_to_signal(representative, "error")
+            sig["title"] = f"[x{len(cluster_items)}] {sig['title']}"
+            sig["payload"]["occurrence_count"] = len(cluster_items)
+            sig["payload"]["cluster_ids"] = [str(c.id) for c in cluster_items[:10]]
+            out.append(sig)
+
+    if "adherence" in requested:
+        # v1 adherence proxy (no Ollama): two signal classes computed cheaply
+        # from KI telemetry fields already populated by the recall pipeline.
+        cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+
+        # (a) stale-but-trusted: high-confidence items that have never been
+        # recalled despite age. Either the question never came up, or
+        # retrieval keeps missing them. Either way, worth surfacing.
+        stale_trusted = (
+            base_ki.where(KnowledgeItem.confidence >= 0.8)
+            .where(KnowledgeItem.recall_count == 0)
+            .where(KnowledgeItem.created_at < cutoff)
+            .where(
+                KnowledgeItem.memory_type.in_(
+                    ["rule", "doctrine", "decision", "preference", "command", "entity", "fact"]
+                )
+            )
+            .order_by(desc(KnowledgeItem.confidence), desc(KnowledgeItem.created_at))
+            .limit(20)
+        )
+        for ki in session.execute(stale_trusted).scalars():
+            sig = _ki_to_signal(ki, "adherence")
+            sig["payload"]["miss_class"] = "stale-trusted"
+            sig["payload"]["miss_reason"] = (
+                f"conf={ki.confidence:.2f}, recalls=0, type={ki.memory_type}"
+            )
+            out.append(sig)
+
+        # (b) negative-feedback-hot: operator has marked this wrong ≥2 times.
+        # Adherence failure of a different shape — recall *is* happening, but
+        # the answer is wrong.
+        neg_hot = (
+            base_ki.where(KnowledgeItem.negative_feedback >= 2)
+            .order_by(desc(KnowledgeItem.negative_feedback), desc(KnowledgeItem.last_recalled_at))
+            .limit(20)
+        )
+        for ki in session.execute(neg_hot).scalars():
+            sig = _ki_to_signal(ki, "adherence")
+            sig["payload"]["miss_class"] = "negative-feedback-hot"
+            sig["payload"]["miss_reason"] = (
+                f"neg_feedback={ki.negative_feedback}, recalls={ki.recall_count}"
+            )
+            out.append(sig)
 
     if "pattern" in requested:
         q = (
@@ -135,8 +199,6 @@ async def list_signals(
         )
         for c in session.execute(q).scalars():
             out.append(_concept_to_signal(c))
-
-    # adherence: deferred to P4/P5 — placeholder returns nothing
 
     out.sort(key=lambda s: s["age_seconds"])
     return {"namespace": namespace, "count": len(out), "items": out[:limit]}
