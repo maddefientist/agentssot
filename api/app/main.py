@@ -30,6 +30,7 @@ from .routers.entities import router as entities_router
 from .routers.signals import router as signals_router
 from .routers.doctrine import router as doctrine_router
 from .routers.adherence import router as adherence_router
+from .routers.review import router as review_router
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -141,6 +142,7 @@ app.include_router(entities_router)
 app.include_router(signals_router)
 app.include_router(doctrine_router)
 app.include_router(adherence_router)
+app.include_router(review_router)
 
 
 @app.middleware("http")
