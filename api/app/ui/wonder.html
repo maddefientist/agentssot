@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hive Wonder Queue</title>
+<link rel="stylesheet" href="/ui/assets/styles.css">
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="dark">
+<div x-data="wonderApp()" x-init="load()">
+  <header>
+    <h1>Wonder Queue</h1>
+    <nav>
+      <a href="/cortex">Cortex</a>
+      <a href="/review">Review</a>
+      <a href="/loadout">Loadout</a>
+      <a href="/entities">Entities</a>
+      <a href="/namespaces">Namespaces</a>
+      <a href="/keys">Keys</a>
+      <a href="/decay">Decay</a>
+      <a href="/wonder" class="active">Wonder</a>
+    </nav>
+  </header>
+
+  <section class="controls-bar">
+    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()">
+    <span class="count" x-text="allItems.length + ' wonder items'"></span>
+  </section>
+
+  <div x-show="loading" style="padding: 2rem; color: #8b949e;">Loading...</div>
+
+  <section x-show="!loading" class="kanban">
+    <template x-for="lane in lanes" :key="lane.key">
+      <div class="lane">
+        <div class="lane-header">
+          <span x-text="lane.label"></span>
+          <span class="lane-count" x-text="lane.items.length"></span>
+        </div>
+        <div class="lane-items">
+          <template x-for="item in lane.items" :key="item.id">
+            <div class="wonder-card">
+              <div class="card-trigger" x-text="extractTrigger(item.content)"></div>
+              <div class="card-preview" x-text="extractBody(item.content)"></div>
+              <div class="card-meta">
+                <span x-text="item.created_at ? item.created_at.slice(0,10) : ''"></span>
+                <span class="ns-badge" x-text="item.namespace"></span>
+              </div>
+            </div>
+          </template>
+          <div x-show="lane.items.length === 0" class="empty-lane">empty</div>
+        </div>
+      </div>
+    </template>
+  </section>
+
+  <div x-show="!loading && allItems.length === 0" style="color: #8b949e; padding: 2rem;">
+    No wonder-queue items found. Items tagged [wonder-queue] or [madi-self][wonder-queue] in
+    claude-shared or madi-self namespaces will appear here.
+  </div>
+</div>
+
+<style>
+  body.dark { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 2rem; border-bottom: 1px solid #30363d; }
+  header h1 { margin: 0; font-size: 1.2rem; }
+  nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+  nav a { color: #8b949e; text-decoration: none; font-size: 0.85rem; }
+  nav a.active, nav a:hover { color: #58a6ff; }
+  .controls-bar { display: flex; gap: 1rem; align-items: center; padding: 1rem 2rem; }
+  .controls-bar input { padding: 6px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; }
+  .count { color: #8b949e; font-size: 0.85rem; margin-left: auto; }
+  .kanban { display: flex; gap: 1rem; padding: 1rem 2rem 2rem; overflow-x: auto; align-items: flex-start; }
+  .lane { flex: 0 0 320px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; }
+  .lane-header { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; border-bottom: 1px solid #30363d; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #8b949e; }
+  .lane-count { background: #21262d; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; }
+  .lane-items { padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; min-height: 60px; }
+  .wonder-card { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 0.75rem; }
+  .card-trigger { font-size: 0.7rem; color: #58a6ff; font-weight: 600; margin-bottom: 0.25rem; }
+  .card-preview { font-size: 0.75rem; color: #c9d1d9; line-height: 1.4; margin-bottom: 0.5rem; }
+  .card-meta { display: flex; justify-content: space-between; font-size: 0.65rem; color: #8b949e; }
+  .ns-badge { background: #21262d; padding: 1px 6px; border-radius: 8px; }
+  .empty-lane { text-align: center; color: #30363d; font-size: 0.75rem; padding: 1rem 0; }
+</style>
+
+<script>
+function wonderApp() {
+  return {
+    apiKey: localStorage.getItem("hiveWriterKey") || "",
+    allItems: [],
+    loading: false,
+    lanes: [
+      { key: "pending",   label: "Pending",   items: [] },
+      { key: "digesting", label: "Digesting", items: [] },
+      { key: "digested",  label: "Digested",  items: [] },
+    ],
+    async load() {
+      if (!this.apiKey) { this.allItems = []; this._buildLanes([]); return; }
+      localStorage.setItem("hiveWriterKey", this.apiKey);
+      this.loading = true;
+      let all = [];
+      const namespaces = ["claude-shared", "madi-self"];
+      for (const ns of namespaces) {
+        try {
+          const r = await fetch(`/query?namespace=${ns}&q=wonder-queue&limit=200`, {
+            headers: { "X-Api-Key": this.apiKey },
+          });
+          if (r.ok) {
+            const data = await r.json();
+            const results = (data.results || []).filter(i =>
+              (i.tags || []).some(t => t.includes("wonder-queue")) ||
+              (i.content || "").includes("[wonder-queue]")
+            );
+            all = all.concat(results);
+          }
+        } catch {}
+      }
+      this.allItems = all;
+      this._buildLanes(all);
+      this.loading = false;
+    },
+    extractTrigger(content) {
+      const m = content.match(/\[([^\]]+)\]/);
+      return m ? `[${m[1]}]` : "[wonder-queue]";
+    },
+    extractBody(content) {
+      return (content || "").replace(/^\[[^\]]+\]\s*/, "").slice(0, 120);
+    },
+    _buildLanes(items) {
+      this.lanes[0].items = items.filter(i =>
+        !(i.tags || []).includes("digesting") && !(i.tags || []).includes("digested")
+      );
+      this.lanes[1].items = items.filter(i => (i.tags || []).includes("digesting"));
+      this.lanes[2].items = items.filter(i => (i.tags || []).includes("digested"));
+    },
+  };
+}
+</script>
+</body>
+</html>

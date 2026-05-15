@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hive Keys</title>
+<link rel="stylesheet" href="/ui/assets/styles.css">
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="dark">
+<div x-data="keysApp()" x-init="load()">
+  <header>
+    <h1>API Key Management</h1>
+    <nav>
+      <a href="/cortex">Cortex</a>
+      <a href="/review">Review</a>
+      <a href="/loadout">Loadout</a>
+      <a href="/entities">Entities</a>
+      <a href="/namespaces">Namespaces</a>
+      <a href="/keys" class="active">Keys</a>
+      <a href="/decay">Decay</a>
+      <a href="/wonder">Wonder</a>
+    </nav>
+  </header>
+
+  <section class="controls-bar">
+    <input type="password" placeholder="Admin API key" x-model="apiKey" @change="load()">
+    <input type="text" placeholder="Filter by name..." x-model="search" @input="filter()">
+    <select x-model="roleFilter" @change="filter()">
+      <option value="">All roles</option>
+      <option value="admin">admin</option>
+      <option value="writer">writer</option>
+      <option value="reader">reader</option>
+    </select>
+    <span class="count" x-text="filtered.length + ' / ' + items.length + ' keys'"></span>
+  </section>
+
+  <section class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Role</th>
+          <th>Namespaces</th>
+          <th>Created</th>
+          <th>Active</th>
+          <th>Flags</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="k in filtered" :key="k.id">
+          <tr :class="k.is_active ? '' : 'row-inactive'">
+            <td><code x-text="k.name"></code></td>
+            <td><span :class="'role-' + k.role" x-text="k.role"></span></td>
+            <td>
+              <span class="ns-list" x-text="(k.namespaces || []).join(', ').slice(0,60) + ((k.namespaces||[]).join(', ').length > 60 ? '...' : '')"></span>
+              <span x-show="(k.namespaces||[]).includes('*')" class="badge-warn">wildcard</span>
+            </td>
+            <td x-text="k.created_at ? k.created_at.slice(0,10) : '—'"></td>
+            <td x-text="k.is_active ? 'yes' : 'no'"></td>
+            <td>
+              <span x-show="(k.namespaces||[]).includes('*')" class="badge-warn">wildcard</span>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </section>
+</div>
+
+<style>
+  body.dark { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 2rem; border-bottom: 1px solid #30363d; }
+  header h1 { margin: 0; font-size: 1.2rem; }
+  nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+  nav a { color: #8b949e; text-decoration: none; font-size: 0.85rem; }
+  nav a.active, nav a:hover { color: #58a6ff; }
+  .controls-bar { display: flex; gap: 1rem; align-items: center; padding: 1rem 2rem; flex-wrap: wrap; }
+  .controls-bar input, .controls-bar select { padding: 6px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; }
+  .count { color: #8b949e; font-size: 0.85rem; margin-left: auto; }
+  .table-wrap { padding: 0 2rem 2rem; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  th { text-align: left; padding: 10px 12px; border-bottom: 2px solid #30363d; color: #8b949e; font-weight: 600; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.5px; }
+  td { padding: 8px 12px; border-bottom: 1px solid rgba(48,54,61,0.4); vertical-align: top; }
+  td code { font-size: 0.75rem; color: #8b949e; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  .row-inactive { opacity: 0.5; }
+  .ns-list { font-size: 0.7rem; color: #8b949e; }
+  .role-admin { color: #ff7b72; font-weight: 600; }
+  .role-writer { color: #79c0ff; }
+  .role-reader { color: #8b949e; }
+  .badge-warn { background: rgba(210,153,34,0.2); color: #d29922; padding: 2px 6px; border-radius: 10px; font-size: 0.65rem; margin-left: 4px; }
+</style>
+
+<script>
+function keysApp() {
+  return {
+    apiKey: localStorage.getItem("hiveAdminKey") || "",
+    items: [],
+    search: "",
+    roleFilter: "",
+    filtered: [],
+    async load() {
+      if (!this.apiKey) { this.items = []; this.filtered = []; return; }
+      localStorage.setItem("hiveAdminKey", this.apiKey);
+      try {
+        const r = await fetch("/admin/api-keys", { headers: { "X-Api-Key": this.apiKey } });
+        this.items = r.ok ? await r.json() : [];
+      } catch { this.items = []; }
+      this.filter();
+    },
+    filter() {
+      const q = this.search.toLowerCase();
+      const role = this.roleFilter;
+      this.filtered = this.items.filter(k => {
+        if (q && !k.name.toLowerCase().includes(q)) return false;
+        if (role && k.role !== role) return false;
+        return true;
+      });
+    },
+  };
+}
+</script>
+</body>
+</html>

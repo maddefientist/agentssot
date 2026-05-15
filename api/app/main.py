@@ -248,6 +248,28 @@ def entities_page():
     return FileResponse(UI_DIR / "entities.html")
 
 
+
+@app.get("/namespaces", include_in_schema=False)
+def namespaces_page():
+    return FileResponse(UI_DIR / "namespaces.html")
+
+
+@app.get("/keys", include_in_schema=False)
+def keys_page():
+    return FileResponse(UI_DIR / "keys.html")
+
+
+@app.get("/decay", include_in_schema=False)
+def decay_page():
+    return FileResponse(UI_DIR / "decay.html")
+
+
+@app.get("/wonder", include_in_schema=False)
+def wonder_page():
+    return FileResponse(UI_DIR / "wonder.html")
+
+
+
 @app.get("/cortex/data", include_in_schema=False)
 def cortex_data(
     namespace: str = Query(default="claude-shared"),
@@ -836,6 +858,46 @@ def admin_create_namespace(
         clear_auth_cache()
 
     return schemas.NamespaceCreateResponse(name=namespace.name, created_at=namespace.created_at)
+
+
+
+@app.get("/admin/namespaces", response_model=list[dict])
+def admin_list_namespaces(
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    """List all namespaces with item counts and last-write timestamps. Admin only."""
+    require_admin(auth)
+    from .models import KnowledgeItem, Namespace
+    from sqlalchemy import func
+
+    rows = session.execute(
+        select(
+            Namespace.name,
+            Namespace.created_at,
+            func.count(KnowledgeItem.id).label("item_count"),
+            func.max(KnowledgeItem.created_at).label("last_write"),
+        )
+        .outerjoin(KnowledgeItem, KnowledgeItem.namespace == Namespace.name)
+        .group_by(Namespace.name, Namespace.created_at)
+        .order_by(Namespace.name)
+    ).all()
+
+    # Determine which namespaces the requesting key can write to
+    caller_ns = set(auth.namespaces)
+    has_wildcard = "*" in caller_ns
+
+    result = []
+    for name, created_at, item_count, last_write in rows:
+        can_write = has_wildcard or name in caller_ns
+        result.append({
+            "name": name,
+            "created_at": created_at.isoformat() if created_at else None,
+            "item_count": item_count or 0,
+            "last_write_at": last_write.isoformat() if last_write else None,
+            "can_write": can_write,
+        })
+    return result
 
 
 @app.post("/admin/api-keys", response_model=schemas.ApiKeyCreateResponse)

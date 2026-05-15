@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hive Namespaces</title>
+<link rel="stylesheet" href="/ui/assets/styles.css">
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="dark">
+<div x-data="nsApp()" x-init="load()">
+  <header>
+    <h1>Hive Namespaces</h1>
+    <nav>
+      <a href="/cortex">Cortex</a>
+      <a href="/review">Review</a>
+      <a href="/loadout">Loadout</a>
+      <a href="/entities">Entities</a>
+      <a href="/namespaces" class="active">Namespaces</a>
+      <a href="/keys">Keys</a>
+      <a href="/decay">Decay</a>
+      <a href="/wonder">Wonder</a>
+    </nav>
+  </header>
+
+  <section class="controls-bar">
+    <input type="password" placeholder="Admin API key" x-model="apiKey" @change="load()">
+    <input type="text" placeholder="Filter namespace..." x-model="search" @input="filter()">
+    <span class="count" x-text="filtered.length + ' / ' + items.length + ' namespaces'"></span>
+  </section>
+
+  <section class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Namespace</th>
+          <th>Items</th>
+          <th>Last Write</th>
+          <th>Created</th>
+          <th>Write Access</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="ns in filtered" :key="ns.name">
+          <tr>
+            <td><code x-text="ns.name"></code></td>
+            <td x-text="ns.item_count"></td>
+            <td x-text="ns.last_write_at ? ns.last_write_at.slice(0,19).replace('T',' ') : '—'"></td>
+            <td x-text="ns.created_at ? ns.created_at.slice(0,10) : '—'"></td>
+            <td>
+              <span :class="ns.can_write ? 'badge-green' : 'badge-red'"
+                    x-text="ns.can_write ? 'write' : 'read-only'"></span>
+            </td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+  </section>
+</div>
+
+<style>
+  body.dark { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 2rem; border-bottom: 1px solid #30363d; }
+  header h1 { margin: 0; font-size: 1.2rem; }
+  nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+  nav a { color: #8b949e; text-decoration: none; font-size: 0.85rem; }
+  nav a.active, nav a:hover { color: #58a6ff; }
+  .controls-bar { display: flex; gap: 1rem; align-items: center; padding: 1rem 2rem; }
+  .controls-bar input { padding: 6px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; }
+  .count { color: #8b949e; font-size: 0.85rem; margin-left: auto; }
+  .table-wrap { padding: 0 2rem 2rem; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  th { text-align: left; padding: 10px 12px; border-bottom: 2px solid #30363d; color: #8b949e; font-weight: 600; text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.5px; }
+  td { padding: 8px 12px; border-bottom: 1px solid rgba(48,54,61,0.4); }
+  td code { font-size: 0.75rem; color: #8b949e; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  .badge-green { background: rgba(63,185,80,0.15); color: #3fb950; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; }
+  .badge-red { background: rgba(248,81,73,0.15); color: #f85149; padding: 2px 8px; border-radius: 12px; font-size: 0.7rem; }
+</style>
+
+<script>
+function nsApp() {
+  return {
+    apiKey: localStorage.getItem("hiveAdminKey") || "",
+    items: [],
+    search: "",
+    filtered: [],
+    async load() {
+      if (!this.apiKey) { this.items = []; this.filtered = []; return; }
+      localStorage.setItem("hiveAdminKey", this.apiKey);
+      try {
+        const r = await fetch("/admin/namespaces", { headers: { "X-Api-Key": this.apiKey } });
+        this.items = r.ok ? await r.json() : [];
+      } catch { this.items = []; }
+      this.filter();
+    },
+    filter() {
+      const q = this.search.toLowerCase();
+      this.filtered = q ? this.items.filter(n => n.name.toLowerCase().includes(q)) : this.items;
+    },
+  };
+}
+</script>
+</body>
+</html>

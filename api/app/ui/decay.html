@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hive Entity Decay</title>
+<link rel="stylesheet" href="/ui/assets/styles.css">
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+</head>
+<body class="dark">
+<div x-data="decayApp()" x-init="load()">
+  <header>
+    <h1>Entity Decay Review</h1>
+    <nav>
+      <a href="/cortex">Cortex</a>
+      <a href="/review">Review</a>
+      <a href="/loadout">Loadout</a>
+      <a href="/entities">Entities</a>
+      <a href="/namespaces">Namespaces</a>
+      <a href="/keys">Keys</a>
+      <a href="/decay" class="active">Decay</a>
+      <a href="/wonder">Wonder</a>
+    </nav>
+  </header>
+
+  <section class="controls-bar">
+    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()">
+    <input type="text" placeholder="Filter by content..." x-model="search" @input="filter()">
+    <span class="count" x-text="filtered.length + ' flagged items'"></span>
+    <span class="hint">Items tagged [decay-review] in claude-shared</span>
+  </section>
+
+  <div x-show="loading" style="padding: 2rem; color: #8b949e;">Loading...</div>
+
+  <section x-show="!loading" class="card-grid">
+    <template x-for="item in filtered" :key="item.id">
+      <div class="decay-card">
+        <div class="card-id"><code x-text="item.id.slice(0,8) + '...'"></code></div>
+        <div class="card-content" x-text="item.content.slice(0,400)"></div>
+        <div class="card-meta">
+          <span x-text="item.created_at ? item.created_at.slice(0,19).replace('T',' ') : ''"></span>
+          <span class="ns-badge" x-text="item.namespace"></span>
+        </div>
+      </div>
+    </template>
+    <div x-show="!loading && filtered.length === 0" style="color: #8b949e; padding: 2rem;">
+      No decay-review items found. Run the decay sweep script to populate.
+    </div>
+  </section>
+</div>
+
+<style>
+  body.dark { background: #0d1117; color: #e6edf3; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 2rem; border-bottom: 1px solid #30363d; }
+  header h1 { margin: 0; font-size: 1.2rem; }
+  nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+  nav a { color: #8b949e; text-decoration: none; font-size: 0.85rem; }
+  nav a.active, nav a:hover { color: #58a6ff; }
+  .controls-bar { display: flex; gap: 1rem; align-items: center; padding: 1rem 2rem; flex-wrap: wrap; }
+  .controls-bar input { padding: 6px 12px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; }
+  .hint { color: #8b949e; font-size: 0.75rem; }
+  .count { color: #8b949e; font-size: 0.85rem; margin-left: auto; }
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 1rem; padding: 1rem 2rem 2rem; }
+  .decay-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 1rem; }
+  .card-id code { font-size: 0.7rem; color: #d29922; }
+  .card-content { font-size: 0.75rem; line-height: 1.5; margin: 0.5rem 0; color: #c9d1d9; white-space: pre-wrap; word-break: break-word; }
+  .card-meta { display: flex; justify-content: space-between; font-size: 0.7rem; color: #8b949e; margin-top: 0.5rem; }
+  .ns-badge { background: #21262d; padding: 2px 8px; border-radius: 10px; }
+</style>
+
+<script>
+function decayApp() {
+  return {
+    apiKey: localStorage.getItem("hiveWriterKey") || "",
+    items: [],
+    search: "",
+    filtered: [],
+    loading: false,
+    async load() {
+      if (!this.apiKey) { this.items = []; this.filtered = []; return; }
+      localStorage.setItem("hiveWriterKey", this.apiKey);
+      this.loading = true;
+      try {
+        const r = await fetch("/query?namespace=claude-shared&q=decay-review&limit=200", {
+          headers: { "X-Api-Key": this.apiKey },
+        });
+        const data = r.ok ? await r.json() : {};
+        const results = data.results || [];
+        this.items = results.filter(i =>
+          (i.tags || []).includes("decay-review") ||
+          (i.content || "").includes("[decay-review]")
+        );
+      } catch { this.items = []; }
+      this.loading = false;
+      this.filter();
+    },
+    filter() {
+      const q = this.search.toLowerCase();
+      this.filtered = q
+        ? this.items.filter(i => (i.content || "").toLowerCase().includes(q))
+        : this.items;
+    },
+  };
+}
+</script>
+</body>
+</html>
