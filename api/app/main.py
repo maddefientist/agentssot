@@ -160,6 +160,59 @@ def health() -> dict:
     }
 
 
+
+@app.get("/doctor")
+def doctor(session: Session = Depends(get_session)) -> dict:
+    """Health snapshot with provider configs, index stats, and key counts."""
+    from sqlalchemy import func, text as _sa_text
+
+    embedding_model = (
+        settings.ollama_embed_model if settings.embedding_provider == "ollama"
+        else settings.openai_embed_model if settings.embedding_provider == "openai"
+        else "none"
+    )
+    reranker_model = (
+        settings.ollama_reranker_model if settings.reranker_provider == "ollama" else "none"
+    )
+    llm_model = (
+        settings.ollama_chat_model if settings.llm_provider == "ollama"
+        else settings.openai_chat_model if settings.llm_provider == "openai"
+        else "none"
+    )
+
+    from .models import KnowledgeItem, Namespace
+
+    vector_index_count = session.scalar(
+        select(func.count()).select_from(KnowledgeItem).where(KnowledgeItem.embedding.isnot(None))
+    ) or 0
+
+    last_ingest_row = session.scalar(select(func.max(KnowledgeItem.created_at)))
+    last_ingest_at = last_ingest_row.isoformat() if last_ingest_row else None
+
+    namespace_count = session.scalar(select(func.count()).select_from(Namespace)) or 0
+
+    from .models import ApiKey as _ApiKey
+    active_key_count = session.scalar(
+        select(func.count()).select_from(_ApiKey).where(_ApiKey.is_active.is_(True))
+    ) or 0
+
+    # TODO: add error_rate field in v2 (requires request/error counters on app.state)
+
+    return {
+        "status": "ok",
+        "embedding_provider": settings.embedding_provider,
+        "embedding_model": embedding_model,
+        "reranker_provider": settings.reranker_provider,
+        "reranker_model": reranker_model,
+        "llm_provider": settings.llm_provider,
+        "llm_model": llm_model,
+        "vector_index_count": vector_index_count,
+        "last_ingest_at": last_ingest_at,
+        "namespace_count": namespace_count,
+        "active_key_count": active_key_count,
+    }
+
+
 @app.get("/", include_in_schema=False)
 def ui_home():
     index_file = UI_DIR / "index.html"
