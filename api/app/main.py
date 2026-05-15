@@ -874,6 +874,45 @@ def admin_list_api_keys(
     return [schemas.ApiKeyListItem(**row) for row in rows]
 
 
+
+@app.post("/admin/api-keys/{key_id}/namespaces/grant")
+def admin_grant_namespaces(
+    key_id: str,
+    payload: dict,
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    """Grant additional namespace access to an API key. Admin only."""
+    require_admin(auth)
+    from uuid import UUID as _UUID
+    from sqlalchemy import text as _text
+
+    namespaces = payload.get("namespaces", [])
+    if not namespaces:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="namespaces list required")
+
+    try:
+        target_id = _UUID(key_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid key_id")
+
+    target = session.get(ApiKey, target_id)
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="key not found")
+
+    for ns in namespaces:
+        session.execute(
+            _text("UPDATE api_keys SET namespaces = array_append(namespaces, :ns) WHERE id = :kid AND :ns != ALL(namespaces) AND '*' != ALL(namespaces)"),
+            {"ns": ns, "kid": str(target_id)},
+        )
+    session.commit()
+    clear_auth_cache()
+
+    session.refresh(target)
+    return {"key_id": key_id, "namespaces": list(target.namespaces or [])}
+
+
+
 @app.get("/admin/feedback")
 def list_feedback(
     namespace: str = Query(default="claude-shared"),

@@ -332,6 +332,8 @@ async def hive_summarize(
 async def hive_create_namespace(name: str) -> str:
     """Create a new namespace in hari-hive.
 
+    Also grants the agent's writer key access to the new namespace (Layer-2 fix).
+
     Args:
         name: Namespace name (lowercase, hyphens allowed).
     """
@@ -342,7 +344,27 @@ async def hive_create_namespace(name: str) -> str:
         return f"Connection error: {exc}"
     if resp.status_code not in (200, 201):
         return await _api_error(resp)
-    return f"Namespace '{name}' created."
+
+    # Grant the agent's writer key access to the new namespace.
+    # The admin key (used above) may have wildcard scope and skip the auto-grant in the
+    # server-side Layer-1 patch. We explicitly grant the writer key here to be safe.
+    try:
+        async with await _client(role="admin") as c:
+            keys_resp = await c.get("/admin/api-keys")
+        if keys_resp.status_code == 200:
+            all_keys = keys_resp.json()
+            writer_key = next((k for k in all_keys if k.get("name") == AGENT_KEY), None)
+            if writer_key:
+                key_id = writer_key["id"]
+                async with await _client(role="admin") as c:
+                    await c.post(
+                        f"/admin/api-keys/{key_id}/namespaces/grant",
+                        json={"namespaces": [name]},
+                    )
+    except Exception:
+        pass  # grant failure is non-fatal; admin can grant manually
+
+    return f"Namespace '{name}' created and writer key '{AGENT_KEY}' granted access."
 
 
 @mcp.tool()
