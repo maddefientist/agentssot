@@ -17,6 +17,23 @@ Instead of stuffing entire conversation histories into prompts, agents query Age
 
 The system includes a built-in web dashboard, LLM-friendly onboarding, pluggable embedding/LLM providers (Ollama, OpenAI, or bring-your-own), and an optional cross-encoder reranker for higher-quality recall.
 
+## Cortex Layer (2026-05)
+
+AgentSSOT now sits underneath **Cortex** — a typed-memory + synthesis + loadout-rotation system layered on the base service. Cortex adds:
+
+- **Typed memory taxonomy** (`KnowledgeItem.memory_type`): `rule`, `doctrine`, `entity`, `command`, `episodic`, etc. (full list in `app/models.py`)
+- **Tiered loadout** — `rule` items (priority 5) always loaded; `doctrine` items (priority 4) rotated daily by hash. Pushed into agent context at session start as `<hive-loadout>`.
+- **Synthesis loop** — daily Ollama-only job clusters recent KIs, proposes/reconciles Concepts (`app/synthesis/`), decays stale ones.
+- **Doctrine promotion** — high-confidence Concepts (≥0.8, principle/mental_model) are mirrored into doctrine-typed KIs so they enter loadout (`app/synthesis/promotion.py`).
+- **Two-tier permission grant** — `POST /admin/api-keys/{id}/namespaces/grant` for explicit per-namespace write authorization; creator auto-granted on `hive_create_namespace`.
+- **Tiered ingest schema** — `TieredKnowledgeCreate` accepts `loadout_priority`, `cwd_hints`, `entity_refs`.
+- **GUI panels** for namespaces, keys, decay, wonder-queue (served at `/`).
+- **Operational rule** — orchestration is Ollama-only (synthesis, promotion, profile-building). Anthropic models are never called from this service.
+
+For the operator-facing Cortex reference (naming conventions, scope taxonomy, full architecture diagram, open threads), see `~/.claude/cortex/README.md` on MBP.
+
+---
+
 ## Features
 
 - **Semantic recall** — vector similarity search via pgvector with optional HNSW indexing
