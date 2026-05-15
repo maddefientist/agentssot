@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import date as _date
 from typing import TYPE_CHECKING, Any, Iterable
 
 if TYPE_CHECKING:
@@ -70,9 +71,34 @@ def fetch_loadout_candidates(
     ).order_by(KnowledgeItem.loadout_priority.desc())
     rules = list(session.execute(rules_stmt).scalars())
 
+    # Doctrine rotation: pick one doctrine item per day using a date-hash offset.
+    # Doctrine is global (like rules) — runs regardless of entity_ids match.
+    # This surfaces a different standing principle each session without loading the full set.
+    doctrine_count = session.scalar(
+        select(func.count()).where(
+            and_(
+                *base_filters,
+                KnowledgeItem.memory_type == MemoryType.doctrine,
+            )
+        )
+    ) or 0
+    doctrine_item: list = []
+    if doctrine_count > 0:
+        rotation_index = int(hashlib.sha256(_date.today().isoformat().encode()).hexdigest(), 16) % doctrine_count
+        doctrine_stmt = (
+            select(KnowledgeItem)
+            .where(and_(*base_filters, KnowledgeItem.memory_type == MemoryType.doctrine))
+            .order_by(KnowledgeItem.created_at)
+            .offset(rotation_index)
+            .limit(1)
+        )
+        row = session.execute(doctrine_stmt).scalar_one_or_none()
+        if row is not None:
+            doctrine_item = [row]
+
     # Other tiers: filter by entity_refs intersection. JSONB containment via ?| operator.
     if not entity_ids:
-        return rules
+        return rules + doctrine_item
 
     # PostgreSQL JSONB ?| operator — matches when any element in the JSONB array
     # equals any of the supplied entity_ids. Safe bindparam expansion, no string concat.
@@ -86,7 +112,8 @@ def fetch_loadout_candidates(
              entity_filter)
     ).order_by(KnowledgeItem.loadout_priority.desc())
     others = list(session.execute(others_stmt).scalars())
-    return rules + others
+
+    return rules + others + doctrine_item
 
 
 def pack_loadout(

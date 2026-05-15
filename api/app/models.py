@@ -74,6 +74,7 @@ class MemoryType(str, enum.Enum):
     rule = "rule"                    # always/never directives, guardrails
     entity = "entity"                # canonical hosts/services/people/projects
     episodic = "episodic"            # session logs, reflections, run-insights
+    doctrine = "doctrine"            # synthesis-proposed standing patterns; rotated into loadout daily
 
 
 class MemoryCategory(str, enum.Enum):
