@@ -311,3 +311,16 @@ button.sm { padding: 0.3rem 0.7rem; font-size: 0.8rem; }
   .filter-row { flex-wrap: wrap; }
   .search-box { flex-wrap: wrap; }
 }
+
+/* Unified cortex nav (P1) */
+.cortex-nav { display: flex; gap: 4px; flex-wrap: wrap; }
+.cortex-nav a {
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.85rem;
+  border-radius: var(--radius);
+  transition: all 120ms;
+}
+.cortex-nav a:hover { color: var(--text); background: var(--surface-2); }
+.cortex-nav a.active { color: var(--text); background: var(--accent-dim); }

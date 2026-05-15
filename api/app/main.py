@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
@@ -34,6 +34,34 @@ logger = logging.getLogger("agentssot.api")
 BASE_DIR = Path(__file__).resolve().parent
 UI_DIR = BASE_DIR / "ui"
 PLUGIN_DIR = BASE_DIR / "plugin"
+
+_NAV_CACHE = {"mtime": 0.0, "html": ""}
+
+
+def _load_nav_partial() -> str:
+    nav_file = UI_DIR / "_nav.html"
+    try:
+        mtime = nav_file.stat().st_mtime
+    except FileNotFoundError:
+        return ""
+    if mtime != _NAV_CACHE["mtime"]:
+        _NAV_CACHE["mtime"] = mtime
+        _NAV_CACHE["html"] = nav_file.read_text()
+    return _NAV_CACHE["html"]
+
+
+def render_with_nav(page_filename: str, active: str) -> HTMLResponse:
+    page = (UI_DIR / page_filename).read_text()
+    nav = _load_nav_partial()
+    if active:
+        nav = nav.replace(
+            f'data-page="{active}"',
+            f'data-page="{active}" class="active"',
+            1,
+        )
+    rendered = page.replace("<!-- cortex-nav -->", nav, 1)
+    return HTMLResponse(rendered)
+
 
 
 @asynccontextmanager
@@ -235,38 +263,38 @@ def ui_cortex():
 
 @app.get("/review", include_in_schema=False)
 def review_page():
-    return FileResponse(UI_DIR / "review.html")
+    return render_with_nav("review.html", active="review")
 
 
 @app.get("/loadout", include_in_schema=False)
 def loadout_page():
-    return FileResponse(UI_DIR / "loadout.html")
+    return render_with_nav("loadout.html", active="loadout")
 
 
 @app.get("/entities", include_in_schema=False)
 def entities_page():
-    return FileResponse(UI_DIR / "entities.html")
+    return render_with_nav("entities.html", active="entities")
 
 
 
 @app.get("/namespaces", include_in_schema=False)
 def namespaces_page():
-    return FileResponse(UI_DIR / "namespaces.html")
+    return render_with_nav("namespaces.html", active="namespaces")
 
 
 @app.get("/keys", include_in_schema=False)
 def keys_page():
-    return FileResponse(UI_DIR / "keys.html")
+    return render_with_nav("keys.html", active="keys")
 
 
 @app.get("/decay", include_in_schema=False)
 def decay_page():
-    return FileResponse(UI_DIR / "decay.html")
+    return render_with_nav("decay.html", active="decay")
 
 
 @app.get("/wonder", include_in_schema=False)
 def wonder_page():
-    return FileResponse(UI_DIR / "wonder.html")
+    return render_with_nav("wonder.html", active="wonder")
 
 
 
