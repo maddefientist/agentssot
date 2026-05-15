@@ -28,6 +28,7 @@ from .routers import knowledge_router
 from .routers.agent_guide import router as agent_guide_router
 from .routers.entities import router as entities_router
 from .routers.signals import router as signals_router
+from .routers.doctrine import router as doctrine_router
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -137,6 +138,7 @@ app.include_router(knowledge_router, prefix="/api/v1")
 app.include_router(agent_guide_router)
 app.include_router(entities_router)
 app.include_router(signals_router)
+app.include_router(doctrine_router)
 
 
 @app.middleware("http")
@@ -302,6 +304,11 @@ def wonder_page():
 @app.get("/signals", include_in_schema=False)
 def signals_page():
     return render_with_nav("signals.html", active="signals")
+
+
+@app.get("/doctrine", include_in_schema=False)
+def doctrine_page():
+    return render_with_nav("doctrine.html", active="doctrine")
 
 
 

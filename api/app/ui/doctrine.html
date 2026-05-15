@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cortex Doctrine</title>
+<link rel="stylesheet" href="/ui/assets/styles.css">
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  .doctrine-grid { padding: 0 1rem; }
+  .doctrine-summary {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    margin-bottom: 0.8rem;
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+  }
+  .doctrine-summary b { color: var(--text); }
+  .doctrine-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.9rem 1rem;
+    margin-bottom: 0.6rem;
+    cursor: pointer;
+    transition: border-color 120ms;
+  }
+  .doctrine-card:hover { border-color: var(--accent); }
+  .doctrine-card.today { border-left: 3px solid #ffc857; }
+  .doctrine-head {
+    display: flex;
+    gap: 0.6rem;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+  .doctrine-title { color: var(--text); font-weight: 600; font-size: 0.95rem; flex: 1 1 auto; }
+  .today-badge {
+    background: #443a1a;
+    color: #ffc857;
+    padding: 0.1rem 0.45rem;
+    border-radius: 4px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .doctrine-meta { font-size: 0.72rem; color: var(--text-muted); margin-top: 0.3rem; display: flex; gap: 0.8rem; flex-wrap: wrap; }
+  .doctrine-meta .tag-chip {
+    background: var(--surface-2);
+    color: var(--text-muted);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.7rem;
+  }
+  .doctrine-body {
+    margin-top: 0.6rem;
+    padding-top: 0.6rem;
+    border-top: 1px solid var(--border);
+    color: var(--text);
+    font-size: 0.85rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+  .doctrine-body .label { color: var(--text-muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.2rem; }
+  .doctrine-body .layer { margin-bottom: 0.7rem; }
+  .pager { display: flex; gap: 0.5rem; align-items: center; padding: 0.8rem 0; }
+  .pager button {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.3rem 0.7rem;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 0.8rem;
+  }
+  .pager button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .empty-state { padding: 2rem; text-align: center; color: var(--text-muted); }
+</style>
+</head>
+<body class="dark">
+<div x-data="doctrineApp()" x-init="load()">
+  <header>
+    <h1>Cortex Doctrine</h1>
+    <!-- cortex-nav -->
+  </header>
+
+  <section class="controls-bar">
+    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()">
+    <input type="text" placeholder="Namespace" x-model="namespace" @change="reset()">
+    <input type="text" placeholder="Search title/content..." x-model="search" @input.debounce.400ms="reset()">
+    <button @click="load()">Refresh</button>
+  </section>
+
+  <section class="doctrine-grid">
+    <div class="doctrine-summary" x-show="!loading">
+      <span><b x-text="total"></b> doctrine items in <span x-text="namespace"></span></span>
+      <span>Today's rotation index: <b x-text="rotationIndex"></b></span>
+      <span x-show="todayItem">
+        Loaded today: <b x-text="todayItem && todayItem.title.slice(0, 60)"></b>
+      </span>
+    </div>
+
+    <div x-show="loading" class="empty-state">Loading...</div>
+    <div x-show="!loading && items.length === 0" class="empty-state">No doctrine items found.</div>
+
+    <template x-for="item in items" :key="item.id">
+      <div class="doctrine-card" :class="{today: item.is_today}" @click="toggle(item)">
+        <div class="doctrine-head">
+          <span class="doctrine-title" x-text="item.title"></span>
+          <span class="today-badge" x-show="item.is_today">loaded today</span>
+        </div>
+        <div class="doctrine-meta">
+          <span>#<span x-text="item.position"></span></span>
+          <span>conf <span x-text="item.confidence.toFixed(2)"></span></span>
+          <span>prio <span x-text="item.loadout_priority"></span></span>
+          <span>recalls <span x-text="item.recall_count"></span></span>
+          <span x-show="item.source" x-text="item.source"></span>
+          <template x-for="t in item.tags.slice(0, 4)" :key="t">
+            <span class="tag-chip" x-text="t"></span>
+          </template>
+        </div>
+        <div class="doctrine-body" x-show="expanded[item.id]">
+          <div class="layer" x-show="item.summary">
+            <div class="label">Summary (L1)</div>
+            <div x-text="item.summary"></div>
+          </div>
+          <div class="layer">
+            <div class="label">Full content</div>
+            <div x-text="item.content"></div>
+          </div>
+          <div class="layer" x-show="item.source_ref">
+            <div class="label">Source concept</div>
+            <div x-text="item.source_ref"></div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <div class="pager" x-show="!loading && total > limit">
+      <button @click="prev()" :disabled="offset === 0">Prev</button>
+      <span x-text="`${offset + 1}–${Math.min(offset + limit, total)} of ${total}`"></span>
+      <button @click="next()" :disabled="offset + limit >= total">Next</button>
+    </div>
+  </section>
+</div>
+
+<script>
+function doctrineApp() {
+  return {
+    apiKey: localStorage.getItem('apiKey') || '',
+    namespace: localStorage.getItem('doctrineNs') || 'claude-shared',
+    search: '',
+    items: [],
+    total: 0,
+    offset: 0,
+    limit: 50,
+    rotationIndex: -1,
+    todayItem: null,
+    expanded: {},
+    loading: false,
+
+    reset() { this.offset = 0; this.load(); },
+    prev() { this.offset = Math.max(0, this.offset - this.limit); this.load(); },
+    next() { this.offset += this.limit; this.load(); },
+    toggle(item) { this.expanded[item.id] = !this.expanded[item.id]; },
+
+    async load() {
+      if (!this.apiKey) return;
+      localStorage.setItem('apiKey', this.apiKey);
+      localStorage.setItem('doctrineNs', this.namespace);
+      this.loading = true;
+      try {
+        const params = new URLSearchParams({
+          namespace: this.namespace,
+          limit: this.limit,
+          offset: this.offset,
+        });
+        if (this.search) params.set('search', this.search);
+        const r = await fetch(`/doctrine/list?${params}`, {
+          headers: { 'X-API-Key': this.apiKey }
+        });
+        if (!r.ok) {
+          console.error('doctrine load failed', r.status);
+          this.items = [];
+          return;
+        }
+        const j = await r.json();
+        this.items = j.items || [];
+        this.total = j.total || 0;
+        this.rotationIndex = j.rotation_index_today;
+        this.todayItem = this.items.find(i => i.is_today) || null;
+      } finally {
+        this.loading = false;
+      }
+    }
+  };
+}
+</script>
+</body>
+</html>
