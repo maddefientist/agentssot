@@ -2,7 +2,8 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import ValidationError
-from sqlalchemy import select, and_, func, or_
+from sqlalchemy import select, and_, func, or_, cast
+from sqlalchemy.dialects.postgresql import ARRAY, TEXT
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 from uuid import UUID
@@ -213,15 +214,17 @@ async def ingest_tiered(
     session.commit()
 
     # Plan 1 T2.5: supersession + contradiction scans
-    new_entity_refs: list[str] = []
+    # classifier_entity_refs: UUID strings extracted by the classifier — used for supersession.
+    # caller_entity_refs: arbitrary strings supplied by the caller — stored but not used for
+    # supersession scanning (they may not be entity UUIDs and would break the ?| operator).
+    classifier_entity_refs: list[str] = []
     if classifier_out:
-        new_entity_refs = list(classifier_out.get("entity_mentions") or [])
-    # Merge caller-supplied entity_refs with classifier-extracted ones (deduplicated).
-    merged_entity_refs = list(dict.fromkeys(_caller_entity_refs + new_entity_refs))
+        classifier_entity_refs = list(classifier_out.get("entity_mentions") or [])
+    merged_entity_refs = list(dict.fromkeys(_caller_entity_refs + classifier_entity_refs))
     if merged_entity_refs:
         ki.entity_refs = merged_entity_refs
-        new_entity_refs = merged_entity_refs  # use merged set for supersession scan
         session.commit()
+    new_entity_refs = classifier_entity_refs  # supersession scan uses only classifier-extracted UUIDs
 
     if ki.memory_type and new_entity_refs:
         cand_stmt = (
@@ -231,7 +234,8 @@ async def ingest_tiered(
                 KnowledgeItem.memory_type == ki.memory_type,
                 KnowledgeItem.id != ki.id,
                 KnowledgeItem.superseded_by.is_(None),
-                KnowledgeItem.entity_refs.op("?|")(new_entity_refs),
+                # ?| requires text[] on the right; cast prevents 'jsonb ?| jsonb' error
+                func.jsonb_exists_any(KnowledgeItem.entity_refs, cast(new_entity_refs, ARRAY(TEXT))),
             )
             .limit(20)
         )
@@ -257,7 +261,7 @@ async def ingest_tiered(
             .where(
                 KnowledgeItem.namespace == namespace,
                 KnowledgeItem.memory_type == "rule",
-                KnowledgeItem.entity_refs.op("?|")(new_entity_refs),
+                func.jsonb_exists_any(KnowledgeItem.entity_refs, cast(new_entity_refs, ARRAY(TEXT))),
                 KnowledgeItem.superseded_by.is_(None),
             )
         )
