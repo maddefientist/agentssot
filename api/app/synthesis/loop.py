@@ -290,6 +290,16 @@ def _run_synthesis_for_namespace(
         except Exception:
             logger.exception("agent profile building failed", extra={"namespace": namespace})
 
+        # --- Doctrine promotion (Layer 6) ---
+        try:
+            from .promotion import promote_concepts_to_doctrine
+            promotion_stats = promote_concepts_to_doctrine(session, namespace, embedding_provider)
+            stats["promoted"] = promotion_stats["promoted"]
+            stats["promoted_superseded"] = promotion_stats["superseded"]
+            stats["promoted_skipped"] = promotion_stats["skipped"]
+        except Exception:
+            logger.exception("doctrine promotion failed", extra={"namespace": namespace})
+
         session.commit()
 
     return stats
