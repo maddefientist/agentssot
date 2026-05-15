@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cortex Adherence</title>
+<link rel="stylesheet" href="/ui/assets/styles.css">
+<script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<style>
+  .rollup-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.6rem;
+    padding: 0 1rem 1rem;
+  }
+  .rollup-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.7rem 0.9rem;
+  }
+  .rollup-label { color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .rollup-value { color: var(--text); font-size: 1.4rem; font-weight: 600; margin-top: 0.2rem; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); padding: 0 1rem; margin-bottom: 0.5rem; }
+  .tabs button {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    padding: 0.5rem 0.9rem;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.85rem;
+    border-bottom: 2px solid transparent;
+  }
+  .tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+  .adh-grid { padding: 0 1rem; }
+  .adh-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .adh-table th, .adh-table td {
+    padding: 0.5rem 0.6rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+  }
+  .adh-table th { color: var(--text-muted); font-weight: 500; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  .adh-table tr:hover { background: var(--surface-2); }
+  .adh-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .adh-title { color: var(--text); max-width: 480px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .adh-type {
+    display: inline-block;
+    padding: 0.05rem 0.4rem;
+    border-radius: 3px;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    font-size: 0.7rem;
+  }
+  .adh-action {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 0.2rem 0.5rem;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.7rem;
+  }
+  .adh-action:hover { color: var(--text); border-color: var(--accent); }
+  .empty-state { padding: 2rem; text-align: center; color: var(--text-muted); }
+</style>
+</head>
+<body class="dark">
+<div x-data="adherenceApp()" x-init="load()">
+  <header>
+    <h1>Cortex Adherence</h1>
+    <!-- cortex-nav -->
+  </header>
+
+  <section class="controls-bar">
+    <input type="password" placeholder="Writer/Admin API key" x-model="apiKey" @change="load()">
+    <input type="text" placeholder="Namespace" x-model="namespace" @change="load()">
+    <select x-model="windowDays" @change="load()">
+      <option value="7">Last 7d</option>
+      <option value="30" selected>Last 30d</option>
+      <option value="90">Last 90d</option>
+    </select>
+    <button @click="load()">Refresh</button>
+  </section>
+
+  <div x-show="loading" class="empty-state">Loading...</div>
+
+  <section x-show="!loading && rollup">
+    <div class="rollup-grid">
+      <div class="rollup-card">
+        <div class="rollup-label">Total Active</div>
+        <div class="rollup-value" x-text="rollup.total_active"></div>
+      </div>
+      <div class="rollup-card">
+        <div class="rollup-label">Ever Recalled</div>
+        <div class="rollup-value" x-text="rollup.ever_recalled"></div>
+      </div>
+      <div class="rollup-card">
+        <div class="rollup-label">Coverage</div>
+        <div class="rollup-value" x-text="rollup.coverage_pct + '%'"></div>
+      </div>
+      <div class="rollup-card">
+        <div class="rollup-label">Under-fetched</div>
+        <div class="rollup-value" x-text="rollup.under_fetched_count"></div>
+      </div>
+      <div class="rollup-card">
+        <div class="rollup-label">False Positives</div>
+        <div class="rollup-value" x-text="rollup.false_positives_count"></div>
+      </div>
+      <div class="rollup-card">
+        <div class="rollup-label">Promotion Candidates</div>
+        <div class="rollup-value" x-text="rollup.promotion_candidates_count"></div>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button :class="{active: tab === 'under_fetched'}" @click="tab = 'under_fetched'">
+        Under-fetched (<span x-text="under_fetched.length"></span>)
+      </button>
+      <button :class="{active: tab === 'false_positives'}" @click="tab = 'false_positives'">
+        False positives (<span x-text="false_positives.length"></span>)
+      </button>
+      <button :class="{active: tab === 'promotion_candidates'}" @click="tab = 'promotion_candidates'">
+        Promotion candidates (<span x-text="promotion_candidates.length"></span>)
+      </button>
+    </div>
+
+    <div class="adh-grid">
+      <template x-if="currentList.length === 0">
+        <div class="empty-state">Nothing in this bucket. Good or quiet — read the rollup.</div>
+      </template>
+      <template x-if="currentList.length > 0">
+        <table class="adh-table">
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Type</th>
+              <th class="num">Conf</th>
+              <th class="num">Recalls</th>
+              <th class="num">+</th>
+              <th class="num">-</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="item in currentList" :key="item.id">
+              <tr>
+                <td class="adh-title" :title="item.title" x-text="item.title"></td>
+                <td><span class="adh-type" x-text="item.memory_type || '—'"></span></td>
+                <td class="num" x-text="item.confidence.toFixed(2)"></td>
+                <td class="num" x-text="item.recall_count"></td>
+                <td class="num" x-text="item.positive_feedback"></td>
+                <td class="num" x-text="item.negative_feedback"></td>
+                <td>
+                  <button class="adh-action" @click="doAction(item, primaryAction)" x-text="primaryAction"></button>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </template>
+    </div>
+  </section>
+</div>
+
+<script>
+function adherenceApp() {
+  return {
+    apiKey: localStorage.getItem('apiKey') || '',
+    namespace: localStorage.getItem('adherenceNs') || 'claude-shared',
+    windowDays: 30,
+    rollup: null,
+    under_fetched: [],
+    false_positives: [],
+    promotion_candidates: [],
+    tab: 'under_fetched',
+    loading: false,
+
+    get currentList() { return this[this.tab] || []; },
+    get primaryAction() {
+      if (this.tab === 'false_positives') return 'dismiss';
+      if (this.tab === 'promotion_candidates') return 'promote-to-rule';
+      return 'promote-to-doctrine';
+    },
+
+    async load() {
+      if (!this.apiKey) return;
+      localStorage.setItem('apiKey', this.apiKey);
+      localStorage.setItem('adherenceNs', this.namespace);
+      this.loading = true;
+      try {
+        const r = await fetch(`/adherence/stats?namespace=${encodeURIComponent(this.namespace)}&days=${this.windowDays}&limit=100`, {
+          headers: { 'X-API-Key': this.apiKey }
+        });
+        if (!r.ok) { console.error('adherence load failed', r.status); return; }
+        const j = await r.json();
+        this.rollup = j.rollup;
+        this.under_fetched = j.under_fetched || [];
+        this.false_positives = j.false_positives || [];
+        this.promotion_candidates = j.promotion_candidates || [];
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async doAction(item, action) {
+      const r = await fetch(`/signals/${item.id}/action`, {
+        method: 'POST',
+        headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, kind: 'knowledge' })
+      });
+      if (r.ok) {
+        await this.load();
+      } else {
+        const err = await r.text();
+        alert(`Action failed: ${r.status} ${err}`);
+      }
+    }
+  };
+}
+</script>
+</body>
+</html>

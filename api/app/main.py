@@ -29,6 +29,7 @@ from .routers.agent_guide import router as agent_guide_router
 from .routers.entities import router as entities_router
 from .routers.signals import router as signals_router
 from .routers.doctrine import router as doctrine_router
+from .routers.adherence import router as adherence_router
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -139,6 +140,7 @@ app.include_router(agent_guide_router)
 app.include_router(entities_router)
 app.include_router(signals_router)
 app.include_router(doctrine_router)
+app.include_router(adherence_router)
 
 
 @app.middleware("http")
@@ -309,6 +311,11 @@ def signals_page():
 @app.get("/doctrine", include_in_schema=False)
 def doctrine_page():
     return render_with_nav("doctrine.html", active="doctrine")
+
+
+@app.get("/adherence", include_in_schema=False)
+def adherence_page():
+    return render_with_nav("adherence.html", active="adherence")
 
 
 
