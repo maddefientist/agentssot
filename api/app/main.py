@@ -24,6 +24,7 @@ from .settings import get_settings
 from .startup import initialize_system
 from .cortex import router as cortex_router
 from .sync import router as sync_router
+from .synapse import router as synapse_router
 from .routers import knowledge_router
 from .routers.agent_guide import router as agent_guide_router
 from .routers.entities import router as entities_router
@@ -144,6 +145,18 @@ async def lifespan(app: FastAPI):
     logger.info("background lifecycle sweep loop started (03:00 UTC)")
     app.state.lifecycle_task = lifecycle_task
 
+    from .synapse.reaper import reaper_loop as _reaper_loop
+    reaper_task = asyncio.create_task(_reaper_loop(), name="synapse-reaper")
+    logger.info("synapse reaper started (60s interval, 10min TTL)")
+    app.state.reaper_task = reaper_task
+
+    from .synapse.listener import listener_loop as _listener_loop
+    listener_task = asyncio.create_task(
+        _listener_loop(settings.database_url), name="synapse-listener"
+    )
+    logger.info("synapse listener started (LISTEN/NOTIFY on synapse_events)")
+    app.state.listener_task = listener_task
+
     yield
 
     if task:
@@ -167,6 +180,18 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
+    reaper_task.cancel()
+    try:
+        await reaper_task
+    except asyncio.CancelledError:
+        pass
+
+    listener_task.cancel()
+    try:
+        await listener_task
+    except asyncio.CancelledError:
+        pass
+
 
 app = FastAPI(title="AgentSSOT API", version="1.0.0", lifespan=lifespan)
 if UI_DIR.exists():
@@ -175,6 +200,7 @@ if UI_DIR.exists():
 
 app.include_router(cortex_router)
 app.include_router(sync_router)
+app.include_router(synapse_router)
 app.include_router(knowledge_router, prefix="/api/v1")
 app.include_router(agent_guide_router)
 app.include_router(entities_router)

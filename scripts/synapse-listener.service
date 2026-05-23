@@ -1,0 +1,20 @@
+[Unit]
+Description=Synapse Fleet Listener — materialises live Claude session state to disk
+Documentation=https://github.com/maddefientist/claude-config
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env python3 /opt/agentssot/scripts/synapse_listener.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=synapse-listener
+
+# Allow override of agent.json path
+EnvironmentFile=-%h/.claude/agentssot/local/listener.env
+
+[Install]
+WantedBy=default.target
