@@ -39,6 +39,27 @@ from ..services.loadout import (
     resolve_cwd_entities, fetch_loadout_candidates, pack_loadout, loadout_cache_key,
 )
 
+def _safe_uuids(raw):
+    """Coerce a list of raw entity-ref values to UUIDs, skipping malformed ones.
+
+    Historical knowledge items may have stored non-UUID strings in entity_refs
+    (data-quality drift). UUID() would raise ValueError and 500 the entire
+    recall - instead skip the bad entries and log them so they can be cleaned
+    up out-of-band.
+    """
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+    out = []
+    for x in (raw or []):
+        if not x:
+            continue
+        try:
+            out.append(UUID(str(x)))
+        except (ValueError, AttributeError, TypeError):
+            _log.warning('skipping malformed entity_ref: %r', x)
+    return out
+
+
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 
@@ -504,7 +525,7 @@ async def _recall_bucketed(
                 content=it.content if data.expand_layer == "full" else None,
                 score=float(s),
                 confidence=float(getattr(it, "confidence", 1.0)),
-                entity_refs=[UUID(str(x)) for x in (getattr(it, 'entity_refs', None) or []) if x],
+                entity_refs=_safe_uuids(getattr(it, "entity_refs", None)),
                 tags=list(it.tags or []),
             )
             for it, s in zip(items, scores)
