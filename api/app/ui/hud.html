@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Madi</title>
+  <link rel="stylesheet" href="/ui/assets/hud.css?v=__V__">
+</head>
+<body class="hud">
+  <div class="scanlines"></div>
+
+  <header class="tick">
+    <span>FLEET <b id="fleet">—</b></span>
+    <span><i class="dot" id="dot-opus"></i>Opus</span>
+    <span><i class="dot" id="dot-deepseek"></i>deepseek</span>
+    <span><i class="dot" id="dot-synapse"></i>synapse</span>
+    <span class="clock" id="clock">--:--</span>
+    <span class="conn" id="conn">connecting…</span>
+  </header>
+
+  <main class="stage-wrap">
+    <aside class="col col-left">
+      <div class="panel">
+        <div class="p-hd">Memory</div>
+        <div class="p-row">hive <b id="hive-count">—</b></div>
+        <div class="p-row">embedded <span id="hive-embedded">—</span></div>
+        <div class="p-hd" style="margin-top:12px">Synapse</div>
+        <div class="p-row" id="synapse-row">idle</div>
+      </div>
+    </aside>
+
+    <section class="stage" id="stage">
+      <div class="ring" id="ring"><span>MADI</span></div>
+      <div class="presence" id="presence">PRESENT · LISTENING</div>
+      <div class="console" id="console"></div>
+    </section>
+
+    <aside class="col col-right">
+      <div class="panel">
+        <div class="p-hd">Brain</div>
+        <div class="p-row" id="brain-live">resting</div>
+        <div class="p-hd" style="margin-top:12px">Executors</div>
+        <div id="exec-list"></div>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="bar">
+    <form id="cmd-form" autocomplete="off">
+      <span class="prompt">madi&gt;</span>
+      <input id="cmd" name="cmd" placeholder="speak or type a command_" autofocus>
+    </form>
+  </footer>
+
+  <script src="/ui/assets/hud.js?v=__V__"></script>
+</body>
+</html>

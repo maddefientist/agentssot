@@ -1,0 +1,126 @@
+/* Madi HUD — "Obsidian Terminal".
+   Near-black + one warm brass accent. Mono for the machine layer, serif for the
+   reading layer. Subtle phosphor scanlines, a breathing presence ring. One
+   surface that morphs ambient (resting) -> active (working console). */
+
+:root{
+  --bg:#0a0a0c; --panel:#101013; --line:#26241f;
+  --amber:#d9a441; --amber-dim:#8a6e3a;
+  --ink:#ece7dd; --dim:#7d776c;
+  --ok:#d9a441; --off:#3a3630; --err:#c25b4a;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --serif:Georgia,"Times New Roman",serif;
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body.hud{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:var(--mono); font-size:13px; line-height:1.5;
+  display:flex; flex-direction:column; overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* phosphor scanline overlay */
+.scanlines{
+  position:fixed; inset:0; pointer-events:none; z-index:50;
+  background:repeating-linear-gradient(0deg,transparent 0 3px,rgba(217,164,65,.018) 3px 4px);
+}
+
+/* ---- tick bar ---- */
+.tick{
+  flex:0 0 auto; display:flex; gap:18px; align-items:center;
+  padding:9px 16px; border-bottom:1px solid var(--line);
+  font-size:11px; letter-spacing:.5px; color:var(--dim);
+}
+.tick b{color:var(--amber); font-weight:400}
+.tick .clock{margin-left:auto}
+.tick .conn{color:var(--dim)}
+.tick .conn.online{color:var(--amber)}
+.tick .conn.offline{color:var(--err)}
+.dot{
+  display:inline-block; width:7px; height:7px; border-radius:50%;
+  background:var(--off); margin-right:2px; vertical-align:middle;
+}
+.dot.on{background:var(--ok); box-shadow:0 0 6px var(--amber)}
+.dot.err{background:var(--err); box-shadow:0 0 6px var(--err)}
+
+/* ---- main 3-column stage ---- */
+.stage-wrap{
+  flex:1; display:grid; grid-template-columns:200px 1fr 200px;
+  gap:14px; padding:16px; min-height:0;
+}
+.col{min-height:0}
+.panel{
+  border:1px solid var(--line); border-radius:8px; background:var(--panel);
+  padding:11px; height:100%;
+}
+.p-hd{
+  color:var(--amber-dim); text-transform:uppercase; font-size:10px;
+  letter-spacing:1px; margin-bottom:6px;
+}
+.p-row{font-size:11.5px; color:var(--dim); padding:2px 0}
+.p-row b{color:var(--ink); font-weight:400}
+.exec{display:flex; align-items:center; gap:6px; font-size:11px; color:var(--dim); padding:2px 0}
+
+/* ---- center stage ---- */
+.stage{
+  border:1px solid var(--line); border-radius:10px;
+  background:linear-gradient(#0d0d10,#0a0a0c);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:14px; padding:20px; position:relative; overflow:hidden; min-height:0;
+}
+.ring{
+  width:120px; height:120px; border-radius:50%;
+  border:1px solid var(--amber);
+  box-shadow:0 0 28px rgba(217,164,65,.20), inset 0 0 6px rgba(217,164,65,.25);
+  display:flex; align-items:center; justify-content:center;
+  color:var(--amber); font-size:13px; letter-spacing:3px;
+  animation:breathe 4.5s ease-in-out infinite; flex:0 0 auto;
+  transition:width .5s ease, height .5s ease, font-size .5s ease;
+}
+@keyframes breathe{
+  0%,100%{box-shadow:0 0 22px rgba(217,164,65,.14), inset 0 0 5px rgba(217,164,65,.20)}
+  50%{box-shadow:0 0 36px rgba(217,164,65,.30), inset 0 0 8px rgba(217,164,65,.32)}
+}
+.ring.thinking{animation:breathe 1.4s ease-in-out infinite}
+.presence{font-size:11px; letter-spacing:2px; color:var(--dim)}
+
+/* conversation console — hidden in ambient, grows in active */
+.console{
+  width:100%; max-width:760px; flex:1; min-height:0; overflow-y:auto;
+  display:none; flex-direction:column; gap:14px; padding:4px 6px;
+}
+.console .turn{display:flex; flex-direction:column; gap:3px}
+.console .who{font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--amber-dim)}
+.console .said.user{color:var(--ink)}
+.console .said.madi{font-family:var(--serif); font-size:15px; line-height:1.5; color:#f4f0e8; white-space:pre-wrap}
+.console .meta{font-size:10px; color:var(--dim); letter-spacing:.5px}
+.console .fallover{font-size:11px; color:var(--amber); letter-spacing:.3px}
+.console .err{font-size:12px; color:var(--err)}
+.console .recall{font-family:var(--serif); font-size:12.5px; color:#b8b1a4; border-left:2px solid var(--line); padding-left:8px}
+
+/* ---- active morph ---- */
+body.hud.active .ring{width:54px; height:54px; font-size:8px; letter-spacing:1.5px}
+body.hud.active .presence{display:none}
+body.hud.active .console{display:flex}
+body.hud.active .stage{justify-content:flex-start; align-items:stretch}
+body.hud.active .stage .ring{position:absolute; top:12px; right:12px}
+
+/* ---- command bar ---- */
+.bar{
+  flex:0 0 auto; border-top:1px solid var(--line); padding:12px 16px;
+  background:var(--panel);
+}
+.bar form{display:flex; align-items:center; gap:10px}
+.bar .prompt{color:var(--amber); font-size:13px}
+.bar input{
+  flex:1; background:transparent; border:none; outline:none;
+  color:var(--ink); font-family:var(--mono); font-size:13px; caret-color:var(--amber);
+}
+.bar input::placeholder{color:var(--dim)}
+
+@media (max-width:780px){
+  .stage-wrap{grid-template-columns:1fr; grid-auto-rows:min-content}
+  .col{display:none}
+}

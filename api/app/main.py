@@ -217,6 +217,22 @@ _gateway_factory, _gateway_status = build_gateway(app)
 app.include_router(build_gateway_router(_gateway_factory, _gateway_status))
 
 
+@app.get("/hud", include_in_schema=False)
+def hud_page():
+    """Serve the Madi HUD as a full-bleed surface (no cortex nav chrome).
+
+    Self-busts hud.css/hud.js by their own mtime so edits invalidate the cache.
+    """
+    html = (UI_DIR / "hud.html").read_text()
+    v = 0
+    for name in ("hud.css", "hud.js"):
+        try:
+            v = max(v, int((UI_DIR / name).stat().st_mtime))
+        except FileNotFoundError:
+            pass
+    return HTMLResponse(html.replace("__V__", str(v)))
+
+
 @app.middleware("http")
 async def access_log_middleware(request: Request, call_next):
     started = time.perf_counter()
