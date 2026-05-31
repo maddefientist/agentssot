@@ -357,8 +357,14 @@ def _recall_knowledge_weighted(
     settings,
     memory_type: str | None = None,
     max_staleness: float | None = None,
+    query_text: str | None = None,
 ) -> list[dict]:
     """Recall knowledge items with weighted scoring: similarity + strength + recency.
+
+    When RECALL_HYBRID_SEARCH is enabled and query_text is present, the weighted
+    vector ranking is fused with a Postgres full-text keyword ranking via
+    reciprocal-rank fusion (RRF). This recovers exact-token matches (error codes,
+    flags, file paths, API names) that fuzzy vector similarity can miss.
 
     Optional filters (only applied when typed_memory_enabled is True in settings):
     - memory_type: filter to a specific MemoryType value
@@ -378,37 +384,89 @@ def _recall_knowledge_weighted(
     # Use cosine_distance for ORDER BY (pgvector operator) but weighted_score for final ranking
     cosine_dist = KnowledgeItem.embedding.cosine_distance(query_embedding).label("score")
 
-    stmt = (
-        select(KnowledgeItem, cosine_dist, weighted_score)
-        .where(KnowledgeItem.namespace == namespace)
-        .where(KnowledgeItem.embedding.is_not(None))
-        .where(or_(KnowledgeItem.status == "active", KnowledgeItem.status.is_(None)))
-        .order_by(weighted_score.desc())
-        .limit(candidate_k)
-    )
-    if project_id:
-        stmt = stmt.where(KnowledgeItem.project_id == project_id)
-    if entity_id:
-        stmt = stmt.where(KnowledgeItem.entity_id == entity_id)
-
-    # Opt-in typed memory filters (gated by feature flag)
-    if settings.typed_memory_enabled:
-        if memory_type is not None:
-            stmt = stmt.where(KnowledgeItem.memory_type == memory_type)
-        if max_staleness is not None:
-            # Include items with NULL staleness (not yet scored) AND items below threshold
-            stmt = stmt.where(
-                or_(
-                    KnowledgeItem.staleness_score.is_(None),
-                    KnowledgeItem.staleness_score <= max_staleness,
+    def _base_filters(stmt):
+        stmt = (
+            stmt.where(KnowledgeItem.namespace == namespace)
+            .where(KnowledgeItem.embedding.is_not(None))
+            .where(or_(KnowledgeItem.status == "active", KnowledgeItem.status.is_(None)))
+        )
+        if project_id:
+            stmt = stmt.where(KnowledgeItem.project_id == project_id)
+        if entity_id:
+            stmt = stmt.where(KnowledgeItem.entity_id == entity_id)
+        if settings.typed_memory_enabled:
+            if memory_type is not None:
+                stmt = stmt.where(KnowledgeItem.memory_type == memory_type)
+            if max_staleness is not None:
+                stmt = stmt.where(
+                    or_(
+                        KnowledgeItem.staleness_score.is_(None),
+                        KnowledgeItem.staleness_score <= max_staleness,
+                    )
                 )
-            )
+        return stmt
 
-    rows = session.execute(stmt).all()
+    # --- Vector track (always) ---
+    vec_stmt = _base_filters(
+        select(KnowledgeItem, cosine_dist, weighted_score)
+    ).order_by(weighted_score.desc()).limit(candidate_k)
+    vec_rows = session.execute(vec_stmt).all()
+
+    # id -> (item, cosine_val); preserves first-seen item/score across both tracks
+    by_id: dict[str, tuple] = {}
+    vec_order: list[str] = []
+    for item, cosine_val, _ws in vec_rows:
+        sid = str(item.id)
+        by_id[sid] = (item, cosine_val)
+        vec_order.append(sid)
+
+    # --- Keyword track (optional, hybrid fusion) ---
+    fts_order: list[str] = []
+    hybrid_on = (
+        getattr(settings, "recall_hybrid_search", False)
+        and query_text
+        and query_text.strip()
+    )
+    if hybrid_on:
+        lang = getattr(settings, "recall_fts_language", "english")
+        tsv = func.to_tsvector(lang, KnowledgeItem.content)
+        tsq = func.websearch_to_tsquery(lang, query_text)
+        fts_rank = func.ts_rank(tsv, tsq).label("fts_rank")
+        try:
+            fts_stmt = (
+                _base_filters(select(KnowledgeItem, cosine_dist))
+                .where(tsv.op("@@")(tsq))
+                .order_by(fts_rank.desc())
+                .limit(candidate_k)
+            )
+            fts_rows = session.execute(fts_stmt).all()
+            for item, cosine_val in fts_rows:
+                sid = str(item.id)
+                if sid not in by_id:
+                    by_id[sid] = (item, cosine_val)
+                fts_order.append(sid)
+        except Exception:
+            # FTS is best-effort — never break recall on a malformed tsquery.
+            logger.warning("Hybrid FTS track failed; falling back to vector-only", exc_info=True)
+            fts_order = []
+
+    # --- Reciprocal-rank fusion ---
+    if fts_order:
+        k = getattr(settings, "recall_hybrid_rrf_k", 60)
+        rrf: dict[str, float] = {}
+        for rank, sid in enumerate(vec_order, start=1):
+            rrf[sid] = rrf.get(sid, 0.0) + 1.0 / (k + rank)
+        for rank, sid in enumerate(fts_order, start=1):
+            rrf[sid] = rrf.get(sid, 0.0) + 1.0 / (k + rank)
+        ordered_ids = sorted(rrf, key=lambda s: rrf[s], reverse=True)[:candidate_k]
+    else:
+        ordered_ids = vec_order
+
     results = []
-    for item, cosine_val, _ws in rows:
+    for sid in ordered_ids:
+        item, cosine_val = by_id[sid]
         row_dict = {
-            "id": str(item.id),
+            "id": sid,
             "scope": "knowledge",
             "score": _safe_float(cosine_val),
             "snippet": _clip(item.content, settings.max_snippet_chars),
@@ -601,9 +659,14 @@ def recall(
             project_id, entity_id, settings,
             memory_type=payload.memory_type,
             max_staleness=payload.max_staleness,
+            query_text=payload.query_text,
         )
         items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
         _track_knowledge_recalls(session, [i["id"] for i in items])
+        if getattr(settings, "recall_sentence_trim", False):
+            from .sentence_trim import trim_recall_items
+            trim_recall_items(items, payload.query_text,
+                              getattr(settings, "recall_sentence_trim_max", 4))
         if payload.agent_key:
             update_profile_from_recall(session, payload.agent_key, payload.namespace)
         return items
@@ -714,6 +777,7 @@ def recall(
             project_id, entity_id, settings,
             memory_type=payload.memory_type,
             max_staleness=payload.max_staleness,
+            query_text=payload.query_text,
         )
 
         # --- concepts ---

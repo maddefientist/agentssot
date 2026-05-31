@@ -1,4 +1,9 @@
 .env
+.env.bak*
+*.bak-*
+.chain/
+.chain-runs/
+after
 data/
 backups/
 dropbox/

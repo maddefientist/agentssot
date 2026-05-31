@@ -924,6 +924,11 @@ def recall(
     # Commit tracking updates (knowledge recall counts + concept recall events)
     session.commit()
 
+    # Read-side sanitization: neutralize prompt-injection before content leaves the API.
+    if getattr(app.state.settings, "recall_output_sanitization", True):
+        from .output_sanitizer import sanitize_recall_items
+        sanitize_recall_items(items)
+
     top_k = payload.top_k if payload.top_k is not None else app.state.settings.default_top_k
     top_k = min(max(top_k, 1), 50)
 

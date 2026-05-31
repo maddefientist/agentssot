@@ -75,6 +75,22 @@ class Settings(BaseSettings):
     # Secret scanning: reject knowledge items containing likely secrets on ingest
     ingest_secret_scanning: bool = Field(default=True, alias="INGEST_SECRET_SCANNING")
 
+    # Read-side sanitization: neutralize prompt-injection in recalled content
+    # before it is returned to a model (defense at the read boundary).
+    recall_output_sanitization: bool = Field(default=True, alias="RECALL_OUTPUT_SANITIZATION")
+
+    # Hybrid retrieval: fuse Postgres full-text keyword search with vector recall
+    # (reciprocal-rank fusion) so exact tokens (error codes, flags, paths) aren't
+    # lost to fuzzy vector similarity. Only activates when query_text is present.
+    recall_hybrid_search: bool = Field(default=True, alias="RECALL_HYBRID_SEARCH")
+    recall_hybrid_rrf_k: int = Field(default=60, alias="RECALL_HYBRID_RRF_K")
+    recall_fts_language: str = Field(default="english", alias="RECALL_FTS_LANGUAGE")
+
+    # Query-time extractive trimming: return only query-relevant sentences from a
+    # chunk rather than the whole snippet, to cut recall/loadout tokens.
+    recall_sentence_trim: bool = Field(default=False, alias="RECALL_SENTENCE_TRIM")
+    recall_sentence_trim_max: int = Field(default=4, alias="RECALL_SENTENCE_TRIM_MAX")
+
     # Sync tracking: enable per-device sync checkpoints and conflict detection
     sync_tracking_enabled: bool = Field(default=False, alias="SYNC_TRACKING_ENABLED")
     sync_conflict_window_hours: int = Field(default=24, alias="SYNC_CONFLICT_WINDOW_HOURS")

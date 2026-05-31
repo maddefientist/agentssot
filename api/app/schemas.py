@@ -216,6 +216,11 @@ class RecallItem(BaseModel):
     last_verified_at: datetime | None = None
     staleness_score: float | None = None
     extraction_source: str | None = None
+    # Set when read-side sanitization neutralized injection in this item's content
+    sanitized: bool | None = None
+    sanitized_patterns: list[str] | None = None
+    # Set when query-time sentence trimming shortened this item's snippet
+    trimmed: bool | None = None
 
 
 class RecallResponse(BaseModel):

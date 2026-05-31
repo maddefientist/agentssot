@@ -419,6 +419,11 @@ async def recall_tiered(
             )
         )
 
+    if getattr(get_settings(), "recall_output_sanitization", True):
+        from ..output_sanitizer import sanitize_obj_fields
+        for r in results:
+            sanitize_obj_fields(r, ("content", "abstract", "summary", "full_content"))
+
     return TieredRecallResponse(
         results=results,
         query=data.query,
@@ -530,6 +535,12 @@ async def _recall_bucketed(
             )
             for it, s in zip(items, scores)
         ]
+
+    if getattr(get_settings(), "recall_output_sanitization", True):
+        from ..output_sanitizer import sanitize_obj_fields
+        for bucket_items in buckets.values():
+            for bi in bucket_items:
+                sanitize_obj_fields(bi, ("abstract", "summary", "content"))
 
     return BucketedRecallResponse(
         buckets=buckets,
