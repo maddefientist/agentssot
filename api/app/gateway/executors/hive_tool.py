@@ -64,11 +64,18 @@ class HiveToolExecutor(Executor):
                 stats = await _maybe_await(self._stats_fn(ctx.get("namespace")))
                 yield Event.event({"hive": "stats", "stats": stats})
                 yield Event.done({"action": "stats"})
-            elif action == "teach" and self._teach_fn is not None:
-                result = await _maybe_await(self._teach_fn(text))
-                yield Event.event({"hive": "teach", "result": result})
-                yield Event.token("Stored.")
-                yield Event.done({"action": "teach"})
+            elif action == "teach":
+                if self._teach_fn is None:
+                    yield Event.token(
+                        "Teaching from the HUD isn't wired yet — say it in a "
+                        "normal session and the SessionEnd hook will persist it."
+                    )
+                    yield Event.done({"action": "teach", "deferred": True})
+                else:
+                    result = await _maybe_await(self._teach_fn(text))
+                    yield Event.event({"hive": "teach", "result": result})
+                    yield Event.token("Stored.")
+                    yield Event.done({"action": "teach"})
             else:
                 results = await _maybe_await(self._recall_fn(text))
                 results = list(results or [])

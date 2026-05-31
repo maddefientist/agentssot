@@ -33,6 +33,8 @@ from .routers.doctrine import router as doctrine_router
 from .routers.adherence import router as adherence_router
 from .routers.review import router as review_router
 from .routers.wonder import router as wonder_router
+from .gateway.routes import build_router as build_gateway_router
+from .gateway.wiring import build_gateway
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -209,6 +211,10 @@ app.include_router(doctrine_router)
 app.include_router(adherence_router)
 app.include_router(review_router)
 app.include_router(wonder_router)
+
+# --- Madi gateway (HUD nervous system): WS command + SSE status ---
+_gateway_factory, _gateway_status = build_gateway(app)
+app.include_router(build_gateway_router(_gateway_factory, _gateway_status))
 
 
 @app.middleware("http")
