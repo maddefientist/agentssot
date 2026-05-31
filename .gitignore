@@ -18,3 +18,4 @@ firebase-debug.log
 *.dump
 *.bak.*
 .DS_Store
+.isolation-keys.json
