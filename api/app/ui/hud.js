@@ -157,12 +157,13 @@
       var snap;
       try { snap = JSON.parse(ev.data); } catch (e) { return; }
       if (snap.hive) {
-        var h = snap.hive;
-        var count = h.knowledge_items != null ? h.knowledge_items
-          : (h.ki_total != null ? h.ki_total : (h.total != null ? h.total : null));
-        if (count != null) $("hive-count").textContent = count;
-        var emb = h.ki_embedded != null ? h.ki_embedded : (h.embedded != null ? h.embedded : null);
-        if (emb != null) $("hive-embedded").textContent = emb;
+        var ki = snap.hive.knowledge_items;
+        if (ki && typeof ki === "object") {
+          if (ki.total != null) $("hive-count").textContent = ki.total;
+          if (ki.embedded != null) $("hive-embedded").textContent = ki.embedded;
+        } else if (ki != null) {
+          $("hive-count").textContent = ki;
+        }
       }
       renderExecutors(snap.executors);
       $("dot-synapse").className = "dot on";
