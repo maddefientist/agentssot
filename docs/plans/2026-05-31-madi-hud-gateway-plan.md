@@ -1343,3 +1343,49 @@ cd /opt/agentssot && git commit -am "docs: finalize consolidation ledger verdict
 - **Spec coverage:** gateway (T1.x), hybrid router (T1.3–1.4), executors + ladder (T2.x), session state (T1.5), feeders/SSE (T3.2–3.3), HUD two modes + identity (T4.x), consolidation ledger (T0.2, T5.2), reliability/fallover (T2.4, T5.1 Step 2), testing (every task). All design §3–§9 sections map to tasks.
 - **Placeholders:** none — `__MTIME__` is a real substitution token handled by the existing serving layer (Task 0.1 Step 4); Integration Facts (Task 0.1) deliberately defers *existing-file line numbers* because a second agent is mid-edit, which is honest, not a placeholder.
 - **Type consistency:** `Event`/`InboundMessage` (T1.1) reused everywhere; `Executor.execute(intent, ctx)` signature consistent across all executors; `build_registry(hive, chat_stream, orchestrate_runner, job_run)` keys match registry consumers; `snapshot_status(hive, exec, fleet, chains)` arg order consistent T3.2↔T3.3.
+
+---
+
+## Phase 0 — Integration Facts (verified 2026-05-31 on hari `/opt/agentssot`)
+
+**Recon completed.** These facts OVERRIDE any contradicting assumption earlier in this plan. All later tasks use the paths/signatures below.
+
+### Environment & imports
+- Python 3.12.3. pytest config: `api/pyproject.toml` (only marker declared: `integration`). pytest **rootdir = `api/`**.
+- `api/` is the import root; the package is `app`. **Import as `from app.gateway...`** — NOT `api.app.gateway`. All gateway tests run from `api/`.
+- Gateway package path on disk: **`api/app/gateway/`**. Tests: **`api/tests/gateway/`** (mirrors existing `api/tests/`).
+
+### App wiring (`api/app/main.py`)
+- App object: `main.py:196` → `app = FastAPI(title="AgentSSOT API", ...)`.
+- Routers included at `main.py:201-211` via `app.include_router(...)`. **Add `app.include_router(gateway_router)` after line 211.**
+- Router idiom (see `api/app/routers/entities.py`): `APIRouter(prefix="/api/v1/...", tags=[...])`; deps `from app.db import get_session`, `from app.security import require_api_key, AuthContext, ApiRole`; role gate `auth.role in (ApiRole.writer.value, ApiRole.admin.value)`.
+
+### UI serving — assets live DIRECTLY in `api/app/ui/`
+- Static mount: `main.py:198` → `app.mount("/ui/assets", StaticFiles(directory=UI_DIR))`, `UI_DIR = api/app/ui`. So **`/ui/assets/hud.css` ⇒ `api/app/ui/hud.css`** (NO `assets/` subdir). Correct paths: `api/app/ui/hud.html`, `api/app/ui/hud.css`, `api/app/ui/hud.js`.
+- Pages rendered via `render_with_nav("page.html", active="x")` (`main.py:96`): injects `_nav.html` into the `<!-- cortex-nav -->` marker, then `_bust()`. Page routes are `@app.get("/x", include_in_schema=False)` clustered ~`main.py:331-397`.
+- **Cache-bust:** `_asset_version()` reads mtimes of `[styles.css, tier-styles.css, cortex-shell.js, _nav.html]`; `_bust()` only rewrites the 3 shared cortex asset URLs. The HUD is a **full-bleed immersive surface** that does NOT want the cortex nav chrome → serve it via its own route that reads `hud.html` and self-busts `/ui/assets/hud.css` + `/ui/assets/hud.js` by their own mtime (do not route through `render_with_nav`). Add a discoverability link to `_nav.html` pointing at `/hud`.
+
+### Hive in-process interface (it is SQLAlchemy + crud, NOT a simple `hive` object)
+- recall: `crud.recall(session, RecallRequest(...), embedding_provider, reranker_provider, settings) -> list[dict]` (`crud.py:586`).
+- stats: `crud.get_namespace_stats(session, namespace) -> dict` (`crud.py:1282`).
+- ingest/teach: `crud.ingest_batch(session, IngestRequest(...), embedding_provider, settings) -> dict` (`crud.py:88`).
+- Providers come from `app.state.embedding_provider`, `app.state.reranker_provider`, `app.state.settings`; `session` from `Depends(get_session)`.
+- `RecallRequest` (schemas.py:178) fields: `namespace, scope("knowledge"|"requirements"|"events"|"concepts"|"all"), query_text, top_k, project_slug, entity_slug, session_id, agent_key, memory_type, max_staleness`.
+
+### Tests
+- Existing suite is **integration** (httpx vs `http://localhost:8088`, `@pytest.mark.integration`); `api/tests/conftest.py` provides `client`, `base_url`.
+- Gateway **pure-logic tests are in-process unit tests** (no marker) under `api/tests/gateway/`, importing `from app.gateway...`, run from `api/`. WS/SSE round-trip = an `@pytest.mark.integration` smoke against the live server.
+
+### Models / chains
+- `qwen3.5:4b` present on hari ollama (`192.168.1.225:11434`) ✓ — local chat + intent classification model confirmed.
+- chains present: `deepseek-plan, glm-implement, glm-quick, kimi-review, gemma-scout, kimi-design, minimax-bulk, qwen-fallback, qwen-local`.
+
+### Session storage — DECISION
+- **No alembic.** New tables use the project idiom: raw `CREATE TABLE IF NOT EXISTS ...` in `api/app/startup.py` (cf. `enrollment_tokens`, `concepts`).
+- Gateway conversational state is **NOT** stored as knowledge items (would pollute the memory graph). Use a dedicated table **`gateway_session(session_id TEXT PRIMARY KEY, turns JSONB NOT NULL DEFAULT '[]', updated_at TIMESTAMPTZ DEFAULT now())`** added in `startup.py`, accessed via raw SQL (`session.execute(text(...))`) in `gateway/session.py`. Restart-safe, same Postgres, isolated from knowledge.
+
+### Consolidation ledger audit
+- Deferred to Phase 5 (deletions only after HUD works), per the design. No deletions performed in Phase 0.
+
+### Repo state at recon
+- Branch `main`. Our design `1e998e5` + plan `8550dd8` intact; one unrelated chore `3e96efb`; an uncommitted edit to `scripts/postdeploy-isolation-check.sh` belongs to another agent — **do not stage it; commit only gateway paths explicitly.**
