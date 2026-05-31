@@ -9,15 +9,18 @@
 # It lives where the backend + admin key already are (hari) — it is NOT meant to
 # run inside the MBA Fastlane CI, which has no backend to talk to.
 #
-# Requires:
-#   SSOT_ADMIN_KEY   admin API key (or SSOT_TEST_ADMIN_KEY). The bootstrap admin
-#                    key is printed once to the API logs at first start:
-#                      docker logs agentssot-api 2>&1 | grep BOOTSTRAP_ADMIN_API_KEY
-#                    Store it in hari's environment / a secret manager.
+# Admin key resolution (first hit wins):
+#   1. SSOT_ADMIN_KEY env var
+#   2. SSOT_TEST_ADMIN_KEY env var
+#   3. SSOT_ADMIN_KEY_FILE — a JSON file with an "admin_api_key" (or "api_key")
+#      field. Defaults to ~/.claude/agentssot/local/admin.json (the hive MCP
+#      plugin's admin credential). Override with the env var on other hosts.
+#   If none resolve, the gate is SKIPPED (exit 2) — never a silent pass.
 # Optional:
 #   SSOT_URL         default http://localhost:8088
 #
 # Usage:
+#   ./scripts/postdeploy-isolation-check.sh                 # auto-reads admin.json
 #   SSOT_ADMIN_KEY=ssot_... ./scripts/postdeploy-isolation-check.sh
 
 set -euo pipefail
@@ -25,6 +28,18 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 URL="${SSOT_URL:-http://localhost:8088}"
 ADMIN_KEY="${SSOT_ADMIN_KEY:-${SSOT_TEST_ADMIN_KEY:-}}"
+
+# Fallback: read the key from a JSON credential file (hive MCP plugin convention).
+ADMIN_KEY_FILE="${SSOT_ADMIN_KEY_FILE:-$HOME/.claude/agentssot/local/admin.json}"
+if [[ -z "$ADMIN_KEY" && -f "$ADMIN_KEY_FILE" ]]; then
+  ADMIN_KEY="$(python3 -c "import json,sys
+try:
+    d=json.load(open(sys.argv[1]))
+    print(d.get('admin_api_key') or d.get('api_key') or '')
+except Exception:
+    print('')" "$ADMIN_KEY_FILE" 2>/dev/null || true)"
+  [[ -n "$ADMIN_KEY" ]] && echo "  (admin key sourced from $ADMIN_KEY_FILE)"
+fi
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
 
