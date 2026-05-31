@@ -18,6 +18,7 @@ def initialize_system(settings) -> None:
     with SessionLocal() as session:
         _ensure_enrollment_tokens_table(session)
         _ensure_concepts_table(session)
+        _ensure_gateway_session_table(session)
         _ensure_typed_memory_columns(session)
         ensure_cortex_tables(session)
         if settings.sync_tracking_enabled:
@@ -93,6 +94,27 @@ def _ensure_enrollment_tokens_table(session) -> None:
     except Exception as exc:
         session.rollback()
         logger.warning("enrollment_tokens table creation skipped: %s", exc)
+
+
+def _ensure_gateway_session_table(session) -> None:
+    """Create gateway_session table for Madi HUD/gateway conversational state.
+
+    Kept out of the knowledge graph: chatter must never pollute recall. State
+    lives here so a gateway restart loses nothing and a thread can span
+    channels (HUD now, Telegram/voice later).
+    """
+    try:
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS gateway_session (
+                session_id TEXT PRIMARY KEY,
+                turns JSONB NOT NULL DEFAULT '[]'::jsonb,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        session.commit()
+    except Exception as exc:
+        session.rollback()
+        logger.warning("gateway_session table creation skipped: %s", exc)
 
 
 def _ensure_concepts_table(session) -> None:
