@@ -26,7 +26,7 @@ from .. import crud
 from ..db import SessionLocal
 from ..schemas import RecallRequest
 from .config import HIVE_NAMESPACE, LOCAL_MODEL, OLLAMA_URL, ORCHESTRATE_LADDER
-from .chat_local import make_ollama_streamer
+from .executors.chat_local import make_ollama_streamer
 from .executors import build_registry
 from .feeders import snapshot_status
 from .router import IntentRouter, make_ollama_classifier
