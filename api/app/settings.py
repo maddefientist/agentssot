@@ -57,7 +57,7 @@ class Settings(BaseSettings):
 
     # Synthesis (conceptual memory)
     synthesis_enabled: bool = Field(default=False, alias="SYNTHESIS_ENABLED")
-    synthesis_model: str = Field(default="qwen3.5:cloud", alias="SYNTHESIS_MODEL")
+    synthesis_model: str = Field(default="qwen3.5:397b-cloud", alias="SYNTHESIS_MODEL")
     synthesis_fallback_model: str = Field(default="qwen3:latest", alias="SYNTHESIS_FALLBACK_MODEL")
     synthesis_schedule_hour: int = Field(default=3, alias="SYNTHESIS_SCHEDULE_HOUR")
     synthesis_similarity_threshold: float = Field(default=0.65, alias="SYNTHESIS_SIMILARITY_THRESHOLD")

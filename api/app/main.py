@@ -4,6 +4,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.responses import PlainTextResponse
@@ -13,14 +14,15 @@ from sqlalchemy.orm import Session
 
 from . import crud, schemas, wal
 from .background import compaction_loop, lifecycle_sweep_loop
-from .db import get_session
+from .db import SessionLocal, get_session
 from .embeddings import build_embedding_provider
 from .llm import LLMProviderError, build_llm_provider
 from .reranker import build_reranker_provider
 from .logging_config import configure_logging
 from .models import ApiKey, ApiRole
 from .security import AuthContext, clear_auth_cache, ensure_namespace_access, require_admin, require_api_key
-from .settings import get_settings
+from .settings import Settings, get_settings
+from .runtime_config import HOT_KEYS, apply_overrides, delete_override, load_overrides, set_override
 from .startup import initialize_system
 from .cortex import router as cortex_router
 from .sync import router as sync_router
@@ -109,13 +111,34 @@ def render_with_nav(page_filename: str, active: str) -> HTMLResponse:
     return HTMLResponse(rendered)
 
 
+def _reload_runtime_overrides(app_obj: FastAPI) -> dict:
+    with SessionLocal() as session:
+        overrides = load_overrides(session)
+    app_obj.state.runtime_overrides = overrides
+    applied = apply_overrides(app_obj.state.settings, overrides)
+    if applied:
+        logger.info("runtime overrides applied keys=%s", sorted(applied))
+    return overrides
+
+
+def rebuild_providers(app_obj: FastAPI) -> None:
+    """Atomically rebuild providers from effective runtime settings."""
+    s = app_obj.state.settings
+    embedding_provider = build_embedding_provider(s)
+    llm_provider = build_llm_provider(s)
+    reranker_provider = build_reranker_provider(s)
+    app_obj.state.embedding_provider = embedding_provider
+    app_obj.state.llm_provider = llm_provider
+    app_obj.state.reranker_provider = reranker_provider
+
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.settings = settings
-    app.state.embedding_provider = build_embedding_provider(settings)
-    app.state.llm_provider = build_llm_provider(settings)
-    app.state.reranker_provider = build_reranker_provider(settings)
+    app.state.settings_default_values = {field_name: getattr(settings, field_name) for field_name in settings.model_fields}
+    _reload_runtime_overrides(app)
+    rebuild_providers(app)
 
     initialize_system(settings)
 
@@ -279,6 +302,123 @@ def whoami(auth: AuthContext = Depends(require_api_key)):
     }
 
 
+def _safe_models_from_tags(payload: dict) -> list[str]:
+    models = payload.get("models", [])
+    out: list[str] = []
+    if isinstance(models, list):
+        for model in models:
+            if isinstance(model, dict) and isinstance(model.get("name"), str):
+                out.append(model["name"])
+    return sorted(out)
+
+
+async def _probe_ollama(base_url: str, model: str | None) -> dict:
+    started = time.perf_counter()
+    if not base_url:
+        return {"reachable": False, "latency_ms": None, "models": [], "model_present": False, "error": "base URL is empty"}
+    try:
+        async with httpx.AsyncClient(timeout=2.0, follow_redirects=False) as client:
+            resp = await client.get(f"{base_url.rstrip('/')}/api/tags")
+            latency_ms = round((time.perf_counter() - started) * 1000, 2)
+            resp.raise_for_status()
+            models = _safe_models_from_tags(resp.json())
+            return {
+                "reachable": True,
+                "latency_ms": latency_ms,
+                "models": models,
+                "model_present": bool(model and model in models),
+                "error": None,
+            }
+    except Exception as exc:
+        latency_ms = round((time.perf_counter() - started) * 1000, 2)
+        return {"reachable": False, "latency_ms": latency_ms, "models": [], "model_present": False, "error": str(exc)[:300]}
+
+
+async def _connection_rows() -> dict:
+    s = app.state.settings
+    reranker_deep_url = s.ollama_reranker_base_url or s.ollama_base_url
+    reranker_fast_url = s.ollama_reranker_fast_base_url or reranker_deep_url
+    classifier_url = s.classifier_base_url or s.ollama_base_url
+    specs = {
+        "embedding": {"provider": s.embedding_provider, "base_url": s.ollama_base_url if s.embedding_provider == "ollama" else "", "model": s.ollama_embed_model},
+        "reranker_deep": {"provider": s.reranker_provider, "base_url": reranker_deep_url if s.reranker_provider == "ollama" else "", "model": s.ollama_reranker_model},
+        "reranker_fast": {"provider": s.reranker_provider, "base_url": reranker_fast_url if s.reranker_provider == "ollama" else "", "model": s.ollama_reranker_fast_model},
+        "llm": {"provider": s.llm_provider, "base_url": s.ollama_base_url if s.llm_provider == "ollama" else "", "model": s.ollama_chat_model},
+        "classifier": {"provider": s.classifier_provider, "base_url": classifier_url if s.classifier_provider == "ollama" else "", "model": s.classifier_model},
+        "synthesis": {"provider": s.llm_provider, "base_url": s.ollama_base_url if s.llm_provider == "ollama" else "", "model": s.synthesis_model},
+    }
+    async def probe_one(name: str, spec: dict) -> tuple[str, dict]:
+        probe = await _probe_ollama(spec["base_url"], spec["model"]) if spec["provider"] == "ollama" else {
+            "reachable": spec["provider"] != "none",
+            "latency_ms": None,
+            "models": [],
+            "model_present": spec["provider"] != "none",
+            "error": None if spec["provider"] != "none" else "provider disabled",
+        }
+        return name, {**spec, **probe}
+
+    rows = await asyncio.gather(*(probe_one(name, spec) for name, spec in specs.items()))
+    return dict(rows)
+
+
+@app.get("/admin/connections")
+async def admin_connections(auth: AuthContext = Depends(require_api_key)):
+    require_admin(auth)
+    return {"connections": await _connection_rows()}
+
+
+@app.get("/admin/config")
+def admin_config(auth: AuthContext = Depends(require_api_key)):
+    require_admin(auth)
+    overrides = getattr(app.state, "runtime_overrides", {})
+    defaults = getattr(app.state, "settings_default_values", {})
+    items = []
+    for key in sorted(HOT_KEYS):
+        override = overrides.get(key)
+        value = getattr(app.state.settings, key)
+        items.append({
+            "key": key,
+            "effective": value,
+            "default": defaults.get(key, getattr(app.state.settings, key)),
+            "overridden": override is not None,
+            "updated_at": override.get("updated_at").isoformat() if override and override.get("updated_at") else None,
+            "updated_by": override.get("updated_by") if override else None,
+        })
+    return {"config": items}
+
+
+@app.post("/admin/config")
+async def admin_set_config(payload: dict, auth: AuthContext = Depends(require_api_key)):
+    require_admin(auth)
+    key = payload.get("key")
+    if "value" not in payload:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="value is required")
+    with SessionLocal() as session:
+        value = set_override(session, app.state.settings, str(key), payload["value"], auth.key_name)
+    _reload_runtime_overrides(app)
+    rebuild_providers(app)
+    return {"key": key, "effective": value, "connections": await _connection_rows()}
+
+
+@app.delete("/admin/config/{key}")
+async def admin_delete_config(key: str, auth: AuthContext = Depends(require_api_key)):
+    require_admin(auth)
+    with SessionLocal() as session:
+        delete_override(session, key)
+    # Reset to startup/.env defaults first, then reapply remaining DB overrides.
+    defaults = getattr(app.state, "settings_default_values", {})
+    if defaults:
+        for field_name, value in defaults.items():
+            object.__setattr__(app.state.settings, field_name, value)
+    else:
+        fresh = Settings()
+        for field_name in fresh.model_fields:
+            object.__setattr__(app.state.settings, field_name, getattr(fresh, field_name))
+    _reload_runtime_overrides(app)
+    rebuild_providers(app)
+    return {"key": key, "deleted": True, "connections": await _connection_rows()}
+
+
 @app.get("/health")
 def health() -> dict:
     return {
@@ -387,6 +527,11 @@ def namespaces_page():
 @app.get("/keys", include_in_schema=False)
 def keys_page():
     return render_with_nav("keys.html", active="keys")
+
+
+@app.get("/connections", include_in_schema=False)
+def connections_page():
+    return render_with_nav("connections.html", active="connections")
 
 
 @app.get("/decay", include_in_schema=False)
@@ -1424,7 +1569,7 @@ _RUNTIME_CONFIGURABLE = frozenset({
     "wal_retention_days",
     "sync_tracking_enabled",
     "sync_conflict_window_hours",
-})
+}) | HOT_KEYS
 
 # Human-readable descriptions for each setting.
 _SETTING_DESCRIPTIONS: dict[str, str] = {
@@ -1437,21 +1582,24 @@ _SETTING_DESCRIPTIONS: dict[str, str] = {
     "embedding_dim": "Embedding vector dimension (restart required)",
     "openai_api_key": "OpenAI API key — masked (restart required)",
     "openai_embed_model": "OpenAI embedding model name (restart required)",
-    "ollama_base_url": "Ollama service base URL (restart required)",
-    "ollama_embed_model": "Ollama embedding model name (restart required)",
+    "ollama_base_url": "Ollama service base URL (runtime override persists until deleted)",
+    "ollama_embed_model": "Ollama embedding model name (runtime override persists until deleted)",
     "llm_provider": "LLM backend: none/openai/ollama (restart required)",
     "openai_chat_model": "OpenAI chat model name (restart required)",
     "ollama_chat_model": "Ollama chat model name (restart required)",
     "reranker_provider": "Reranker backend: none/ollama (restart required)",
-    "ollama_reranker_model": "Ollama reranker model name (restart required)",
+    "ollama_reranker_model": "Ollama deep reranker model name (runtime override persists until deleted)",
+    "ollama_reranker_base_url": "Ollama deep reranker base URL (runtime override persists until deleted)",
+    "ollama_reranker_fast_model": "Ollama fast reranker model name (runtime override persists until deleted)",
+    "ollama_reranker_fast_base_url": "Ollama fast reranker base URL (runtime override persists until deleted)",
     "reranker_candidate_multiplier": "Candidate pool multiplier for reranking",
     "compaction_enabled": "Enable/disable background event compaction",
     "compaction_event_threshold": "Number of events that triggers compaction",
     "compaction_char_threshold": "Character count that triggers compaction",
     "compaction_interval_seconds": "How often the compaction loop checks (restart required)",
     "synthesis_enabled": "Enable/disable background concept synthesis",
-    "synthesis_model": "LLM model used for synthesis (restart required)",
-    "synthesis_fallback_model": "Fallback LLM for synthesis (restart required)",
+    "synthesis_model": "LLM model used for synthesis (runtime override persists until deleted)",
+    "synthesis_fallback_model": "Fallback LLM for synthesis (runtime override persists until deleted)",
     "synthesis_schedule_hour": "UTC hour when synthesis runs (restart required)",
     "synthesis_similarity_threshold": "Cosine similarity threshold for clustering items into concepts",
     "synthesis_min_cluster_size": "Minimum items per cluster for synthesis",
@@ -1471,6 +1619,8 @@ _SETTING_DESCRIPTIONS: dict[str, str] = {
     "enrollment_passphrase": "Required passphrase for /enroll/auto — masked (restart required)",
     "expose_db_port": "Expose Postgres port externally (restart required)",
     "bootstrap_admin_namespaces": "Comma-separated namespaces given to the bootstrap admin key (restart required)",
+    "classifier_model": "Classifier model name (runtime override persists until deleted)",
+    "classifier_base_url": "Classifier base URL (runtime override persists until deleted)",
 }
 
 # Expected Python types for each configurable field (used for coercion and validation).
@@ -1487,6 +1637,16 @@ _SETTING_TYPES: dict[str, type] = {
     "typed_memory_enabled": bool,
     "ingest_secret_scanning": bool,
     "semantic_dedup_threshold": float,
+    "synthesis_model": str,
+    "synthesis_fallback_model": str,
+    "ollama_reranker_model": str,
+    "ollama_reranker_base_url": str,
+    "ollama_reranker_fast_model": str,
+    "ollama_reranker_fast_base_url": str,
+    "ollama_embed_model": str,
+    "ollama_base_url": str,
+    "classifier_model": str,
+    "classifier_base_url": str,
     "wal_enabled": bool,
     "wal_retention_days": int,
     "sync_tracking_enabled": bool,
@@ -1599,7 +1759,11 @@ def update_settings_endpoint(
     payload: schemas.SettingsUpdateRequest,
     auth: AuthContext = Depends(require_api_key),
 ):
-    """Update runtime-configurable settings (admin only). Changes are session-only — not persisted to .env."""
+    """Update runtime-configurable settings (admin only).
+
+    HOT_KEYS are persisted in runtime_config and survive restarts until deleted
+    via /admin/config/{key}. Other runtime settings remain session-only.
+    """
     require_admin(auth)
 
     s = app.state.settings
@@ -1616,6 +1780,20 @@ def update_settings_endpoint(
         # Reject non-runtime-configurable settings
         if key not in _RUNTIME_CONFIGURABLE:
             skipped[key] = "requires restart — update .env and redeploy to change this setting"
+            continue
+
+        if key in HOT_KEYS:
+            try:
+                with SessionLocal() as runtime_session:
+                    value = set_override(runtime_session, s, key, raw_value, auth.key_name)
+            except HTTPException as exc:
+                detail = str(exc.detail)
+                errors.append(detail)
+                skipped[key] = f"type error: {detail}"
+                continue
+            object.__setattr__(s, key, value)
+            applied[key] = _mask_value(key, value)
+            logger.info("settings.update.persisted key=%s value=%r actor=%s", key, value, auth.key_name)
             continue
 
         # Coerce and validate type
@@ -1645,6 +1823,10 @@ def update_settings_endpoint(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="; ".join(errors),
         )
+
+    if any(key in HOT_KEYS for key in applied):
+        _reload_runtime_overrides(app)
+        rebuild_providers(app)
 
     # Log to WAL (best-effort)
     wal.log_event(

@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cortex Connections</title>
+  <link rel="stylesheet" href="/ui/assets/styles.css" />
+  <style>
+    body { background:#07070b; color:#e8e8f0; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+    main { max-width: 1180px; margin: 28px auto; padding: 0 18px 48px; }
+    h1 { font-size: 28px; margin: 0 0 8px; }
+    .sub { color:#8b8ba0; margin-bottom: 18px; }
+    .banner { display:none; border:1px solid rgba(239,68,68,.35); background:rgba(239,68,68,.10); color:#fecaca; padding:12px 14px; border-radius:14px; margin-bottom:18px; }
+    .banner.on { display:block; }
+    .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap:14px; }
+    .card { border:1px solid #1d1d2b; background:linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.015)); border-radius:16px; padding:16px; box-shadow:0 20px 60px rgba(0,0,0,.22); }
+    .head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
+    .name { text-transform:uppercase; letter-spacing:.12em; font-size:12px; color:#bdbdf0; }
+    .dot { width:10px; height:10px; border-radius:99px; background:#ef4444; box-shadow:0 0 18px rgba(239,68,68,.7); }
+    .dot.ok { background:#22c55e; box-shadow:0 0 18px rgba(34,197,94,.7); }
+    .kv { display:grid; grid-template-columns:90px 1fr; gap:8px; font-size:12px; margin:10px 0; }
+    .k { color:#6f6f86; }
+    .v { color:#d9d9e8; word-break:break-all; }
+    select, input { width:100%; box-sizing:border-box; background:#0d0d16; color:#f4f4ff; border:1px solid #27273a; border-radius:10px; padding:9px 10px; }
+    .actions { display:flex; gap:8px; margin-top:10px; }
+    button { background:rgba(139,92,246,.16); color:#ede9fe; border:1px solid rgba(139,92,246,.45); border-radius:10px; padding:8px 10px; cursor:pointer; }
+    button.ghost { background:transparent; color:#9ca3af; border-color:#303044; }
+    .err { color:#fca5a5; font-size:11px; margin-top:8px; min-height:14px; }
+    .statusline { color:#8b8ba0; font-size:12px; margin:12px 0 18px; }
+  </style>
+</head>
+<body>
+  <!-- cortex-nav -->
+  <main>
+    <h1>Provider Connections</h1>
+    <div class="sub">Live Ollama probes plus DB-backed hot overrides. Overrides win over <code>.env</code> until deleted.</div>
+    <div id="banner" class="banner">One or more providers are unreachable. Check the red cards below.</div>
+    <div id="status" class="statusline">Loading…</div>
+    <section id="grid" class="grid"></section>
+  </main>
+<script>
+const KEY_MAP = {
+  embedding: { model:'ollama_embed_model', base:'ollama_base_url' },
+  reranker_deep: { model:'ollama_reranker_model', base:'ollama_reranker_base_url' },
+  reranker_fast: { model:'ollama_reranker_fast_model', base:'ollama_reranker_fast_base_url' },
+  classifier: { model:'classifier_model', base:'classifier_base_url' },
+  synthesis: { model:'synthesis_model', base:'ollama_base_url' },
+  llm: { model:null, base:'ollama_base_url' }
+};
+const $ = id => document.getElementById(id);
+function apiKey(){ return window.cortexAuth ? window.cortexAuth.getKey() : ''; }
+async function adminFetch(path, opts={}){
+  const key = apiKey();
+  if(!key) throw new Error('Set an admin API key with the key pill first.');
+  const res = await fetch(path, { ...opts, headers:{ 'Content-Type':'application/json', 'X-API-Key':key, ...(opts.headers||{}) }});
+  const body = await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(body.detail || JSON.stringify(body));
+  return body;
+}
+function optionList(models, current){
+  const values = Array.from(new Set([current, ...(models||[])].filter(Boolean)));
+  return values.map(m => `<option value="${m.replaceAll('"','&quot;')}" ${m===current?'selected':''}>${m}</option>`).join('');
+}
+function card(name, c){
+  const keys = KEY_MAP[name] || {};
+  const canModel = !!keys.model;
+  const canBase = !!keys.base;
+  return `<article class="card" data-name="${name}">
+    <div class="head"><div class="name">${name.replace('_',' ')}</div><div class="dot ${c.reachable?'ok':''}"></div></div>
+    <div class="kv"><div class="k">provider</div><div class="v">${c.provider}</div>
+      <div class="k">latency</div><div class="v">${c.latency_ms ?? '—'} ms</div>
+      <div class="k">present</div><div class="v">${c.model_present ? 'yes' : 'no'}</div>
+      <div class="k">base URL</div><div class="v"><input data-field="base" value="${c.base_url || ''}" ${canBase?'':'disabled'} /></div>
+      <div class="k">model</div><div class="v">${canModel ? `<select data-field="model">${optionList(c.models, c.model)}</select>` : `<input disabled value="${c.model || ''}" />`}</div>
+    </div>
+    <div class="actions"><button data-act="save">Save</button><button class="ghost" data-act="revert">Revert model</button></div>
+    <div class="err">${c.error || ''}</div>
+  </article>`;
+}
+async function load(){
+  $('status').textContent = 'Polling live provider health…';
+  try{
+    const data = await adminFetch('/admin/connections');
+    const entries = Object.entries(data.connections || {});
+    $('grid').innerHTML = entries.map(([n,c]) => card(n,c)).join('');
+    $('banner').classList.toggle('on', entries.some(([,c]) => !c.reachable));
+    $('status').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+  } catch(e){ $('status').textContent = e.message; }
+}
+async function saveCard(el){
+  const name = el.dataset.name, keys = KEY_MAP[name] || {};
+  const modelEl = el.querySelector('[data-field="model"]');
+  const baseEl = el.querySelector('[data-field="base"]');
+  const ops = [];
+  if(keys.model && modelEl) ops.push([keys.model, modelEl.value]);
+  if(keys.base && baseEl && baseEl.value) ops.push([keys.base, baseEl.value]);
+  for(const [key,value] of ops) await adminFetch('/admin/config', {method:'POST', body:JSON.stringify({key,value})});
+  await load();
+}
+async function revertCard(el){
+  const name = el.dataset.name, keys = KEY_MAP[name] || {};
+  if(keys.model) await adminFetch(`/admin/config/${encodeURIComponent(keys.model)}`, {method:'DELETE'});
+  await load();
+}
+document.addEventListener('click', async e => {
+  const btn = e.target.closest('button'); if(!btn) return;
+  const el = btn.closest('.card'); if(!el) return;
+  try { btn.textContent='Working…'; btn.disabled=true; btn.dataset.act==='save' ? await saveCard(el) : await revertCard(el); }
+  catch(err){ el.querySelector('.err').textContent = err.message; }
+  finally { btn.disabled=false; }
+});
+load(); setInterval(load, 5000);
+</script>
+</body>
+</html>
