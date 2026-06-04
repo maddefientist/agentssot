@@ -45,7 +45,7 @@ const KEY_MAP = {
   reranker_fast: { model:'ollama_reranker_fast_model', base:'ollama_reranker_fast_base_url' },
   classifier: { model:'classifier_model', base:'classifier_base_url' },
   synthesis: { model:'synthesis_model', base:'ollama_base_url' },
-  llm: { model:null, base:'ollama_base_url' }
+  llm: { model:'ollama_chat_model', base:'ollama_base_url' }
 };
 const $ = id => document.getElementById(id);
 function apiKey(){ return window.cortexAuth ? window.cortexAuth.getKey() : ''; }

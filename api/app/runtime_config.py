@@ -26,6 +26,7 @@ HOT_KEYS = frozenset({
     "ollama_reranker_fast_base_url",
     "ollama_embed_model",
     "ollama_base_url",
+    "ollama_chat_model",
     "classifier_model",
     "classifier_base_url",
     "semantic_dedup_threshold",

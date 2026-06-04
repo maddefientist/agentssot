@@ -1,6 +1,6 @@
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
 from sqlalchemy import select, and_, func, or_, cast
 from sqlalchemy.dialects.postgresql import ARRAY, TEXT
@@ -59,6 +59,13 @@ def _safe_uuids(raw):
             _log.warning('skipping malformed entity_ref: %r', x)
     return out
 
+
+# Above this similarity an ingest is treated as an effectively-identical repeat
+# (e.g. the same fact re-taught) and silently collapsed onto the existing item.
+# Between semantic_dedup_threshold and this cutoff the item is a *near* duplicate:
+# it is still inserted, but a `dup` review row is queued so the operator can
+# decide whether to merge/supersede — we never silently drop near-dup content.
+DEDUP_COLLAPSE_SIMILARITY = 0.985
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
@@ -124,6 +131,9 @@ async def ingest_tiered(
     # items bypass — the user explicitly asked for exact-text preservation, so
     # we never collapse them.
     dedup_threshold = get_settings().semantic_dedup_threshold
+    # Carries a (existing_id, similarity) pair when the new item is a *near* (not
+    # exact) duplicate that should be queued for operator review after insert.
+    near_dup_review: tuple[UUID, float] | None = None
     if embedding is not None and dedup_threshold > 0 and not data.verbatim:
         dist_col = KnowledgeItem.embedding.cosine_distance(embedding).label("distance")
         dup_stmt = (
@@ -141,7 +151,8 @@ async def ingest_tiered(
         if dup_row is not None:
             existing = dup_row[0]
             similarity = max(0.0, 1.0 - dup_row.distance)
-            if similarity >= dedup_threshold:
+            if similarity >= DEDUP_COLLAPSE_SIMILARITY:
+                # Effectively identical → collapse silently onto the existing item.
                 wal.log_event(
                     "knowledge.dedup_hit",
                     namespace=namespace,
@@ -154,6 +165,9 @@ async def ingest_tiered(
                     },
                 )
                 return existing
+            if similarity >= dedup_threshold:
+                # Near-duplicate → insert, but flag for human merge/supersede review.
+                near_dup_review = (existing.id, similarity)
 
     # Auto-generate abstract/summary if requested. Verbatim mode suppresses
     # all LLM-derived summaries; caller-supplied abstract/summary are also
@@ -231,6 +245,18 @@ async def ingest_tiered(
             status=ReviewQueueStatus.pending,
         )
         session.add(rq)
+
+    if near_dup_review is not None:
+        existing_id, similarity = near_dup_review
+        session.add(ReviewQueueItem(
+            namespace=namespace,
+            kind=ReviewQueueKind.dup,
+            priority=3,
+            primary_id=ki.id,
+            secondary_id=existing_id,
+            reason=f"near-duplicate on ingest: cosine_similarity={similarity:.4f} (>= {dedup_threshold} review floor, < {DEDUP_COLLAPSE_SIMILARITY} collapse cutoff)",
+            status=ReviewQueueStatus.pending,
+        ))
 
     session.commit()
 
@@ -710,6 +736,65 @@ async def review_queue_dismiss(
     if item is None:
         raise HTTPException(status_code=404, detail="review queue item not found")
     return {"status": "ok"}
+
+
+@router.get("/admin/review-queue/counts")
+async def review_queue_counts(
+    namespace: str | None = None,
+    session: Session = Depends(get_session),
+    auth: AuthContext = Depends(require_api_key),
+):
+    """Pending review-queue counts per kind. Admin-only."""
+    if auth.role != ApiRole.admin.value:
+        raise HTTPException(status_code=403, detail="admin role required")
+    from ..services.review_queue import queue_counts
+    counts = queue_counts(session, namespace)
+    return {"namespace": namespace, "counts": counts, "total": sum(counts.values())}
+
+
+@router.post("/admin/review-queue/drain")
+async def review_queue_drain(
+    namespace: str | None = None,
+    session: Session = Depends(get_session),
+    auth: AuthContext = Depends(require_api_key),
+):
+    """Collapse duplicate pending queue rows (same kind+primary+secondary).
+
+    Non-destructive: only marks redundant *queue* entries dismissed — never
+    touches knowledge items. Drains the backfill sweep's self-duplication.
+    Admin-only.
+    """
+    if auth.role != ApiRole.admin.value:
+        raise HTTPException(status_code=403, detail="admin role required")
+    from ..services.review_queue import drain_duplicates
+    result = drain_duplicates(session, namespace, by=auth.key_name)
+    return {"status": "ok", "mode": "duplicates", **result}
+
+
+@router.post("/admin/review-queue/drain-stale")
+async def review_queue_drain_stale(
+    older_than_days: int = Query(..., ge=1, description="Dismiss pending rows older than this many days"),
+    kind: str | None = Query(None, description="Restrict to one kind (e.g. contradiction)"),
+    namespace: str | None = None,
+    session: Session = Depends(get_session),
+    auth: AuthContext = Depends(require_api_key),
+):
+    """Dismiss stale pending queue rows. EXPLICIT operator action only.
+
+    Dismissing a stale contradiction accepts that the items coexist — a human
+    judgment, so this requires an explicit older_than_days and is never run
+    automatically. Non-destructive: marks queue rows dismissed, never deletes
+    knowledge. Admin-only.
+    """
+    if auth.role != ApiRole.admin.value:
+        raise HTTPException(status_code=403, detail="admin role required")
+    try:
+        ReviewQueueKind(kind) if kind else None
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"unknown kind: {kind}")
+    from ..services.review_queue import drain_stale
+    result = drain_stale(session, older_than_days, kind, namespace, by=auth.key_name)
+    return {"status": "ok", "mode": "stale", "older_than_days": older_than_days, "kind": kind, **result}
 
 
 @router.post("/items/{item_id}/supersede")
