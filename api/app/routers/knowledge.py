@@ -797,6 +797,51 @@ async def review_queue_drain_stale(
     return {"status": "ok", "mode": "stale", "older_than_days": older_than_days, "kind": kind, **result}
 
 
+@router.post("/admin/review-queue/audit-supersede")
+async def review_queue_audit_supersede(
+    namespace: str | None = None,
+    threshold: float = Query(default=0.80, ge=0.0, le=1.0),
+    dry_run: bool = Query(default=True),
+    session: Session = Depends(get_session),
+    auth: AuthContext = Depends(require_api_key),
+):
+    """Reverse false-positive supersessions and resolve genuine ones.
+
+    The detector matched on (memory_type + shared entity), so unrelated notes
+    about the same project falsely superseded each other — hiding good knowledge
+    from recall. Pairs below the embedding-similarity threshold are reversed
+    (old item restored); pairs at/above are confirmed genuine. dry_run=True by
+    default — pass dry_run=false to apply. Admin-only.
+    """
+    if auth.role != ApiRole.admin.value:
+        raise HTTPException(status_code=403, detail="admin role required")
+    from ..services.review_queue import audit_supersede
+    result = audit_supersede(session, namespace, threshold, dry_run, by=auth.key_name)
+    return {"status": "ok", **result}
+
+
+@router.post("/admin/review-queue/reclassify")
+async def review_queue_reclassify(
+    namespace: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    min_confidence: float = Query(default=0.6, ge=0.0, le=1.0),
+    dry_run: bool = Query(default=True),
+    session: Session = Depends(get_session),
+    auth: AuthContext = Depends(require_api_key),
+):
+    """Re-run the classifier over pending low_conf items, assign types, resolve.
+
+    Repairs the backfill window where the classifier was unreachable and items
+    got no/low-confidence memory_type. Process in batches via limit. dry_run=True
+    by default — pass dry_run=false to apply. Admin-only.
+    """
+    if auth.role != ApiRole.admin.value:
+        raise HTTPException(status_code=403, detail="admin role required")
+    from ..services.review_queue import reclassify_low_conf
+    result = reclassify_low_conf(session, namespace, limit, min_confidence, dry_run, by=auth.key_name)
+    return {"status": "ok", **result}
+
+
 @router.post("/items/{item_id}/supersede")
 async def supersede_endpoint(
     item_id: UUID,

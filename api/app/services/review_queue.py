@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.models import ReviewQueueItem, ReviewQueueKind, ReviewQueueStatus
@@ -114,6 +114,130 @@ def drain_stale(session: Session, older_than_days: int, kind: str | None = None,
     if rows:
         session.commit()
     return {"dismissed": len(rows)}
+
+
+def audit_supersede(session: Session, namespace: str | None = None,
+                    threshold: float = 0.80, dry_run: bool = True,
+                    by: str | None = "auto-audit") -> dict:
+    """Reverse false-positive supersessions; resolve genuine ones.
+
+    The supersession detector fires on (same memory_type AND shared entity_ref),
+    so two unrelated notes about the same project get falsely paired — and
+    apply_supersession already HID the old item (superseded_by), decayed its
+    confidence x0.3, and set a 30d expiry. We distinguish genuine "v1->v2"
+    updates from entity-only false matches by embedding similarity between the
+    pair: calibration shows genuine updates sit >= 0.80, false matches below.
+
+    For sim < threshold: reverse on the old item (restore superseded_by=NULL,
+    expires_at=NULL, undo the x0.3 confidence decay) and dismiss the queue row.
+    For sim >= threshold: leave the supersession applied and resolve the row.
+    Touches only the wrongly-hidden old items; never deletes anything.
+    """
+    rows = session.execute(text(
+        """
+        SELECT rq.id AS qid, rq.secondary_id AS sid,
+               1 - (p.embedding <=> s.embedding) AS sim
+        FROM review_queue rq
+        JOIN knowledge_items p ON p.id = rq.primary_id
+        JOIN knowledge_items s ON s.id = rq.secondary_id
+        WHERE rq.status = 'pending' AND rq.kind = 'supersede'
+          AND p.embedding IS NOT NULL AND s.embedding IS NOT NULL
+          AND (CAST(:ns AS text) IS NULL OR rq.namespace = :ns)
+        """
+    ), {"ns": namespace}).mappings().all()
+
+    genuine = 0
+    reversed_ = 0
+    restored_sample: list[str] = []
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        if r["sim"] is not None and r["sim"] >= threshold:
+            genuine += 1
+            if not dry_run:
+                resolve(session, str(r["qid"]), by)
+        else:
+            reversed_ += 1
+            if len(restored_sample) < 8:
+                restored_sample.append(str(r["sid"]))
+            if not dry_run:
+                # Undo apply_supersession on the wrongly-hidden old item.
+                session.execute(text(
+                    """
+                    UPDATE knowledge_items
+                    SET superseded_by = NULL,
+                        expires_at = NULL,
+                        confidence = LEAST(1.0, confidence / 0.3)
+                    WHERE id = :sid AND superseded_by IS NOT NULL
+                    """
+                ), {"sid": r["sid"]})
+                item = session.get(ReviewQueueItem, r["qid"])
+                if item:
+                    item.status = ReviewQueueStatus.dismissed
+                    item.resolved_at = now
+                    item.resolved_by = by
+                    item.reason = (item.reason or "") + f" [reversed: false supersession, sim={r['sim']:.3f}]"
+    if not dry_run:
+        session.commit()
+    return {
+        "scanned": len(rows),
+        "threshold": threshold,
+        "genuine_resolved": genuine,
+        "false_reversed": reversed_,
+        "restored_sample": restored_sample,
+        "dry_run": dry_run,
+    }
+
+
+def reclassify_low_conf(session: Session, namespace: str | None = None,
+                        limit: int = 100, min_confidence: float = 0.6,
+                        dry_run: bool = True, by: str | None = "auto-reclassify") -> dict:
+    """Re-run the (now-healthy) classifier over pending low_conf items.
+
+    The 2026-05-01/02 backfill left hundreds of items with no/low-confidence
+    memory_type because the classifier was unreachable. With a confident result
+    we set the type and resolve the row; otherwise the row stays pending.
+    """
+    from app.llm.classifier import classify
+    from app.models import KnowledgeItem
+
+    rows = session.execute(text(
+        """
+        SELECT rq.id AS qid, rq.primary_id AS kid
+        FROM review_queue rq
+        WHERE rq.status = 'pending' AND rq.kind = 'low_conf'
+          AND (CAST(:ns AS text) IS NULL OR rq.namespace = :ns)
+        ORDER BY rq.created_at
+        LIMIT :lim
+        """
+    ), {"ns": namespace, "lim": limit}).mappings().all()
+
+    typed = 0
+    still_low = 0
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        ki = session.get(KnowledgeItem, r["kid"])
+        if ki is None:
+            continue
+        out = classify(ki.content, tags=list(ki.tags or []), hint=ki.memory_type)
+        conf = float(out.get("confidence", 0.0) or 0.0)
+        new_type = out.get("memory_type")
+        if conf >= min_confidence and new_type:
+            typed += 1
+            if not dry_run:
+                ki.memory_type = new_type
+                ki.last_classified_at = now
+                resolve(session, str(r["qid"]), by)
+        else:
+            still_low += 1
+    if not dry_run:
+        session.commit()
+    return {
+        "scanned": len(rows),
+        "min_confidence": min_confidence,
+        "typed_and_resolved": typed,
+        "still_low_conf": still_low,
+        "dry_run": dry_run,
+    }
 
 
 def queue_counts(session: Session, namespace: str | None = None) -> dict[str, int]:
