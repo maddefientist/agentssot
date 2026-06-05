@@ -436,17 +436,25 @@ def health() -> dict:
 
 
 @app.get("/doctor")
-def doctor(session: Session = Depends(get_session)) -> dict:
-    """Health snapshot with provider configs, index stats, and key counts."""
+async def doctor(session: Session = Depends(get_session)) -> dict:
+    """Health snapshot with LIVE provider reachability, index stats, key counts.
+
+    Provider state comes from real Ollama pings (audit P0: the old /doctor reported
+    'available' from config presence alone, hiding a dead reranker endpoint).
+    """
     from sqlalchemy import func, text as _sa_text
 
+    s = app.state.settings
     embedding_model = (
-        settings.ollama_embed_model if settings.embedding_provider == "ollama"
-        else settings.openai_embed_model if settings.embedding_provider == "openai"
+        s.ollama_embed_model if s.embedding_provider == "ollama"
+        else s.openai_embed_model if s.embedding_provider == "openai"
         else "none"
     )
     reranker_model = (
-        settings.ollama_reranker_model if settings.reranker_provider == "ollama" else "none"
+        s.ollama_reranker_model if s.reranker_provider == "ollama" else "none"
+    )
+    reranker_fast_model = (
+        s.ollama_reranker_fast_model if s.reranker_provider == "ollama" else "none"
     )
     llm_model = (
         settings.ollama_chat_model if settings.llm_provider == "ollama"
@@ -470,20 +478,25 @@ def doctor(session: Session = Depends(get_session)) -> dict:
         select(func.count()).select_from(_ApiKey).where(_ApiKey.is_active.is_(True))
     ) or 0
 
-    # TODO: add error_rate field in v2 (requires request/error counters on app.state)
+    # Live provider reachability — real pings, not config presence.
+    connections = await _connection_rows()
+    unreachable = sorted(n for n, c in connections.items() if not c.get("reachable"))
 
     return {
-        "status": "ok",
-        "embedding_provider": settings.embedding_provider,
+        "status": "degraded" if unreachable else "ok",
+        "embedding_provider": s.embedding_provider,
         "embedding_model": embedding_model,
-        "reranker_provider": settings.reranker_provider,
+        "reranker_provider": s.reranker_provider,
         "reranker_model": reranker_model,
-        "llm_provider": settings.llm_provider,
+        "reranker_fast_model": reranker_fast_model,
+        "llm_provider": s.llm_provider,
         "llm_model": llm_model,
         "vector_index_count": vector_index_count,
         "last_ingest_at": last_ingest_at,
         "namespace_count": namespace_count,
         "active_key_count": active_key_count,
+        "connections": connections,
+        "unreachable_providers": unreachable,
     }
 
 
@@ -574,9 +587,13 @@ def cortex_data(
     concepts = crud.list_concepts(session, namespace, limit=1000)
     # Also grab knowledge count for the HUD
     stats = crud.get_namespace_stats(session, namespace)
+    # `total` must be the TRUE concept count, not len(capped list) — otherwise the
+    # HUD reports a flat 1000 once the corpus passes the render cap (audit F7).
+    concept_total = stats.get("concepts", {}).get("total", len(concepts))
     return {
         "concepts": concepts,
-        "total": len(concepts),
+        "total": concept_total,
+        "rendered": len(concepts),
         "knowledge_count": stats.get("knowledge_items", {}).get("total", 0),
     }
 
@@ -1273,6 +1290,26 @@ def admin_grant_namespaces(
     session.refresh(target)
     return {"key_id": key_id, "namespaces": list(target.namespaces or [])}
 
+
+
+@app.post("/admin/feedback/complete-sessions")
+def complete_stale_sessions(
+    idle_hours: int = Query(default=6, ge=1),
+    namespace: str | None = Query(default=None),
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    """Mechanically complete recall events from now-ended sessions (P6).
+
+    Converts 'this concept was recalled in a session that has since ended' into a
+    weak implicit-useful signal, instead of relying on clients calling
+    /session-complete. The nightly synthesis loop already runs this; this endpoint
+    lets the operator trigger and observe it. Admin-only.
+    """
+    require_admin(auth)
+    completed = crud.auto_complete_stale_sessions(session, idle_hours=idle_hours, namespace=namespace)
+    session.commit()
+    return {"status": "ok", "idle_hours": idle_hours, "namespace": namespace, "events_completed": completed}
 
 
 @app.get("/admin/feedback")

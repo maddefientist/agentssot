@@ -1642,20 +1642,26 @@ def get_or_create_profile(session: Session, agent_key: str, namespace: str) -> A
 
 
 def update_profile_from_recall(session: Session, agent_key: str, namespace: str) -> None:
-    """Increment recall counter on profile."""
+    """Increment recall counter and bump last-active on profile."""
     if not agent_key:
         return
+    from datetime import datetime as _dt, timezone as _tz
     profile = get_or_create_profile(session, agent_key, namespace)
     profile.total_recalls = (profile.total_recalls or 0) + 1
+    # updated_at has no onupdate trigger, so bump it explicitly — otherwise
+    # "Last Active" freezes at profile creation (audit F9).
+    profile.updated_at = _dt.now(_tz.utc)
     session.flush()
 
 
 def update_profile_from_feedback(session: Session, agent_key: str, namespace: str) -> None:
-    """Increment feedback counter on profile."""
+    """Increment feedback counter and bump last-active on profile."""
     if not agent_key:
         return
+    from datetime import datetime as _dt, timezone as _tz
     profile = get_or_create_profile(session, agent_key, namespace)
     profile.total_feedback = (profile.total_feedback or 0) + 1
+    profile.updated_at = _dt.now(_tz.utc)
     session.flush()
 
 
@@ -1907,6 +1913,35 @@ def mark_session_completed(session: Session, session_id: str) -> int:
         .where(RecallEvent.session_completed == False)
         .values(session_completed=True)
     )
+    result = session.execute(stmt)
+    session.flush()
+    return result.rowcount
+
+
+def auto_complete_stale_sessions(
+    session: Session, idle_hours: int = 6, namespace: str | None = None
+) -> int:
+    """Mechanically complete recall events from now-ended sessions.
+
+    Clients rarely call /session-complete, so the implicit-recall feedback signal
+    starves (verified on-box: 7 of 2603 events ever completed). A recall event
+    older than ``idle_hours`` belongs to a session that has surely ended, so we
+    credit it automatically — turning "this concept was recalled in a real
+    session" into a weak positive signal that the reconciler caps at +0.10/cycle.
+    This is the mechanical replacement for relying on agent discipline. Returns
+    the number of events newly marked completed.
+    """
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+
+    cutoff = _dt.now(_tz.utc) - _td(hours=idle_hours)
+    stmt = (
+        update(RecallEvent)
+        .where(RecallEvent.session_completed == False)
+        .where(RecallEvent.created_at < cutoff)
+    )
+    if namespace:
+        stmt = stmt.where(RecallEvent.namespace == namespace)
+    stmt = stmt.values(session_completed=True)
     result = session.execute(stmt)
     session.flush()
     return result.rowcount

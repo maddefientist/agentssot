@@ -265,6 +265,18 @@ def _run_synthesis_for_namespace(
                 session.rollback()
 
         # --- Feedback integration (Layer 2) ---
+        # Mechanically complete now-ended recall sessions first, so concepts
+        # recalled in real sessions earn their implicit-useful credit even when
+        # no client called /session-complete (P6: stop relying on agent discipline).
+        from app.crud import auto_complete_stale_sessions
+        auto_completed = auto_complete_stale_sessions(session, idle_hours=6, namespace=namespace)
+        if auto_completed:
+            logger.info(
+                "auto-completed stale recall sessions",
+                extra={"namespace": namespace, "events": auto_completed},
+            )
+        stats["auto_completed_recalls"] = auto_completed
+
         last_synthesis_time = datetime.now(UTC) - timedelta(days=1)
         protected_ids, feedback_adjustments = apply_feedback_signals(
             session, namespace, since=last_synthesis_time,
