@@ -2,7 +2,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
-from sqlalchemy import select, and_, func, or_, cast
+from sqlalchemy import select, and_, func, or_, cast, text
 from sqlalchemy.dialects.postgresql import ARRAY, TEXT
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
@@ -288,15 +288,35 @@ async def ingest_tiered(
         )
         candidates = list(session.execute(cand_stmt).scalars())
         superseded = find_supersession_candidates(ki, candidates)
+        # Similarity gate: entity+type match alone produced false supersessions
+        # (unrelated notes about the same project hiding each other). Require the
+        # pair to be genuinely similar — a real v1->v2 update — before suppressing.
+        sims: dict = {}
+        sup_threshold = get_settings().supersession_similarity_threshold
+        if superseded and sup_threshold > 0 and ki.embedding is not None:
+            cand_ids = [o.id for o in superseded]
+            sims = {
+                row["id"]: float(row["sim"])
+                for row in session.execute(text(
+                    """
+                    SELECT s.id AS id, 1 - (s.embedding <=> p.embedding) AS sim
+                    FROM knowledge_items s, knowledge_items p
+                    WHERE p.id = :pid AND s.id = ANY(:cids) AND s.embedding IS NOT NULL
+                    """
+                ), {"pid": ki.id, "cids": cand_ids}).mappings()
+            }
+            superseded = [o for o in superseded if sims.get(o.id, 0.0) >= sup_threshold]
         for old in superseded:
             apply_supersession(old, ki)
+            sim_note = sims.get(old.id)
             session.add(ReviewQueueItem(
                 namespace=namespace,
                 kind=ReviewQueueKind.supersede,
                 priority=5,
                 primary_id=ki.id,
                 secondary_id=old.id,
-                reason="auto-supersession on entity+type match",
+                reason=(f"auto-supersession on entity+type match (sim={sim_note:.3f})"
+                        if sim_note is not None else "auto-supersession on entity+type match"),
                 status=ReviewQueueStatus.pending,
             ))
         if superseded:

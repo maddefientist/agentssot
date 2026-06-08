@@ -30,6 +30,7 @@ HOT_KEYS = frozenset({
     "classifier_model",
     "classifier_base_url",
     "semantic_dedup_threshold",
+    "supersession_similarity_threshold",
 })
 
 URL_KEYS = frozenset({
@@ -42,6 +43,7 @@ URL_KEYS = frozenset({
 NUMERIC_RANGES: dict[str, tuple[float, float]] = {
     "synthesis_similarity_threshold": (0.0, 1.0),
     "semantic_dedup_threshold": (0.0, 1.0),
+    "supersession_similarity_threshold": (0.0, 1.0),
     "synthesis_min_cluster_size": (1, 1000),
 }
 

@@ -100,6 +100,12 @@ class Settings(BaseSettings):
     wal_dir: str = Field(default="/var/lib/agentssot/wal", alias="WAL_DIR")
     wal_retention_days: int = Field(default=30, alias="WAL_RETENTION_DAYS")
 
+    # Supersession gate: a new item only supersedes an existing same-type item
+    # sharing an entity when they are ALSO this cosine-similar. Without this gate
+    # the detector matched on entity alone, so unrelated notes about the same
+    # project wrongly superseded (and hid) each other. 0.0 disables the gate.
+    supersession_similarity_threshold: float = Field(default=0.80, alias="SUPERSESSION_SIMILARITY_THRESHOLD")
+
     # Semantic dedup on ingest: if cosine similarity to an existing item in the
     # same namespace meets or exceeds this threshold, skip insert and return the
     # existing item. Verbatim items bypass this check. 0.0 disables dedup.
