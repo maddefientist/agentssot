@@ -240,6 +240,61 @@ def reclassify_low_conf(session: Session, namespace: str | None = None,
     }
 
 
+def reclassify_untyped(session: Session, namespace: str | None = None,
+                       limit: int = 200, min_confidence: float = 0.6,
+                       dry_run: bool = True) -> dict:
+    """Type knowledge items that have no memory_type and were never classified.
+
+    Corpus-wide counterpart to reclassify_low_conf: the backfill window left
+    items with NULL memory_type that were never flagged into the review queue.
+    Every item this touches gets last_classified_at stamped (even when the
+    classifier isn't confident), so it is attempted exactly once — the candidate
+    pool strictly shrinks and batched callers terminate naturally (no spin on
+    un-typable junk). Confident result -> set memory_type. Returns counts.
+    """
+    from app.llm.classifier import classify
+    from app.models import KnowledgeItem
+
+    rows = session.execute(text(
+        """
+        SELECT id FROM knowledge_items
+        WHERE (memory_type IS NULL OR memory_type = '')
+          AND last_classified_at IS NULL
+          AND (CAST(:ns AS text) IS NULL OR namespace = :ns)
+        ORDER BY created_at
+        LIMIT :lim
+        """
+    ), {"ns": namespace, "lim": limit}).mappings().all()
+
+    typed = 0
+    left_untyped = 0
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        ki = session.get(KnowledgeItem, r["id"])
+        if ki is None:
+            continue
+        out = classify(ki.content, tags=list(ki.tags or []), hint=None)
+        conf = float(out.get("confidence", 0.0) or 0.0)
+        new_type = out.get("memory_type")
+        if not dry_run:
+            ki.last_classified_at = now  # mark attempted so it never re-enters the pool
+        if conf >= min_confidence and new_type:
+            typed += 1
+            if not dry_run:
+                ki.memory_type = new_type
+        else:
+            left_untyped += 1
+    if not dry_run:
+        session.commit()
+    return {
+        "scanned": len(rows),
+        "min_confidence": min_confidence,
+        "typed": typed,
+        "left_untyped": left_untyped,
+        "dry_run": dry_run,
+    }
+
+
 def queue_counts(session: Session, namespace: str | None = None) -> dict[str, int]:
     """Pending-row counts per kind — feeds the GUI badge and drain preview."""
     stmt = (

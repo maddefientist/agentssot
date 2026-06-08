@@ -842,6 +842,28 @@ async def review_queue_reclassify(
     return {"status": "ok", **result}
 
 
+@router.post("/admin/reclassify-untyped")
+async def reclassify_untyped_endpoint(
+    namespace: str | None = None,
+    limit: int = Query(default=200, ge=1, le=2000),
+    min_confidence: float = Query(default=0.6, ge=0.0, le=1.0),
+    dry_run: bool = Query(default=True),
+    session: Session = Depends(get_session),
+    auth: AuthContext = Depends(require_api_key),
+):
+    """Type knowledge items with no memory_type that were never classified.
+
+    Corpus-wide cleanup beyond the review queue. Each touched item is stamped
+    last_classified_at so it is tried once; batch via limit until scanned=0.
+    dry_run=True by default. Admin-only.
+    """
+    if auth.role != ApiRole.admin.value:
+        raise HTTPException(status_code=403, detail="admin role required")
+    from ..services.review_queue import reclassify_untyped
+    result = reclassify_untyped(session, namespace, limit, min_confidence, dry_run)
+    return {"status": "ok", **result}
+
+
 @router.post("/items/{item_id}/supersede")
 async def supersede_endpoint(
     item_id: UUID,
