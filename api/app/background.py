@@ -17,7 +17,11 @@ async def compaction_loop(app) -> None:
 
     while True:
         try:
-            _run_compaction_cycle(app)
+            # Compaction uses synchronous DB/LLM clients and processes a batch
+            # of candidates sequentially. Run it in a worker thread so the
+            # FastAPI event loop keeps serving health checks and recall/ingest
+            # requests while a batch is summarizing. (Mirrors synthesis_loop.)
+            await asyncio.to_thread(_run_compaction_cycle, app)
         except asyncio.CancelledError:
             raise
         except Exception:
