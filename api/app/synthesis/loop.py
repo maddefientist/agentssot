@@ -100,9 +100,10 @@ def _find_related_concepts(
     return [c for _, c in scored[:max_related]]
 
 
-def _build_agent_profiles(session: Session, namespace: str, llm_provider, settings) -> int:
+def _build_agent_profiles(session: Session, namespace: str, llm_provider, settings, overrides) -> int:
     """Analyze recall patterns per agent to update strength topics. Returns profiles updated."""
     from ..models import AgentProfile, RecallEvent
+    from ..runtime_config import effective
     import json as _json
 
     profiles = session.scalars(
@@ -133,7 +134,7 @@ def _build_agent_profiles(session: Session, namespace: str, llm_provider, settin
         )
 
         try:
-            result = llm_provider.summarize(prompt, model=settings.synthesis_fallback_model)
+            result = llm_provider.summarize(prompt, model=effective(settings, overrides, "synthesis_fallback_model"))
             topics = _json.loads(result.strip())
             if isinstance(topics, list):
                 profile.strengths = [str(t).lower() for t in topics[:10]]
@@ -156,9 +157,14 @@ def _run_synthesis_for_namespace(
     skip_decay: bool = False,
 ) -> dict:
     """Run one synthesis cycle for a namespace. Returns stats dict."""
+    from ..runtime_config import effective, load_overrides
+
     stats = {"namespace": namespace, "new": 0, "updated": 0, "decayed": 0, "clusters": 0, "feedback_adjustments": 0}
 
     with SessionLocal() as session:
+        # Load runtime overrides to apply effective values for synthesis settings
+        overrides = load_overrides(session)
+
         if full_resynthesis:
             since = datetime(2020, 1, 1, tzinfo=UTC)
             logger.info("full resynthesis requested", extra={"namespace": namespace})
@@ -167,7 +173,8 @@ def _run_synthesis_for_namespace(
                 select(func.max(Concept.updated_at)).where(Concept.namespace == namespace)
             )
             since = latest_concept or (datetime.now(UTC) - timedelta(days=7))
-            min_since = datetime.now(UTC) - timedelta(hours=24)
+            window_days = effective(settings, overrides, "synthesis_window_days")
+            min_since = datetime.now(UTC) - timedelta(days=window_days)
             if since > min_since:
                 since = min_since
 
@@ -184,8 +191,8 @@ def _run_synthesis_for_namespace(
 
         clusters = cluster_items(
             items,
-            similarity_threshold=settings.synthesis_similarity_threshold,
-            min_cluster_size=settings.synthesis_min_cluster_size,
+            similarity_threshold=effective(settings, overrides, "synthesis_similarity_threshold"),
+            min_cluster_size=effective(settings, overrides, "synthesis_min_cluster_size"),
         )
 
         # Fast-track: skill-tagged items that didn't cluster get their own single-item cluster
@@ -221,8 +228,8 @@ def _run_synthesis_for_namespace(
                     cluster_items=cluster,
                     existing_concepts=related,
                     llm_provider=llm_provider,
-                    synthesis_model=settings.synthesis_model,
-                    fallback_model=settings.synthesis_fallback_model,
+                    synthesis_model=effective(settings, overrides, "synthesis_model"),
+                    fallback_model=effective(settings, overrides, "synthesis_fallback_model"),
                 )
 
                 # Layer 5: Extract agent attribution from cluster sources
@@ -296,7 +303,7 @@ def _run_synthesis_for_namespace(
 
         # --- Agent profile building (Layer 4) ---
         try:
-            profiles_updated = _build_agent_profiles(session, namespace, llm_provider, settings)
+            profiles_updated = _build_agent_profiles(session, namespace, llm_provider, settings, overrides)
             if profiles_updated:
                 logger.info("agent profiles updated", extra={"namespace": namespace, "count": profiles_updated})
         except Exception:

@@ -142,6 +142,34 @@ The API serves a single-page dashboard at `/` with three tabs:
 
 No build step required — it's plain HTML/CSS/JS calling the same API endpoints.
 
+## Gateway/HUD Layer (2026-05)
+
+AgentSSOT includes **Madi HUD** — a realtime command interface and status surface for orchestrating agent workflows.
+
+**Main endpoints:**
+- `GET  /hud` — Madi HUD frontend (Obsidian Terminal surface). Full-bleed interface at port 8088.
+- `GET  /connections` — Admin page: live provider health and connection status.
+- `WebSocket /gateway/ws` — Bidirectional command channel for HUD clients. Routes intents to executors ("brain regions").
+- `GET  /gateway/sse/status` — Server-sent events stream: realtime status snapshot (ingest rate, synthesis progress, token usage).
+
+**Executor registry** defines intent→executor bindings (e.g., `ingest-docs` → indexer, `classify` → classifier). Dispatch is hybrid: explicit intent or rules-based fallback, then classifier, then `chat-local` default.
+
+Explore `/connections` to see live provider states and latencies; use `POST /admin/config` (below) to hot-swap providers mid-session.
+
+## Runtime Control Plane (2026-05)
+
+AgentSSOT provides live, operator-facing runtime overrides — no service restart required to swap Ollama models, adjust thresholds, or repair failing providers.
+
+**Main endpoints:**
+- `GET  /admin/config` — Read all overridable keys with current effective values vs. .env defaults.
+- `POST /admin/config` — Set an override key (e.g., `{"key": "synthesis_model", "value": "llama3.1"}`). Returns updated config + live `connections` snapshot.
+- `DELETE /admin/config/{key}` — Clear an override; revert to .env default.
+- `GET  /admin/connections` — Snapshot of all registered providers (Ollama, OpenAI, classifier, reranker) with reachability and latency.
+
+**HOT_KEYS** allow-list (runtime-configurable keys): `synthesis_model`, `ollama_embed_model`, `ollama_chat_model`, `synthesis_similarity_threshold`, `semantic_dedup_threshold`, `supersession_similarity_threshold`, `classifier_model`, `reranker_model`, and others. See `api/app/runtime_config.py:HOT_KEYS` for the full list.
+
+Values are type-coerced (bool/int/float/str) and validated (numeric ranges, URL syntax). DB is the source of truth; startup defaults are stored in `.env`.
+
 ## Configuration
 
 All configuration is via environment variables (or `.env` file):

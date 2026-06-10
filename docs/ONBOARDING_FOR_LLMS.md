@@ -1,6 +1,31 @@
 # AgentSSOT Onboarding For LLM Agents
 
+Last updated: 2026-06-10
+
 This is a short, copy/paste-friendly guide you can provide to any LLM agent so it can use AgentSSOT as its primary long-term memory system.
+
+## What's New Since 2026-02 (Cortex Layer)
+
+**Typed memory taxonomy**: Knowledge items now have explicit `memory_type` (rule, doctrine, entity, command, episodic, etc.) to support selective loadout and promotion workflows.
+
+**Tiered loadout system**: At session start, agents receive a `<hive-loadout>` block containing the most relevant rules (priority 5, always included) and rotating doctrine items (priority 4). Use `hive_recall` and `hive_teach` to query and store knowledge in the shared hive.
+
+**Synthesis & promotion**: Daily jobs cluster recent knowledge, reconcile Concepts, and promote high-confidence doctrine back into knowledge items so it enters the loadout. Feedback signals (` POST /feedback`) train the synthesis pipeline.
+
+**Review queue and dedup**: New `/admin/feedback` and `/admin/dedup` endpoints manage editorial workflows — contested items, duplicates, low-confidence entries. `POST /admin/feedback/complete-sessions` summarizes multi-turn interactions.
+
+**Runtime control plane**: Operators can now hot-swap Ollama models, adjust synthesis thresholds, and repair failing providers without restarting (`GET /admin/config`, `POST /admin/config`). Live provider health visible at `GET /admin/connections`.
+
+**Gateway/HUD interface**: Realtime command dispatch via `WebSocket /gateway/ws` and status streaming via `GET /gateway/sse/status`. The Madi HUD (`GET /hud`) provides an Obsidian Terminal surface for interactive workflows.
+
+Endpoint summary for new features:
+- `POST /feedback` — Signal usefulness, errors, or classifications.
+- `GET  /admin/config` — Read runtime overrides.
+- `POST /admin/config` — Set an override (hot model swap, threshold tuning).
+- `DELETE /admin/config/{key}` — Revert to default.
+- `GET  /admin/connections` — Provider health snapshot.
+- `POST /admin/feedback/complete-sessions` — Summarize session interactions.
+- `POST /admin/dedup` — Deduplicate items by embedding similarity.
 
 ## Connection
 

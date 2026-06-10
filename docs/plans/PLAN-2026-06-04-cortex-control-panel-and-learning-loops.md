@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-04
 **Author:** Madi (Opus, on-box at `hari:/opt/agentssot`)
-**Companion to:** `AUDIT-2026-06-04-cortex-learning-loops.md`
+**Companion to:** `docs/plans/AUDIT-2026-06-04-cortex-learning-loops.md`
 **Workflow:** subagent-driven (chain.sh bricks). Operator opted in to **GPT-5.5** for high-level ops
 (`gpt-orchestrate` / `gpt-review`), **MiniMax-M3** (`minimax-bulk`) for bulk reads/digests, with
 GLM/Kimi/DeepSeek for the rest.

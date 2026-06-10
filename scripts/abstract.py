@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Monthly abstraction: extract cross-cutting principles from synthesized concepts.
-Uses qwen3.5:cloud (Ollama Cloud, frontier reasoning) -- 1 call/month.
-Fallback: kimi-k2.5:cloud.
+Uses qwen3.5:397b-cloud (Ollama Cloud, frontier reasoning) -- 1 call/month.
+Fallback: kimi-k2.6:cloud.
 
 Cron: 0 5 1 * * (1st of month at 5 AM)
 """
@@ -19,7 +19,7 @@ OLLAMA_URL = "http://localhost:11434"
 CHAT_URL = f"{OLLAMA_URL}/api/chat"
 EMBED_URL = f"{OLLAMA_URL}/api/embed"
 EMBED_MODEL = "qwen3-embedding:latest"
-CLOUD_MODELS = ["qwen3.5:cloud", "kimi-k2.5:cloud"]
+CLOUD_MODELS = ["qwen3.5:397b-cloud", "kimi-k2.6:cloud"]
 
 logging.basicConfig(
     level=logging.INFO,

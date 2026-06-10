@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 HOT_KEYS = frozenset({
     "synthesis_model",
     "synthesis_fallback_model",
+    "synthesis_window_days",
     "synthesis_similarity_threshold",
     "synthesis_min_cluster_size",
     "ollama_reranker_model",
@@ -45,6 +46,7 @@ NUMERIC_RANGES: dict[str, tuple[float, float]] = {
     "semantic_dedup_threshold": (0.0, 1.0),
     "supersession_similarity_threshold": (0.0, 1.0),
     "synthesis_min_cluster_size": (1, 1000),
+    "synthesis_window_days": (1, 3650),
 }
 
 

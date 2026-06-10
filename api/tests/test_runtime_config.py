@@ -9,6 +9,7 @@ def _settings():
     return SimpleNamespace(
         synthesis_model="qwen3.5:397b-cloud",
         synthesis_fallback_model="qwen3:latest",
+        synthesis_window_days=7,
         synthesis_similarity_threshold=0.65,
         synthesis_min_cluster_size=2,
         ollama_reranker_model="deep",
@@ -26,6 +27,8 @@ def _settings():
 def test_hot_keys_are_allow_listed_and_typed():
     s = _settings()
     assert "database_url" not in HOT_KEYS
+    assert "synthesis_window_days" in HOT_KEYS
+    assert coerce_value(s, "synthesis_window_days", "14") == 14
     assert coerce_value(s, "synthesis_min_cluster_size", "3") == 3
     assert coerce_value(s, "synthesis_similarity_threshold", "0.7") == 0.7
     assert coerce_value(s, "synthesis_model", "qwen3.5:397b-cloud") == "qwen3.5:397b-cloud"

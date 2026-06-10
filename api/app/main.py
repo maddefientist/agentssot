@@ -1638,6 +1638,7 @@ _SETTING_DESCRIPTIONS: dict[str, str] = {
     "synthesis_model": "LLM model used for synthesis (runtime override persists until deleted)",
     "synthesis_fallback_model": "Fallback LLM for synthesis (runtime override persists until deleted)",
     "synthesis_schedule_hour": "UTC hour when synthesis runs (restart required)",
+    "synthesis_window_days": "Days window for synthesis lookback (runtime override persists until deleted)",
     "synthesis_similarity_threshold": "Cosine similarity threshold for clustering items into concepts",
     "synthesis_min_cluster_size": "Minimum items per cluster for synthesis",
     "synthesis_confidence_decay": "Per-day confidence decay applied to concepts",
@@ -1663,6 +1664,7 @@ _SETTING_DESCRIPTIONS: dict[str, str] = {
 # Expected Python types for each configurable field (used for coercion and validation).
 _SETTING_TYPES: dict[str, type] = {
     "synthesis_enabled": bool,
+    "synthesis_window_days": int,
     "synthesis_similarity_threshold": float,
     "synthesis_min_cluster_size": int,
     "synthesis_confidence_decay": float,
@@ -1696,6 +1698,7 @@ _SETTING_RANGES: dict[str, tuple[float, float]] = {
     "synthesis_confidence_decay": (0.0, 1.0),
     "synthesis_decay_floor": (0.0, 1.0),
     "semantic_dedup_threshold": (0.0, 1.0),
+    "synthesis_window_days": (1, 3650),
     "synthesis_min_cluster_size": (1, 1000),
     "synthesis_decay_grace_days": (0, 3650),
     "compaction_event_threshold": (1, 100_000),
