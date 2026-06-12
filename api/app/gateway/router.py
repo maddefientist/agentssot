@@ -21,7 +21,13 @@ import json
 import re
 from typing import Awaitable, Callable, Optional
 
-from .config import DEFAULT_INTENT, LOCAL_MODEL, OLLAMA_URL, VALID_INTENTS
+from .config import (
+    CLASSIFIER_TIMEOUT_S,
+    DEFAULT_INTENT,
+    LOCAL_MODEL,
+    OLLAMA_URL,
+    VALID_INTENTS,
+)
 
 # (compiled pattern, intent). First match wins, so order = priority.
 _RULE_SOURCE: list[tuple[str, str]] = [
@@ -118,7 +124,9 @@ class IntentRouter:
 
 
 def make_ollama_classifier(
-    base_url: str = OLLAMA_URL, model: str = LOCAL_MODEL
+    base_url: str = OLLAMA_URL,
+    model: str = LOCAL_MODEL,
+    timeout: float = CLASSIFIER_TIMEOUT_S,
 ) -> Classifier:
     """Build an async classifier backed by a local Ollama model.
 
@@ -137,7 +145,7 @@ def make_ollama_classifier(
     )
 
     async def _classify(text: str) -> str:
-        async with httpx.AsyncClient(timeout=8.0) as client:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 f"{base_url}/api/chat",
                 json={

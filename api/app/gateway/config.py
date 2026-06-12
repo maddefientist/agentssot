@@ -30,6 +30,14 @@ OLLAMA_URL: str = (
 # ``think: false`` to keep HUD replies and classifier output clean.
 LOCAL_MODEL: str = os.environ.get("MADI_LOCAL_MODEL", "deepseek-v4-flash:cloud")
 
+# Intent classification runs on every rules-miss before generation, so a slow
+# classify is pure dead time in front of the HUD. Cloud latency is spiky (the
+# flash model occasionally takes ~9s), so we cap the classify and let a timeout
+# degrade to DEFAULT_INTENT (chat-local) — the correct default for the
+# conversational input that dominates the HUD anyway. Bounds the worst case to
+# ~CLASSIFIER_TIMEOUT_S + the chat call instead of 8s+ of opaque wait.
+CLASSIFIER_TIMEOUT_S: float = float(os.environ.get("MADI_CLASSIFIER_TIMEOUT", "4.0"))
+
 # --- Memory ---
 HIVE_NAMESPACE: str = os.environ.get("MADI_HIVE_NAMESPACE", "claude-shared")
 
