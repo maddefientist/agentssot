@@ -143,6 +143,7 @@ def make_ollama_classifier(
                 json={
                     "model": model,
                     "stream": False,
+                    "think": False,  # reasoning models: classify fast, no CoT
                     "format": "json",
                     "messages": [
                         {"role": "system", "content": system},

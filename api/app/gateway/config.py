@@ -23,7 +23,12 @@ OLLAMA_URL: str = (
     or os.environ.get("OLLAMA_BASE_URL")
     or "http://host.docker.internal:11434"
 )
-LOCAL_MODEL: str = os.environ.get("MADI_LOCAL_MODEL", "qwen3.5:4b")
+# The HUD's casual-chat + intent-classification model. A *cloud* model proxied
+# through Ollama (no local VRAM, so it never gets evicted and cold-starts —
+# the on-box qwen3.5:4b used to hang up to 60s on the first command after idle).
+# Reasoning models like deepseek emit chain-of-thought, so both call sites pass
+# ``think: false`` to keep HUD replies and classifier output clean.
+LOCAL_MODEL: str = os.environ.get("MADI_LOCAL_MODEL", "deepseek-v4-flash:cloud")
 
 # --- Memory ---
 HIVE_NAMESPACE: str = os.environ.get("MADI_HIVE_NAMESPACE", "claude-shared")

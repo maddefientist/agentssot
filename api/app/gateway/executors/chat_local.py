@@ -58,7 +58,12 @@ def make_ollama_streamer(
             async with client.stream(
                 "POST",
                 f"{base_url}/api/chat",
-                json={"model": model, "stream": True, "messages": messages},
+                json={
+                    "model": model,
+                    "stream": True,
+                    "think": False,  # reasoning models: keep HUD output clean
+                    "messages": messages,
+                },
             ) as resp:
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
