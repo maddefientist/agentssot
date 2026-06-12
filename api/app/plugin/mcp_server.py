@@ -325,6 +325,209 @@ async def hive_summarize(
 
 
 # ---------------------------------------------------------------------------
+# Cortex working-memory tools
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def cortex_state(
+    agent_key: str,
+    namespace: str = "",
+    include_completed: bool = False,
+) -> str:
+    """Read an agent/project's working-memory tasks (decisions, pending actions, artifacts)
+    and recent deltas from Cortex.
+
+    Use this at session start to reload prior working state before continuing a task.
+
+    agent_key convention: slugified basename of the project cwd, e.g. "agentssot" or
+    "teleton". One rolling task per project; the same key is shared across Pi madi-core
+    and Claude Code so both see the same blackboard.
+
+    Args:
+        agent_key: Slug identifying the agent/project (e.g. "agentssot").
+        namespace: Namespace (default: claude-shared).
+        include_completed: If True, include completed/abandoned tasks.
+    """
+    ns = namespace or DEFAULT_NS
+    params: dict[str, Any] = {
+        "namespace": ns,
+        "agent_key": agent_key,
+        "include_completed": include_completed,
+    }
+    try:
+        async with await _client() as c:
+            resp = await c.get("/cortex/state", params=params)
+    except httpx.HTTPError as exc:
+        return f"Connection error: {exc}"
+    if resp.status_code != 200:
+        return await _api_error(resp)
+    data = resp.json()
+    active_tasks = data.get("active_tasks", [])
+    recent_deltas = data.get("recent_deltas", [])
+    if not active_tasks:
+        return f"No active working memory for agent_key={agent_key}"
+    lines: list[str] = []
+    for task in active_tasks:
+        lines.append(
+            f"Task: {task.get('task_title', '(untitled)')} "
+            f"[status={task.get('status')} version={task.get('version')} "
+            f"updated={task.get('updated_at', '')}]"
+        )
+        lines.append(f"  task_id: {task.get('task_id', '')}")
+        decisions = task.get("decisions") or []
+        if decisions:
+            lines.append("  Decisions:")
+            for d in decisions:
+                lines.append(f"    - {d}")
+        pending = task.get("pending_actions") or []
+        if pending:
+            lines.append("  Pending actions:")
+            for p in pending:
+                lines.append(f"    - {p}")
+        artifacts = task.get("artifacts") or []
+        if artifacts:
+            lines.append("  Artifacts:")
+            for a in artifacts:
+                lines.append(f"    - {a}")
+        snapshot = task.get("context_snapshot", "")
+        if snapshot:
+            lines.append(f"  Context snapshot: {snapshot}")
+        lines.append("")
+    if recent_deltas:
+        lines.append("Recent deltas:")
+        for delta in recent_deltas:
+            lines.append(
+                f"  [{delta.get('created_at', '')}] {delta.get('task_id', '')} "
+                f"({delta.get('delta_type', '')}): {delta.get('content', '')}"
+            )
+    return "\n".join(lines).rstrip()
+
+
+@mcp.tool()
+async def cortex_reconstruct(
+    agent_key: str,
+    namespace: str = "",
+    max_chars: int = 6000,
+    include_recent_knowledge: bool = False,
+    top_k_knowledge: int = 5,
+) -> str:
+    """Build a budget-aware working-memory context block to reload prior task state
+    at session start.
+
+    Returns a ready-to-inject string summarising the agent's last known state plus,
+    optionally, relevant knowledge items. The returned block includes a WRITE-BACK
+    CONTRACT footer reminding the caller to push updates via cortex_update.
+
+    Args:
+        agent_key: Slug identifying the agent/project (e.g. "agentssot").
+        namespace: Namespace (default: claude-shared).
+        max_chars: Budget cap for the returned injection string.
+        include_recent_knowledge: If True, attach relevant knowledge snippets.
+        top_k_knowledge: How many knowledge items to include (if enabled).
+    """
+    ns = namespace or DEFAULT_NS
+    body: dict[str, Any] = {
+        "namespace": ns,
+        "agent_key": agent_key,
+        "max_chars": max_chars,
+        "include_recent_knowledge": include_recent_knowledge,
+        "top_k_knowledge": top_k_knowledge,
+    }
+    try:
+        async with await _client() as c:
+            resp = await c.post("/cortex/reconstruct", json=body)
+    except httpx.HTTPError as exc:
+        return f"Connection error: {exc}"
+    if resp.status_code != 200:
+        return await _api_error(resp)
+    data = resp.json()
+    injection = data.get("injection", "")
+    if not injection:
+        return f"No prior working memory to reconstruct for agent_key={agent_key}"
+    footer = (
+        "\n\n---\n"
+        f'WRITE-BACK CONTRACT: as work progresses, call cortex_update(agent_key="{agent_key}", '
+        "task_title=..., status=\"in_progress\", decisions=[...], pending_actions=[...], "
+        'artifacts=[...], delta="<what changed>"). Send COMPLETE lists (update overwrites them).'
+    )
+    return injection + footer
+
+
+@mcp.tool()
+async def cortex_update(
+    agent_key: str,
+    task_title: str,
+    task_id: str = "",
+    status: str = "in_progress",
+    decisions: list[str] | None = None,
+    pending_actions: list[str] | None = None,
+    artifacts: list[str] | None = None,
+    context_snapshot: str = "",
+    delta: str = "",
+    namespace: str = "",
+) -> str:
+    """Write (overwrite) an agent/project's working-memory task in Cortex.
+
+    IMPORTANT — OVERWRITE SEMANTICS: decisions, pending_actions, and artifacts are
+    FULLY REPLACED on every call. Do NOT send only new items; always send the COMPLETE
+    current list. Use the delta field to append an incremental note to the audit log
+    without affecting the lists.
+
+    agent_key convention: slugified basename of the project cwd (e.g. "agentssot").
+    One rolling task per project; shared between Pi madi-core and Claude Code.
+
+    Args:
+        agent_key: Slug identifying the agent/project.
+        task_title: Human-readable title for the task.
+        task_id: Existing task ID to update (leave blank to auto-create).
+        status: One of: pending, in_progress, completed, abandoned.
+        decisions: COMPLETE list of decisions made so far (overwrites previous).
+        pending_actions: COMPLETE list of pending actions (overwrites previous).
+        artifacts: COMPLETE list of artifact paths/URLs (overwrites previous).
+        context_snapshot: Optional free-form snapshot string (overwrites previous).
+        delta: Optional incremental note appended to the audit delta log.
+        namespace: Namespace (default: claude-shared).
+    """
+    valid_statuses = {"pending", "in_progress", "completed", "abandoned"}
+    if status not in valid_statuses:
+        return (
+            f"Invalid status '{status}'. Must be one of: "
+            + ", ".join(sorted(valid_statuses))
+        )
+    ns = namespace or DEFAULT_NS
+    body: dict[str, Any] = {
+        "namespace": ns,
+        "agent_key": agent_key,
+        "task_title": task_title,
+        "status": status,
+        "decisions": decisions if decisions is not None else [],
+        "pending_actions": pending_actions if pending_actions is not None else [],
+        "artifacts": artifacts if artifacts is not None else [],
+    }
+    if task_id:
+        body["task_id"] = task_id
+    if context_snapshot:
+        body["context_snapshot"] = context_snapshot
+    if delta:
+        body["delta"] = delta
+    try:
+        async with await _client() as c:
+            resp = await c.post("/cortex/update", json=body)
+    except httpx.HTTPError as exc:
+        return f"Connection error: {exc}"
+    if resp.status_code != 200:
+        return await _api_error(resp)
+    data = resp.json()
+    tid = data.get("task_id", "?")
+    version = data.get("version", "?")
+    created = "created" if data.get("created") else "updated"
+    return (
+        f"Cortex updated: task_id={tid} version={version} ({created}). "
+        "Remember: lists are overwritten, send full state next time."
+    )
+
+
+# ---------------------------------------------------------------------------
 # Admin tools
 # ---------------------------------------------------------------------------
 
