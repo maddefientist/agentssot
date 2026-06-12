@@ -166,7 +166,31 @@
         }
       }
       renderExecutors(snap.executors);
-      $("dot-synapse").className = "dot on";
+
+      // Fleet slot: populated only when the fleet-dashboard (:9105) is reachable.
+      if (snap.fleet) {
+        var f = snap.fleet;
+        var hosts = (f.hosts && f.hosts.length != null) ? f.hosts.length
+                  : (f.online != null ? f.online
+                  : (f.count != null ? f.count : null));
+        if (hosts != null) {
+          var total = (f.total != null) ? "/" + f.total : "";
+          $("fleet").textContent = hosts + total;
+        }
+      }
+
+      // Synapse slot: live agent activity from the synapse plane (DB-backed).
+      var syn = snap.synapse;
+      if (syn && syn.active != null) {
+        if (syn.active > 0) {
+          var where = syn.cwd ? (" · " + syn.cwd) : "";
+          $("synapse-row").textContent = syn.active + " active" + where;
+          $("dot-synapse").className = "dot on";
+        } else {
+          $("synapse-row").textContent = "idle";
+          $("dot-synapse").className = "dot";
+        }
+      }
     };
     es.onerror = function () { /* EventSource auto-reconnects */ };
   }

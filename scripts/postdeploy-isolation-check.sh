@@ -63,7 +63,7 @@ echo "Running namespace-isolation gate..."
 cd "$REPO_DIR"
 set +e
 SSOT_TEST_URL="$URL" SSOT_TEST_ADMIN_KEY="$ADMIN_KEY" \
-  python benchmarks/isolation/runner.py --ci
+  "${PYTHON:-python3}" benchmarks/isolation/runner.py --ci
 rc=$?
 set -e
 

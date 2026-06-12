@@ -198,7 +198,10 @@ def reclassify_low_conf(session: Session, namespace: str | None = None,
     we set the type and resolve the row; otherwise the row stays pending.
     """
     from app.llm.classifier import classify
-    from app.models import KnowledgeItem
+    from app.models import KnowledgeItem, ReviewQueueItem
+    from app.settings import get_settings
+
+    max_attempts = get_settings().reclassify_max_attempts
 
     rows = session.execute(text(
         """
@@ -213,10 +216,15 @@ def reclassify_low_conf(session: Session, namespace: str | None = None,
 
     typed = 0
     still_low = 0
+    dismissed_unclassifiable = 0
     now = datetime.now(timezone.utc)
     for r in rows:
         ki = session.get(KnowledgeItem, r["kid"])
         if ki is None:
+            # Orphaned queue row (KI deleted) — dismiss so it stops blocking drain.
+            if not dry_run:
+                dismiss(session, str(r["qid"]), by)
+            dismissed_unclassifiable += 1
             continue
         out = classify(ki.content, tags=list(ki.tags or []), hint=ki.memory_type)
         conf = float(out.get("confidence", 0.0) or 0.0)
@@ -228,14 +236,34 @@ def reclassify_low_conf(session: Session, namespace: str | None = None,
                 ki.last_classified_at = now
                 resolve(session, str(r["qid"]), by)
         else:
+            # Not confident. Bump attempts; once we've tried enough, this row is
+            # terminally unclassifiable — dismiss it so a drainer converges
+            # instead of re-queueing the same item forever (the 3-day-loop bug).
             still_low += 1
+            if not dry_run:
+                qitem = session.get(ReviewQueueItem, r["qid"])
+                if qitem is not None:
+                    qitem.attempts = (qitem.attempts or 0) + 1
+                    ki.last_classified_at = now
+                    if qitem.attempts >= max_attempts:
+                        qitem.status = ReviewQueueStatus.dismissed
+                        qitem.resolved_at = now
+                        qitem.resolved_by = by
+                        qitem.reason = (
+                            f"unclassifiable after {qitem.attempts} attempts "
+                            f"(last conf={conf:.2f})"
+                        )
+                        dismissed_unclassifiable += 1
+                        still_low -= 1
     if not dry_run:
         session.commit()
     return {
         "scanned": len(rows),
         "min_confidence": min_confidence,
+        "max_attempts": max_attempts,
         "typed_and_resolved": typed,
         "still_low_conf": still_low,
+        "dismissed_unclassifiable": dismissed_unclassifiable,
         "dry_run": dry_run,
     }
 

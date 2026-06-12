@@ -32,6 +32,7 @@ async def snapshot_status(
     executors: Optional[Source] = None,
     fleet: Optional[Source] = None,
     chains: Optional[Source] = None,
+    synapse: Optional[Source] = None,
 ) -> dict[str, Any]:
     """Return a single status snapshot. Any slot may be ``None`` if unavailable."""
     return {
@@ -39,4 +40,5 @@ async def snapshot_status(
         "executors": await _safe(executors),
         "fleet": await _safe(fleet),
         "chains": await _safe(chains),
+        "synapse": await _safe(synapse),
     }

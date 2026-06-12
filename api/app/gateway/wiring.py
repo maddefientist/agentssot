@@ -207,6 +207,57 @@ def _executor_health() -> list[dict[str, Any]]:
     return health
 
 
+async def _fleet_status() -> dict[str, Any] | None:
+    """Pull live fleet health from the fleet-dashboard (reused, not rebuilt).
+
+    Returns None when the dashboard is unreachable (e.g. service down) — the
+    feeder's _safe wrapper + the HUD's NULL-graceful rendering handle that.
+    """
+    from ..settings import get_settings
+
+    url = get_settings().fleet_dashboard_url
+    if not url:
+        return None
+    async with httpx.AsyncClient(timeout=2.0) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _synapse_activity() -> dict[str, Any] | None:
+    """Live agent activity from the synapse plane (container-visible via DB).
+
+    Counts sessions seen in the last 10 minutes and surfaces the most recent
+    one. This fills the HUD's live-activity slot with real data regardless of
+    whether the external fleet-dashboard is up.
+    """
+    with SessionLocal() as session:
+        try:
+            from sqlalchemy import text as _text
+
+            row = session.execute(_text(
+                """
+                SELECT
+                  COUNT(*)                          AS active,
+                  MAX(last_seen)                    AS latest,
+                  (SELECT cwd  FROM synapse_session ORDER BY last_seen DESC LIMIT 1) AS cwd,
+                  (SELECT host FROM synapse_session ORDER BY last_seen DESC LIMIT 1) AS host
+                FROM synapse_session
+                WHERE last_seen > NOW() - INTERVAL '10 minutes'
+                """
+            )).mappings().first()
+        except Exception:
+            return None
+    if not row:
+        return None
+    return {
+        "active": int(row["active"] or 0),
+        "cwd": row["cwd"],
+        "host": row["host"],
+        "latest": row["latest"].isoformat() if row["latest"] else None,
+    }
+
+
 def build_gateway(app):
     """Return ``(service_factory, status_snapshot)`` wired to the live app."""
     recall_fn = _recall_fn(app)
@@ -228,8 +279,9 @@ def build_gateway(app):
         return await snapshot_status(
             hive=lambda: stats_fn(None),
             executors=_executor_health,
-            fleet=None,  # reuse fleet-dashboard (:9105) later, do not rebuild
-            chains=None,
+            fleet=_fleet_status,      # fleet-dashboard (:9105); null until it's up
+            chains=None,              # .chain/ not mounted in-container — needs a bridge
+            synapse=_synapse_activity,  # live agent activity (DB-backed, always available)
         )
 
     return (lambda: service), status_snapshot

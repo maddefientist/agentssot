@@ -23,7 +23,7 @@ def test_all_sources_present():
 
 def test_missing_sources_are_none():
     snap = run(snapshot_status())
-    assert snap == {"hive": None, "executors": None, "fleet": None, "chains": None}
+    assert snap == {"hive": None, "executors": None, "fleet": None, "chains": None, "synapse": None}
 
 
 def test_failing_source_isolated_to_its_slot():

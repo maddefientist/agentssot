@@ -503,6 +503,10 @@ class ReviewQueueItem(Base):
         nullable=True,
     )
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # attempts: how many times an auto-classifier has tried this row. Lets
+    # reclassify_low_conf reach a terminal "unclassifiable" dismissal instead of
+    # re-queueing forever (migration 008).
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
     status: Mapped[ReviewQueueStatus] = mapped_column(
         Enum(
             ReviewQueueStatus,

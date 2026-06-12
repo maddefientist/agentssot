@@ -39,16 +39,20 @@ from ..services.loadout import (
     resolve_cwd_entities, fetch_loadout_candidates, pack_loadout, loadout_cache_key,
 )
 
+import logging as _logging
+
+_log = _logging.getLogger(__name__)
+
+
 def _safe_uuids(raw):
     """Coerce a list of raw entity-ref values to UUIDs, skipping malformed ones.
 
-    Historical knowledge items may have stored non-UUID strings in entity_refs
-    (data-quality drift). UUID() would raise ValueError and 500 the entire
-    recall - instead skip the bad entries and log them so they can be cleaned
-    up out-of-band.
+    Legacy knowledge items may still hold non-UUID strings in entity_refs (the
+    ingest path now resolves names to UUIDs or drops them — see
+    ``_resolve_entity_refs`` — so new writes are clean). UUID() would raise and
+    500 the entire recall; instead skip bad entries. Logged at debug, not
+    warning: on a hot recall path a handful of legacy rows must not spam logs.
     """
-    import logging as _logging
-    _log = _logging.getLogger(__name__)
     out = []
     for x in (raw or []):
         if not x:
@@ -56,8 +60,47 @@ def _safe_uuids(raw):
         try:
             out.append(UUID(str(x)))
         except (ValueError, AttributeError, TypeError):
-            _log.warning('skipping malformed entity_ref: %r', x)
+            _log.debug('skipping non-UUID entity_ref (legacy data): %r', x)
     return out
+
+
+def _resolve_entity_refs(session: Session, namespace: str, refs):
+    """Split caller-supplied entity_refs into resolved UUIDs and leftover names.
+
+    Callers may pass entity UUIDs (kept as-is) or human names/slugs like
+    'unraid' (the historical drift that spammed the recall path). For each
+    non-UUID ref, look up an Entity in this namespace by slug, then
+    case-insensitive name. Resolved → its UUID string. Unresolved → returned
+    as a leftover name so the caller can preserve it as an ``entity:<name>``
+    tag rather than poisoning entity_refs with a value that isn't a UUID.
+
+    Returns ``(resolved_uuid_strings, unresolved_names)``.
+    """
+    resolved: list[str] = []
+    unresolved: list[str] = []
+    for raw in (refs or []):
+        if not raw:
+            continue
+        s = str(raw).strip()
+        try:
+            resolved.append(str(UUID(s)))  # already a UUID — keep
+            continue
+        except (ValueError, AttributeError, TypeError):
+            pass
+        ent = session.execute(
+            select(Entity.id).where(
+                Entity.namespace == namespace,
+                or_(Entity.slug == s, func.lower(Entity.name) == s.lower()),
+            ).limit(1)
+        ).scalar_one_or_none()
+        if ent is not None:
+            resolved.append(str(ent))
+        else:
+            unresolved.append(s)
+    # de-dup, preserve order
+    resolved = list(dict.fromkeys(resolved))
+    unresolved = list(dict.fromkeys(unresolved))
+    return resolved, unresolved
 
 
 # Above this similarity an ingest is treated as an effectively-identical repeat
@@ -260,18 +303,34 @@ async def ingest_tiered(
 
     session.commit()
 
-    # Plan 1 T2.5: supersession + contradiction scans
-    # classifier_entity_refs: UUID strings extracted by the classifier — used for supersession.
-    # caller_entity_refs: arbitrary strings supplied by the caller — stored but not used for
-    # supersession scanning (they may not be entity UUIDs and would break the ?| operator).
-    classifier_entity_refs: list[str] = []
+    # Plan 1 T2.5: supersession + contradiction scans.
+    # Both the caller AND the classifier supply entity references as human names
+    # ('unraid', 'jellyfin') — NOT UUIDs, despite the schema. Stored verbatim
+    # they break the jsonb ?| supersession operator and spam the recall path
+    # (`_safe_uuids`). Resolve every name to its entity UUID here; keep only
+    # UUIDs in entity_refs, and preserve anything unresolved as an `entity:<name>`
+    # tag so the signal isn't lost. This is the single point that keeps
+    # entity_refs UUID-clean.
+    classifier_mentions: list[str] = []
     if classifier_out:
-        classifier_entity_refs = list(classifier_out.get("entity_mentions") or [])
-    merged_entity_refs = list(dict.fromkeys(_caller_entity_refs + classifier_entity_refs))
-    if merged_entity_refs:
-        ki.entity_refs = merged_entity_refs
+        classifier_mentions = list(classifier_out.get("entity_mentions") or [])
+    raw_refs = list(dict.fromkeys(_caller_entity_refs + classifier_mentions))
+    resolved_refs, unresolved_refs = _resolve_entity_refs(session, namespace, raw_refs)
+    _refs_changed = False
+    if resolved_refs:
+        ki.entity_refs = resolved_refs
+        _refs_changed = True
+    if unresolved_refs:
+        new_tags = list(ki.tags or [])
+        for name in unresolved_refs:
+            tag = f"entity:{name}"
+            if tag not in new_tags:
+                new_tags.append(tag)
+        ki.tags = new_tags
+        _refs_changed = True
+    if _refs_changed:
         session.commit()
-    new_entity_refs = classifier_entity_refs  # supersession scan uses only classifier-extracted UUIDs
+    new_entity_refs = resolved_refs  # supersession scan uses resolved entity UUIDs only
 
     if ki.memory_type and new_entity_refs:
         cand_stmt = (

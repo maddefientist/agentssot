@@ -240,11 +240,11 @@ _gateway_factory, _gateway_status = build_gateway(app)
 app.include_router(build_gateway_router(_gateway_factory, _gateway_status))
 
 
-@app.get("/hud", include_in_schema=False)
-def hud_page():
-    """Serve the Madi HUD as a full-bleed surface (no cortex nav chrome).
+def _render_hud() -> HTMLResponse:
+    """Render the Madi HUD as a full-bleed surface (no cortex nav chrome).
 
     Self-busts hud.css/hud.js by their own mtime so edits invalidate the cache.
+    Shared by ``/`` (the default landing) and ``/hud`` (alias).
     """
     html = (UI_DIR / "hud.html").read_text()
     v = 0
@@ -254,6 +254,12 @@ def hud_page():
         except FileNotFoundError:
             pass
     return HTMLResponse(html.replace("__V__", str(v)))
+
+
+@app.get("/hud", include_in_schema=False)
+def hud_page():
+    """Alias for the HUD; the HUD is also the default landing at ``/``."""
+    return _render_hud()
 
 
 @app.middleware("http")
@@ -502,9 +508,23 @@ async def doctor(session: Session = Depends(get_session)) -> dict:
 
 @app.get("/", include_in_schema=False)
 def ui_home():
+    """Default landing is the Madi HUD (the cohesive hero surface).
+
+    The legacy Cortex admin index moved to /classic (still linked in the nav).
+    """
+    if (UI_DIR / "hud.html").exists():
+        return _render_hud()
     if (UI_DIR / "index.html").exists():
         return render_with_nav("index.html", active="home")
     return RedirectResponse(url="/docs")
+
+
+@app.get("/classic", include_in_schema=False)
+def ui_classic():
+    """The legacy Cortex admin dashboard (former landing at /)."""
+    if (UI_DIR / "index.html").exists():
+        return render_with_nav("index.html", active="home")
+    return RedirectResponse(url="/")
 
 
 @app.get("/cortex", include_in_schema=False)

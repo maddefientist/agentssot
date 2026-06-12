@@ -96,6 +96,18 @@ class Settings(BaseSettings):
     sync_tracking_enabled: bool = Field(default=False, alias="SYNC_TRACKING_ENABLED")
     sync_conflict_window_hours: int = Field(default=24, alias="SYNC_CONFLICT_WINDOW_HOURS")
 
+    # Convergence guard for review-queue reclassification. A low_conf row that
+    # the classifier still can't confidently type after this many attempts is
+    # dismissed as "unclassifiable" so a drainer terminates instead of looping
+    # forever on items that will never resolve (migration 008).
+    reclassify_max_attempts: int = Field(default=3, alias="RECLASSIFY_MAX_ATTEMPTS")
+
+    # Fleet-dashboard status source for the HUD's FLEET panel. Reused, not rebuilt
+    # (design ledger KEEP). Returns null until the dashboard is reachable.
+    fleet_dashboard_url: str = Field(
+        default="http://host.docker.internal:9105/api/state", alias="FLEET_DASHBOARD_URL"
+    )
+
     # Write-ahead log (audit artifact for ingest/delete operations)
     wal_enabled: bool = Field(default=True, alias="WAL_ENABLED")
     wal_dir: str = Field(default="/var/lib/agentssot/wal", alias="WAL_DIR")
