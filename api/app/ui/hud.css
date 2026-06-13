@@ -36,6 +36,12 @@ body.hud{
 .tick b{color:var(--amber); font-weight:400}
 .tick .clock{margin-left:auto}
 .tick .conn{color:var(--dim)}
+.hud-nav{display:flex; gap:10px; align-items:center; margin-left:10px}
+.hud-nav a{
+  color:var(--dim); text-decoration:none; font-size:11px; letter-spacing:.4px;
+  border:1px solid transparent; border-radius:999px; padding:2px 7px;
+}
+.hud-nav a:hover{color:var(--amber); border-color:var(--line); background:rgba(217,164,65,.04)}
 .tick .conn.online{color:var(--amber)}
 .tick .conn.offline{color:var(--err)}
 .dot{
@@ -85,6 +91,13 @@ body.hud{
 }
 .ring.thinking{animation:breathe 1.4s ease-in-out infinite}
 .presence{font-size:11px; letter-spacing:2px; color:var(--dim)}
+.hud-shortcuts{display:flex; gap:9px; flex-wrap:wrap; justify-content:center}
+.hud-shortcuts a{
+  color:var(--amber-dim); text-decoration:none; font-size:11px; letter-spacing:.5px;
+  border:1px solid var(--line); border-radius:999px; padding:4px 10px;
+  background:rgba(16,16,19,.6);
+}
+.hud-shortcuts a:hover{color:var(--amber); border-color:var(--amber-dim)}
 
 /* conversation console — hidden in ambient, grows in active */
 .console{
@@ -103,6 +116,7 @@ body.hud{
 /* ---- active morph ---- */
 body.hud.active .ring{width:54px; height:54px; font-size:8px; letter-spacing:1.5px}
 body.hud.active .presence{display:none}
+body.hud.active .hud-shortcuts{display:none}
 body.hud.active .console{display:flex}
 body.hud.active .stage{justify-content:flex-start; align-items:stretch}
 body.hud.active .stage .ring{position:absolute; top:12px; right:12px}
@@ -123,4 +137,5 @@ body.hud.active .stage .ring{position:absolute; top:12px; right:12px}
 @media (max-width:780px){
   .stage-wrap{grid-template-columns:1fr; grid-auto-rows:min-content}
   .col{display:none}
+  .hud-nav{display:none}
 }

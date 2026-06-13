@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AgentSSOT Console</title>
+    <link rel="stylesheet" href="/ui/assets/styles.css" />
+  </head>
+  <body>
+    <!-- cortex-nav -->
+    <header>
+      <div class="header-left">
+        <h1>AgentSSOT Console</h1>
+        <span class="health-dot" id="healthDot" title="checking..."></span>
+      </div>
+      <nav>
+        <button class="tab active" data-tab="browse">Browse</button>
+        <button class="tab" data-tab="search">Search</button>
+        <button class="tab" data-tab="admin">Admin</button>
+      </nav>
+      <div class="header-right">
+        <button class="icon-btn" id="settingsToggle" title="Connection settings">&#9881;</button>
+      </div>
+    </header>
+
+    <div class="settings-drawer" id="settingsDrawer">
+      <label>API URL <input id="apiBase" type="text" placeholder="http://localhost:8088" /></label>
+      <label>API Key <input id="apiKey" type="password" placeholder="ssot_..." /></label>
+      <button id="saveConn" class="sm">Save</button>
+    </div>
+
+    <!-- BROWSE TAB -->
+    <main id="tab-browse" class="tab-content active">
+      <div class="stats-bar" id="statsBar">
+        <div class="stat" id="statItems">--</div>
+        <div class="stat" id="statProjects">--</div>
+        <div class="stat" id="statDevices">--</div>
+      </div>
+
+      <div class="filter-row">
+        <select id="browseNamespace">
+          <option value="claude-shared">claude-shared</option>
+          <option value="default">default</option>
+        </select>
+        <input id="browseFilter" type="text" placeholder="Filter by text..." />
+        <input id="browseLimit" type="number" value="30" min="1" max="200" />
+        <button id="browseBtn">Load</button>
+      </div>
+
+      <div class="tags-row" id="tagsRow"></div>
+
+      <div class="items-grid" id="itemsGrid">
+        <p class="hint">Click Load to browse knowledge items</p>
+      </div>
+    </main>
+
+    <!-- SEARCH TAB -->
+    <main id="tab-search" class="tab-content">
+      <div class="search-box">
+        <input id="searchText" type="text" placeholder="Natural language search across all memory..." />
+        <select id="searchNamespace">
+          <option value="claude-shared">claude-shared</option>
+          <option value="default">default</option>
+        </select>
+        <input id="searchTopK" type="number" value="10" min="1" max="50" />
+        <button id="searchBtn">Recall</button>
+      </div>
+      <div class="items-grid" id="searchResults">
+        <p class="hint">Semantic search across your unified memory</p>
+      </div>
+    </main>
+
+    <!-- ADMIN TAB -->
+    <main id="tab-admin" class="tab-content">
+      <div class="admin-grid">
+        <div class="card">
+          <h3>Health</h3>
+          <pre id="healthOutput">--</pre>
+        </div>
+        <div class="card">
+          <h3>Namespace Stats</h3>
+          <div class="inline-row">
+            <input id="statsNamespace" type="text" value="claude-shared" placeholder="namespace" />
+            <button id="statsBtn" class="secondary">Load Stats</button>
+          </div>
+          <pre id="statsOutput">--</pre>
+        </div>
+        <div class="card">
+          <h3>Dedup</h3>
+          <div class="inline-row">
+            <input id="dedupNamespace" type="text" value="claude-shared" placeholder="namespace" />
+            <button id="dedupScanBtn" class="secondary">Scan</button>
+            <button id="dedupRunBtn">Clean</button>
+          </div>
+          <pre id="dedupOutput">--</pre>
+        </div>
+        <div class="card">
+          <h3>Create Namespace</h3>
+          <label>Name <input id="newNs" type="text" placeholder="team-private" /></label>
+          <button id="createNsBtn">Create</button>
+        </div>
+        <div class="card">
+          <h3>Create API Key</h3>
+          <label>Name <input id="keyName" type="text" placeholder="device-name-writer" /></label>
+          <label>Role
+            <select id="keyRole">
+              <option value="writer">writer</option>
+              <option value="reader">reader</option>
+              <option value="admin">admin</option>
+            </select>
+          </label>
+          <label>Namespaces <input id="keyNs" type="text" value="claude-shared" placeholder="comma-separated" /></label>
+          <button id="createKeyBtn">Create Key</button>
+        </div>
+        <div class="card">
+          <h3>API Keys</h3>
+          <button id="listKeysBtn" class="secondary">List Keys</button>
+          <pre id="keysOutput">--</pre>
+        </div>
+        <div class="card wide">
+          <h3>Raw Ingest</h3>
+          <textarea id="ingestPayload" rows="6" placeholder='{"namespace":"claude-shared","knowledge_items":[...]}'></textarea>
+          <button id="ingestBtn">Ingest</button>
+        </div>
+        <div class="card wide">
+          <h3>Response</h3>
+          <pre id="adminOutput">--</pre>
+        </div>
+      </div>
+    </main>
+
+    <script src="/ui/assets/app.js"></script>
+  </body>
+</html>

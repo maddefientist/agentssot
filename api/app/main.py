@@ -63,7 +63,7 @@ def _load_nav_partial() -> str:
 def _asset_version() -> str:
     """Stamp derived from the newest mtime among the shared UI assets so any
     edit invalidates the browser cache via a query string on the asset URL."""
-    candidates = ["styles.css", "tier-styles.css", "cortex-shell.js", "_nav.html"]
+    candidates = ["styles.css", "tier-styles.css", "cortex-shell.js", "app.js", "_nav.html"]
     latest = 0.0
     for name in candidates:
         try:
@@ -81,6 +81,7 @@ def _bust(html: str, version: str) -> str:
         "/ui/assets/styles.css",
         "/ui/assets/tier-styles.css",
         "/ui/assets/cortex-shell.js",
+        "/ui/assets/app.js",
     ]
     for url in targets:
         # if already has ?v=, replace the value; else append fresh
@@ -525,6 +526,20 @@ def ui_classic():
     if (UI_DIR / "index.html").exists():
         return render_with_nav("index.html", active="home")
     return RedirectResponse(url="/")
+
+
+@app.get("/console", include_in_schema=False)
+def ui_console():
+    """Restored all-in-one console: browse, recall, admin, raw ingest."""
+    if (UI_DIR / "console.html").exists():
+        return render_with_nav("console.html", active="console")
+    return RedirectResponse(url="/classic")
+
+
+@app.get("/legacy", include_in_schema=False)
+def ui_legacy_console():
+    """Backward-friendly alias for the restored all-in-one console."""
+    return ui_console()
 
 
 @app.get("/cortex", include_in_schema=False)

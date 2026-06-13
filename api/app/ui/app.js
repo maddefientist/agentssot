@@ -4,7 +4,11 @@ const $ = (id) => document.getElementById(id);
 function apiBase() {
   return (($("apiBase").value || "").trim() || window.location.origin).replace(/\/$/, "");
 }
-function apiKey() { return $("apiKey").value.trim(); }
+function apiKey() {
+  const fieldKey = $("apiKey").value.trim();
+  const sharedKey = window.cortexAuth?.getKey?.() || localStorage.getItem("cortexKey") || "";
+  return fieldKey || sharedKey;
+}
 
 async function api(path, { method = "GET", body } = {}) {
   const headers = { "Content-Type": "application/json" };
@@ -48,12 +52,17 @@ function el(tag, attrs, ...children) {
 // --- Init ---
 function loadSaved() {
   $("apiBase").value = localStorage.getItem("hive_base") || window.location.origin;
-  $("apiKey").value = localStorage.getItem("hive_key") || "";
+  const sharedKey = window.cortexAuth?.getKey?.() || localStorage.getItem("cortexKey") || "";
+  $("apiKey").value = sharedKey || localStorage.getItem("hive_key") || "";
 }
 
 function saveCreds() {
+  const key = $("apiKey").value.trim();
   localStorage.setItem("hive_base", apiBase());
-  localStorage.setItem("hive_key", apiKey());
+  localStorage.setItem("hive_key", key);
+  if (key) localStorage.setItem("cortexKey", key);
+  else localStorage.removeItem("cortexKey");
+  window.cortexAuth?.setKey?.(key);
 }
 
 // --- Tab switching ---
