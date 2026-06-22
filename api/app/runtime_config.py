@@ -25,6 +25,7 @@ HOT_KEYS = frozenset({
     "ollama_reranker_base_url",
     "ollama_reranker_fast_model",
     "ollama_reranker_fast_base_url",
+    "reranker_candidate_multiplier",
     "ollama_embed_model",
     "ollama_base_url",
     "ollama_chat_model",
@@ -47,6 +48,7 @@ NUMERIC_RANGES: dict[str, tuple[float, float]] = {
     "supersession_similarity_threshold": (0.0, 1.0),
     "synthesis_min_cluster_size": (1, 1000),
     "synthesis_window_days": (1, 3650),
+    "reranker_candidate_multiplier": (1, 10),
 }
 
 

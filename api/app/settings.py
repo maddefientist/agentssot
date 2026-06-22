@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     ollama_reranker_model: str = Field(
         default="dengcao/Qwen3-Reranker-8B:Q8_0", alias="OLLAMA_RERANKER_MODEL"
     )
-    reranker_candidate_multiplier: int = Field(default=3, alias="RERANKER_CANDIDATE_MULTIPLIER")
+    reranker_candidate_multiplier: int = Field(default=2, alias="RERANKER_CANDIDATE_MULTIPLIER")
     # Two-tier reranker: 4B for procedural-only queries, 8B for nuanced
     ollama_reranker_fast_model: str = Field(
         default="dengcao/Qwen3-Reranker-4B:Q4_K_M", alias="OLLAMA_RERANKER_FAST_MODEL"

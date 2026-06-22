@@ -1,5 +1,6 @@
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
@@ -18,10 +19,15 @@ _SCORE_RE = re.compile(r"([01](?:\.\d+)?)")
 
 
 class OllamaRerankerProvider(RerankerProvider):
-    def __init__(self, base_url: str, model: str, timeout_seconds: int = 30):
+    def __init__(self, base_url: str, model: str, timeout_seconds: int = 30, max_concurrency: int = 8):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = timeout_seconds
+        # Candidates are scored with one Ollama /api/generate call each. Run them
+        # concurrently (bounded) instead of sequentially — a 30-candidate rerank
+        # drops from ~15s to ~order-of-one-call. Effective parallelism is also
+        # gated server-side by OLLAMA_NUM_PARALLEL.
+        self.max_concurrency = max(1, max_concurrency)
         super().__init__(
             provider_name="ollama",
             is_available=bool(base_url and model),
@@ -62,4 +68,16 @@ class OllamaRerankerProvider(RerankerProvider):
         if not self.is_available:
             raise RerankerProviderError(self.unavailable_reason or "Ollama reranker provider unavailable")
 
-        return [self._score_single(query, doc) for doc in documents]
+        if not documents:
+            return []
+
+        # Single document: no pool overhead.
+        if len(documents) == 1:
+            return [self._score_single(query, documents[0])]
+
+        workers = min(self.max_concurrency, len(documents))
+        # ex.map preserves input order; a RerankerProviderError raised in any
+        # worker propagates here when results are consumed, so the caller's
+        # vector-score fallback still triggers exactly as before.
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="rerank") as ex:
+            return list(ex.map(lambda doc: self._score_single(query, doc), documents))
