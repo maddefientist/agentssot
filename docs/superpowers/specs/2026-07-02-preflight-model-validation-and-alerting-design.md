@@ -9,20 +9,39 @@
 On 2026-07-02 hive became API-unreachable. Root cause: the nightly synthesis
 batch (03:00 UTC) used `synthesis_fallback_model=qwen3.5:27b`, a model that had
 been retired (migrated to `qwen3.6:27b`). Every fallback call returned Ollama
-404, and the synthesis loop ground through cluster after cluster issuing
-synchronous `httpx.post(..., timeout=120)` calls that starved the ASGI event
-loop — so `/health`, `hive_recall`, everything hung. Docker reported the
-container "healthy" because its healthcheck has `Retries: 10`, masking ~5 min of
-failing probes. Nothing alerted the operator; the failure was discovered only by
-noticing recall was dead.
+404 after the primary (`qwen3.6:27b`) hit its 120s timeout, so each cluster
+burned ~2 min and the batch hammered Ollama for the whole window. Docker
+reported the container "healthy" because its healthcheck has `Retries: 10`,
+masking ~5 min of failing probes. Nothing alerted the operator; the failure was
+discovered only by noticing recall was dead.
 
-Two gaps this exposes:
+**Why the whole API went unreachable (corrected diagnosis).** The synthesis
+batch itself is already offloaded to a worker thread
+(`synthesis/loop.py:362`, `await asyncio.to_thread(...)`), so it does *not* run
+on the event loop. The real cause: the hot read path blocks the loop. `/recall`
+(`recall_tiered` / `_recall_bucketed`, `routers/knowledge.py`) are `async def`
+but call **synchronous** `embed_text()` (httpx → Ollama) and `session.execute()`
+(pgvector query) *directly on the event loop* — no `to_thread`. When the
+synthesis 404-loop saturated Ollama, every recall's embedding call froze the
+event loop for seconds; with the loop frozen, even `/health` could not be
+dispatched → healthcheck timed out, external curls returned `000`. Compounding
+it: the DB engine (`db.py:10`) sets no `pool_size`/`max_overflow`/`pool_timeout`
+and no `statement_timeout`, so slow work piles up and pins connections.
+
+> Note: the "whole API unreachable" mechanism above is inferred from the code
+> paths and the incident logs, not reproduced live. The 404-loop trigger is
+> confirmed from logs; the exact loop-starvation chain is the strongest
+> explanation consistent with the evidence.
+
+Three gaps this exposes:
 
 1. **No preflight validation** that a configured model actually exists before it
    is used. Models get migrated/retired out from under long-lived containers.
 2. **No alerting.** When hive gets stuck it fails silently.
+3. **The API is not isolated from provider slowness.** Blocking I/O inside async
+   endpoints lets a slow/stuck Ollama freeze the whole event loop.
 
-This spec covers those two gaps. It does **not** cover an interactive
+This spec covers those three gaps. It does **not** cover an interactive
 model-picker (a separate, later feature) — but its webhook is the seam that
 feature will plug into.
 
@@ -36,11 +55,12 @@ feature will plug into.
 - A config-driven, best-effort webhook alert path usable for this and future
   alerts.
 - Alert on synthesis batch failure (not just preflight).
+- **Resilience:** keep the API (esp. `/health` and recall) responsive when
+  Ollama or the DB is slow — stop blocking the event loop, bound the DB pool.
 
 **Out of scope (noted, not built here)**
 - Interactive "pick a replacement model" interface.
 - Auto-selecting a replacement model.
-- Converting the blocking synthesis calls to non-blocking (see Related Work).
 - Docker healthcheck/autoheal tuning (see Related Work).
 
 ## Design
@@ -131,6 +151,41 @@ When the synthesis loop starts, run one validation of the synthesis models and
 log the result (info if OK, warning + alert if not). Catches config drift at
 boot instead of waiting until 03:00.
 
+### 7. Resilience — keep the API responsive under provider slowness
+
+Three targeted changes so a slow/stuck provider can never take the whole API
+down (independent of the synthesis-model cause):
+
+**R1 — Don't block the event loop in async endpoints (root cause).**
+Audit every `async def` endpoint for synchronous I/O run inline. Known
+offenders: `recall_tiered` / `_recall_bucketed` call `embed_text()` (sync httpx)
+and `session.execute()` (sync DB) directly. Wrap each blocking call in
+`await asyncio.to_thread(...)` (matching the pattern already used at
+`routers/knowledge.py:160` for `classify`). This confines blocking work to the
+threadpool so the loop stays free to dispatch `/health` and other requests.
+Deliverable includes a grep-based audit of all routers for `embed_text` /
+`session.execute` / `httpx.` / `.embed_` inside `async def`.
+
+**R2 — Make `/health` async and I/O-free (defense in depth).**
+Change `def health()` → `async def health()`; it already touches no DB and only
+reads cached `is_available` booleans, so it returns instantly from the loop. The
+Docker healthcheck then reflects "process + loop alive," decoupled from provider
+latency. (R1 is the real fix; R2 ensures the probe is honest even if some other
+inline-blocking path is missed.)
+
+**R3 — Bound the DB pool and fail fast.**
+`create_engine(..., pool_size=10, max_overflow=20, pool_timeout=10,
+pool_pre_ping=True, connect_args={"options": "-c statement_timeout=30000 -c
+idle_in_transaction_session_timeout=60000"})` (final numbers tuned in the plan).
+Prevents any single query/transaction — including a long-running synthesis
+session — from pinning a connection indefinitely, and makes request pile-ups
+error fast instead of hanging.
+
+**Consideration (not v1):** the synthesis batch keeps one `SessionLocal()` open
+across all clusters and their multi-second LLM calls (`synthesis/loop.py`),
+pinning a pooled connection for the whole run. R3 bounds the blast radius; a
+later refactor could scope the session so LLM waits don't hold a connection.
+
 ## Data Flow
 ```
 03:00 loop wake / startup
@@ -151,6 +206,12 @@ send_alert → POST ALERT_WEBHOOK_URL (best-effort, 5s, swallow errors)
   not raise when the endpoint errors/times out.
 - Regression: reproduce the incident — set fallback to a bogus model, assert the
   run skips and fires `synthesis.model_missing` instead of looping.
+- Resilience (R1): assert no `async def` endpoint calls `embed_text` /
+  `session.execute` / raw `httpx.` inline (static grep test), and that recall
+  offloads its embedding + query via `to_thread`.
+- Resilience (R2): `/health` is `async` and returns without a DB session.
+- Resilience (R3): engine is created with bounded pool + `statement_timeout`
+  (assert on `engine.pool` config / connect_args).
 
 ## Error Handling
 - Every failure mode fails **safe**: skip the run rather than loop; swallow
@@ -158,12 +219,6 @@ send_alert → POST ALERT_WEBHOOK_URL (best-effort, 5s, swallow errors)
 - All decisions logged with structured `extra={...}` matching existing logging.
 
 ## Related Work (not in this spec)
-- **Event-loop blocking:** synthesis uses synchronous `httpx.post` inside an
-  async task, so a slow/large batch freezes `/health` and all requests. Offload
-  to a thread (`asyncio.to_thread`) or switch to async httpx so the API stays
-  responsive during synthesis. Recommended as an immediate follow-up — it is the
-  reason the incident caused *total* unreachability rather than just failed
-  synthesis.
 - **Healthcheck honesty:** `Retries: 10` hid the failure for ~5 min; consider
   lowering it and/or adding autoheal so `unhealthy` triggers a restart.
 - **Interactive model-picker:** the ambitious "ask the operator to choose a live
