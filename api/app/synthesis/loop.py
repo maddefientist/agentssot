@@ -166,12 +166,12 @@ def _run_synthesis_for_namespace(
         overrides = load_overrides(session)
 
         # --- Preflight: validate synthesis models before doing any work ---
-        primary = effective(settings, overrides, "synthesis_model")
-        fallback = effective(settings, overrides, "synthesis_fallback_model")
         try:
             from .preflight import evaluate as _preflight_eval
             from ..alerting import send_alert
 
+            primary = effective(settings, overrides, "synthesis_model")
+            fallback = effective(settings, overrides, "synthesis_fallback_model")
             pf = _preflight_eval(settings.ollama_base_url, primary, fallback)
             if pf.severity:
                 send_alert(pf.event, pf.severity, pf.message, {"namespace": namespace, **pf.detail})

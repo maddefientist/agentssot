@@ -180,7 +180,9 @@ async def lifespan(app: FastAPI):
 
             _pf = await asyncio.to_thread(_startup_preflight)
             if _pf.severity:
-                _send_alert(_pf.event, _pf.severity, f"[startup] {_pf.message}", _pf.detail)
+                await asyncio.to_thread(
+                    _send_alert, _pf.event, _pf.severity, f"[startup] {_pf.message}", _pf.detail
+                )
                 logger.warning("startup synthesis preflight: %s", _pf.message)
             else:
                 logger.info("startup synthesis preflight OK")
