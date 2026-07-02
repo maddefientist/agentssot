@@ -161,6 +161,20 @@ async def lifespan(app: FastAPI):
     if settings.effective_synthesis_enabled:
         synthesis_task = asyncio.create_task(_synthesis_loop(app), name="synthesis-loop")
         logger.info("background synthesis loop started (hour=%d)", settings.synthesis_schedule_hour)
+        try:
+            from .synthesis.preflight import evaluate as _preflight_eval
+            from .alerting import send_alert as _send_alert
+
+            _pf = _preflight_eval(
+                settings.ollama_base_url, settings.synthesis_model, settings.synthesis_fallback_model
+            )
+            if _pf.severity:
+                _send_alert(_pf.event, _pf.severity, f"[startup] {_pf.message}", _pf.detail)
+                logger.warning("startup synthesis preflight: %s", _pf.message)
+            else:
+                logger.info("startup synthesis preflight OK")
+        except Exception:
+            logger.exception("startup synthesis preflight check errored (non-fatal)")
     else:
         logger.info("background synthesis loop disabled")
 
