@@ -162,15 +162,23 @@ async def lifespan(app: FastAPI):
         synthesis_task = asyncio.create_task(_synthesis_loop(app), name="synthesis-loop")
         logger.info("background synthesis loop started (hour=%d)", settings.synthesis_schedule_hour)
         try:
-            from .synthesis.preflight import evaluate as _preflight_eval
             from .alerting import send_alert as _send_alert
 
-            _pf = await asyncio.to_thread(
-                _preflight_eval,
-                settings.ollama_base_url,
-                settings.synthesis_model,
-                settings.synthesis_fallback_model,
-            )
+            def _startup_preflight():
+                # Validate the EFFECTIVE models (DB runtime_config overrides win
+                # over .env, same as the nightly loop) so the boot check matches
+                # what the run will actually use. Runs off the event loop.
+                from .db import SessionLocal
+                from .runtime_config import effective, load_overrides
+                from .synthesis.preflight import evaluate as _preflight_eval
+
+                with SessionLocal() as _session:
+                    _overrides = load_overrides(_session)
+                _primary = effective(settings, _overrides, "synthesis_model")
+                _fallback = effective(settings, _overrides, "synthesis_fallback_model")
+                return _preflight_eval(settings.ollama_base_url, _primary, _fallback)
+
+            _pf = await asyncio.to_thread(_startup_preflight)
             if _pf.severity:
                 _send_alert(_pf.event, _pf.severity, f"[startup] {_pf.message}", _pf.detail)
                 logger.warning("startup synthesis preflight: %s", _pf.message)
