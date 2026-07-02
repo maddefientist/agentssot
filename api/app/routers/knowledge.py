@@ -144,7 +144,7 @@ async def ingest_tiered(
     embedding_provider = request.app.state.embedding_provider
     if embedding_provider and embedding_provider.is_available:
         try:
-            embedding = embedding_provider.embed_text(data.content)
+            embedding = await asyncio.to_thread(embedding_provider.embed_text, data.content)
         except Exception:
             embedding = None
 
@@ -465,7 +465,7 @@ async def recall_tiered(
 
     # Generate embedding for query
     try:
-        query_embedding = embedding_provider.embed_text(data.query)
+        query_embedding = await asyncio.to_thread(embedding_provider.embed_text, data.query)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Embedding generation failed: {e}")
 
@@ -557,7 +557,7 @@ async def _recall_bucketed(
 
     try:
         t0 = time.perf_counter()
-        query_embedding = embedding_provider.embed_text(data.query)
+        query_embedding = await asyncio.to_thread(embedding_provider.embed_text, data.query)
         vec_ms = int((time.perf_counter() - t0) * 1000)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Embedding generation failed: {e}")
