@@ -441,7 +441,7 @@ async def admin_delete_config(key: str, auth: AuthContext = Depends(require_api_
 
 
 @app.get("/health")
-def health() -> dict:
+async def health() -> dict:
     return {
         "status": "ok",
         "embedding_provider": settings.embedding_provider,
