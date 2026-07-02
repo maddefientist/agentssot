@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     synthesis_decay_floor: float = Field(default=0.15, alias="SYNTHESIS_DECAY_FLOOR")
     synthesis_feedback_protection_days: int = Field(default=180, alias="SYNTHESIS_FEEDBACK_PROTECTION_DAYS")
 
+    # Alerting (channel-agnostic webhook; empty URL = alerting no-ops)
+    alert_enabled: bool = Field(default=True, alias="ALERT_ENABLED")
+    alert_webhook_url: str = Field(default="", alias="ALERT_WEBHOOK_URL")
+    alert_host_label: str = Field(default="hari", alias="ALERT_HOST_LABEL")
+
     enable_hnsw_index: bool = Field(default=False, alias="ENABLE_HNSW_INDEX")
 
     # Typed memory: when enabled, recall accepts memory_type and staleness filters
