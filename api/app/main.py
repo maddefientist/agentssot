@@ -165,8 +165,11 @@ async def lifespan(app: FastAPI):
             from .synthesis.preflight import evaluate as _preflight_eval
             from .alerting import send_alert as _send_alert
 
-            _pf = _preflight_eval(
-                settings.ollama_base_url, settings.synthesis_model, settings.synthesis_fallback_model
+            _pf = await asyncio.to_thread(
+                _preflight_eval,
+                settings.ollama_base_url,
+                settings.synthesis_model,
+                settings.synthesis_fallback_model,
             )
             if _pf.severity:
                 _send_alert(_pf.event, _pf.severity, f"[startup] {_pf.message}", _pf.detail)

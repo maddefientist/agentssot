@@ -168,20 +168,28 @@ def _run_synthesis_for_namespace(
         # --- Preflight: validate synthesis models before doing any work ---
         primary = effective(settings, overrides, "synthesis_model")
         fallback = effective(settings, overrides, "synthesis_fallback_model")
-        from .preflight import evaluate as _preflight_eval
-        from ..alerting import send_alert
+        try:
+            from .preflight import evaluate as _preflight_eval
+            from ..alerting import send_alert
 
-        pf = _preflight_eval(settings.ollama_base_url, primary, fallback)
-        if pf.severity:
-            send_alert(pf.event, pf.severity, pf.message, {"namespace": namespace, **pf.detail})
-        if not pf.proceed:
-            logger.error(
-                "synthesis preflight failed; skipping run",
-                extra={"namespace": namespace, "event": pf.event},
+            pf = _preflight_eval(settings.ollama_base_url, primary, fallback)
+            if pf.severity:
+                send_alert(pf.event, pf.severity, pf.message, {"namespace": namespace, **pf.detail})
+            if not pf.proceed:
+                logger.error(
+                    "synthesis preflight failed; skipping run",
+                    extra={"namespace": namespace, "event": pf.event},
+                )
+                stats["skipped"] = pf.event
+                return stats
+            primary, fallback = pf.primary, pf.fallback
+        except Exception:
+            logger.exception(
+                "synthesis preflight errored unexpectedly; skipping run (fail-safe)",
+                extra={"namespace": namespace},
             )
-            stats["skipped"] = pf.event
+            stats["skipped"] = "synthesis.preflight_error"
             return stats
-        primary, fallback = pf.primary, pf.fallback
 
         if full_resynthesis:
             since = datetime(2020, 1, 1, tzinfo=UTC)

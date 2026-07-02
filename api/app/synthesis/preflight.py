@@ -28,8 +28,8 @@ def evaluate(base_url: str, primary: str, fallback: str) -> PreflightResult:
             f"Synthesis skipped: Ollama model list unreachable ({exc})",
             {"base_url": base_url},
         )
-    primary_ok = primary not in missing
-    fallback_ok = fallback not in missing
+    primary_ok = bool(primary) and primary not in missing
+    fallback_ok = bool(fallback) and fallback not in missing
     if not primary_ok and not fallback_ok:
         return PreflightResult(
             False, None, None, "error", "synthesis.model_missing",

@@ -15,3 +15,9 @@ def test_engine_sets_statement_timeout():
     opts = db.engine.url
     assert opts is not None
     assert "statement_timeout" in db._CONNECT_OPTIONS
+
+def test_engine_has_no_idle_in_transaction_timeout():
+    # idle_in_transaction_session_timeout must NOT be set — it would kill the
+    # long-lived synthesis session while it waits on multi-second LLM calls.
+    assert "idle_in_transaction_session_timeout" not in db._CONNECT_OPTIONS
+    assert "statement_timeout" in db._CONNECT_OPTIONS

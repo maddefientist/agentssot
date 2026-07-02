@@ -24,10 +24,10 @@ def list_available_models(base_url: str, timeout: float = TAGS_TIMEOUT_SECONDS) 
     try:
         resp = httpx.get(url, timeout=timeout)
         resp.raise_for_status()
+        data = resp.json()
+        return {m.get("name") for m in data.get("models", []) if m.get("name")}
     except Exception as exc:  # noqa: BLE001
-        raise ModelListUnavailable(f"cannot fetch {url}: {exc}") from exc
-    data = resp.json()
-    return {m.get("name") for m in data.get("models", []) if m.get("name")}
+        raise ModelListUnavailable(f"cannot fetch/parse {url}: {exc}") from exc
 
 
 def validate_models(

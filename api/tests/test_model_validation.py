@@ -39,3 +39,11 @@ def test_list_unavailable_raises(monkeypatch):
     monkeypatch.setattr(mv.httpx, "get", raiser)
     with pytest.raises(mv.ModelListUnavailable):
         mv.list_available_models("http://ollama:11434")
+
+def test_malformed_200_raises_unavailable(monkeypatch):
+    class _BadResp:
+        def raise_for_status(self): pass
+        def json(self): raise ValueError("not json")
+    monkeypatch.setattr(mv.httpx, "get", lambda url, timeout: _BadResp())
+    with pytest.raises(mv.ModelListUnavailable):
+        mv.list_available_models("http://ollama:11434")
