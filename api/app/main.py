@@ -25,7 +25,6 @@ from .settings import Settings, get_settings
 from .runtime_config import HOT_KEYS, apply_overrides, delete_override, load_overrides, set_override
 from .startup import initialize_system
 from .cortex import router as cortex_router
-from .sync import router as sync_router
 from .synapse import router as synapse_router
 from .routers import knowledge_router
 from .routers.agent_guide import router as agent_guide_router
@@ -252,7 +251,6 @@ if UI_DIR.exists():
 
 
 app.include_router(cortex_router)
-app.include_router(sync_router)
 app.include_router(synapse_router)
 app.include_router(knowledge_router, prefix="/api/v1")
 app.include_router(agent_guide_router)
@@ -797,7 +795,7 @@ def dashboard_stats(
     """Enhanced stats endpoint for dashboard. Requires a valid API key.
 
     Includes: basic counts, memory type distribution (M3), staleness distribution (M3),
-    secret scanning stats (M8), sync checkpoint status (M10).
+    secret scanning stats (M8).
     """
     ensure_namespace_access(_auth, namespace, {ApiRole.reader.value, ApiRole.writer.value, ApiRole.admin.value})
     from sqlalchemy import func, text as sa_text, case, literal_column
@@ -855,27 +853,6 @@ def dashboard_stats(
     # and count items with the 'secret-rejected' tag if any got through historically
     secret_scanning_enabled = settings.ingest_secret_scanning
 
-    # ── Sync checkpoint status (M10 data) ──────────────────────────
-    sync_status: list[dict] = []
-    if settings.sync_tracking_enabled:
-        try:
-            sync_rows = session.execute(sa_text("""
-                SELECT device_id, namespace, last_synced_at
-                FROM sync_checkpoints
-                WHERE namespace = :namespace
-                ORDER BY last_synced_at DESC
-            """), {"namespace": namespace}).all()
-            sync_status = [
-                {
-                    "device_id": row.device_id,
-                    "last_synced_at": row.last_synced_at.isoformat() if row.last_synced_at else None,
-                }
-                for row in sync_rows
-            ]
-        except Exception:
-            # Table might not exist yet
-            pass
-
     return {
         # Original fields (backward compatible)
         "concepts": concepts_total,
@@ -891,11 +868,6 @@ def dashboard_stats(
         # M8: Secret scanning
         "secret_scanning": {
             "enabled": secret_scanning_enabled,
-        },
-        # M10: Sync checkpoints
-        "sync": {
-            "enabled": settings.sync_tracking_enabled,
-            "devices": sync_status,
         },
     }
 
