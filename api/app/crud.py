@@ -1174,22 +1174,27 @@ def summarize_and_archive_session(
 
 
 def delete_items(session: Session, namespace: str, ids: list[str]) -> int:
-    """Delete knowledge items by ID within a namespace. Returns count deleted."""
+    """Delete knowledge items by ID within a namespace. Returns count deleted.
+
+    Single bulk DELETE (one statement) instead of one SELECT + one DELETE per id.
+    Associated audit/cascade behavior is unchanged.
+    """
     ensure_namespace_exists(session, namespace)
-    deleted = 0
+    uids: list[UUID] = []
     for item_id in ids:
         try:
-            uid = UUID(item_id)
+            uids.append(UUID(item_id))
         except ValueError:
             continue
-        item = session.scalar(
-            select(KnowledgeItem).where(
-                and_(KnowledgeItem.id == uid, KnowledgeItem.namespace == namespace)
-            )
-        )
-        if item:
-            session.delete(item)
-            deleted += 1
+    if not uids:
+        return 0
+    result = session.execute(
+        sa_delete(KnowledgeItem)
+        .where(and_(KnowledgeItem.id.in_(uids), KnowledgeItem.namespace == namespace))
+        .returning(KnowledgeItem.id)
+        .execution_options(synchronize_session=False)
+    )
+    deleted = len(result.all())
     session.commit()
     return deleted
 
@@ -1197,25 +1202,27 @@ def delete_items(session: Session, namespace: str, ids: list[str]) -> int:
 def delete_concepts(session: Session, namespace: str, ids: list[str]) -> dict:
     """Delete concepts by ID within a namespace.
 
-    Also cleans up associated concept_links, recall_events, and concept_feedback
-    via CASCADE, but we explicitly handle it for clarity.
+    Single bulk DELETE (one statement) instead of one SELECT + one DELETE per id.
+    Associated concept_links, recall_events, and concept_feedback are cleaned up
+    via the existing DB-level ON DELETE CASCADE foreign keys (unchanged).
     Returns dict with deleted count and IDs.
     """
     ensure_namespace_exists(session, namespace)
-    deleted_ids: list[str] = []
+    uids: list[UUID] = []
     for concept_id in ids:
         try:
-            uid = UUID(concept_id)
+            uids.append(UUID(concept_id))
         except ValueError:
             continue
-        concept = session.scalar(
-            select(Concept).where(
-                and_(Concept.id == uid, Concept.namespace == namespace)
-            )
-        )
-        if concept:
-            session.delete(concept)
-            deleted_ids.append(str(uid))
+    if not uids:
+        return {"deleted": 0, "deleted_ids": []}
+    result = session.execute(
+        sa_delete(Concept)
+        .where(and_(Concept.id.in_(uids), Concept.namespace == namespace))
+        .returning(Concept.id)
+        .execution_options(synchronize_session=False)
+    )
+    deleted_ids = [str(row[0]) for row in result.all()]
     session.commit()
     return {"deleted": len(deleted_ids), "deleted_ids": deleted_ids}
 
@@ -1457,16 +1464,62 @@ def get_concept_with_history(session: Session, namespace: str, concept_id: str) 
 
     result = _to_dict(concept)
 
-    history = []
-    current = concept
-    while current.parent_id:
-        parent = session.scalar(
-            select(Concept).where(Concept.id == current.parent_id)
-        )
-        if not parent:
-            break
-        history.append(_to_dict(parent))
-        current = parent
+    # Walk the parent_id chain in a SINGLE recursive CTE (one query) instead of
+    # one SELECT per ancestor version. Ancestors are returned ordered by version
+    # descending so the immediate parent comes first, matching the prior loop.
+    history_rows = session.execute(
+        sa_text(
+            """
+            WITH RECURSIVE chain AS (
+                SELECT id, namespace, type, scope, scope_ref, title, content,
+                       evidence_ids, confidence, version, parent_id, tags,
+                       trigger, action, success_hint, confirming_agents,
+                       created_at, updated_at
+                FROM concepts
+                WHERE id = (
+                    SELECT parent_id FROM concepts
+                    WHERE id = :uid AND namespace = :ns
+                ) AND namespace = :ns
+                UNION ALL
+                SELECT c.id, c.namespace, c.type, c.scope, c.scope_ref, c.title,
+                       c.content, c.evidence_ids, c.confidence, c.version,
+                       c.parent_id, c.tags, c.trigger, c.action, c.success_hint,
+                       c.confirming_agents, c.created_at, c.updated_at
+                FROM concepts c
+                JOIN chain ON c.id = chain.parent_id
+                WHERE c.namespace = :ns
+            )
+            SELECT * FROM chain ORDER BY version DESC
+            """
+        ),
+        {"uid": uid, "ns": namespace},
+    ).mappings().all()
+
+    def _row_to_dict(r):
+        r_type = r["type"]
+        r_scope = r["scope"]
+        return {
+            "id": str(r["id"]),
+            "namespace": r["namespace"],
+            "type": r_type.value if hasattr(r_type, "value") else str(r_type),
+            "scope": r_scope.value if hasattr(r_scope, "value") else str(r_scope),
+            "scope_ref": r["scope_ref"],
+            "title": r["title"],
+            "content": r["content"],
+            "evidence_ids": [str(eid) for eid in (r["evidence_ids"] or [])],
+            "confidence": r["confidence"],
+            "version": r["version"],
+            "parent_id": str(r["parent_id"]) if r["parent_id"] else None,
+            "tags": list(r["tags"] or []),
+            "trigger": r["trigger"],
+            "action": r["action"],
+            "success_hint": r["success_hint"],
+            "confirming_agents": list(r["confirming_agents"] or []),
+            "created_at": r["created_at"],
+            "updated_at": r["updated_at"],
+        }
+
+    history = [_row_to_dict(r) for r in history_rows]
 
     result["history"] = history
     return result
@@ -1791,13 +1844,20 @@ def create_concept_feedback(
     )
     session.add(fb)
 
-    # If "wrong" signal with a note, also ingest the correction as knowledge
+    # If "wrong" signal with a note, also ingest the correction as knowledge.
+    # Guard the embedding call: only embed when the provider is present and
+    # available, otherwise store the correction without an embedding (no 500).
     if signal == "wrong" and note:
+        correction_embedding = (
+            embedding_provider.embed_text(note)
+            if embedding_provider is not None and embedding_provider.is_available
+            else None
+        )
         session.add(KnowledgeItem(
             namespace=namespace,
             content=f"Correction: {note} (re: concept '{concept.title}')",
             tags=["correction", "operator-feedback"],
-            embedding=embedding_provider.embed_text(note),
+            embedding=correction_embedding,
             memory_type="correction",
         ))
 
