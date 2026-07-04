@@ -149,8 +149,11 @@ SECRET_PATTERNS: list[SecretPattern] = [
     ),
     SecretPattern(
         name="private_key_hex",
-        pattern=re.compile(r"\b0x[a-fA-F0-9]{64,}\b"),
-        description="Hex-encoded private key (64+ hex chars)",
+        pattern=re.compile(
+            r"(?i)(?:private[_-]?key|privkey|secret[_-]?key|secret)"
+            r"\s*[:=]\s*['\"]?0x[a-fA-F0-9]{64,}\b"
+        ),
+        description="Hex-encoded private key assigned to a private-key/secret field",
     ),
 
     # ── Connection strings ────────────────────────────────────────
@@ -191,8 +194,12 @@ SECRET_PATTERNS: list[SecretPattern] = [
     ),
     SecretPattern(
         name="base58_private_key",
-        pattern=re.compile(r"\b[1-9A-HJ-NP-Za-km-z]{87,88}\b"),
-        description="Base58-encoded private key (Solana/ed25519 length)",
+        pattern=re.compile(
+            r"(?i)(?:^|[^A-Za-z0-9])(?:[a-z0-9]+_)*"
+            r"(?:private[_-]?key|privkey|secret[_-]?key|secret|key)"
+            r"\s*[:=]\s*['\"]?[1-9A-HJ-NP-Za-km-z]{87,88}\b"
+        ),
+        description="Base58-encoded private key (Solana/ed25519) preceded by a key/secret indicator",
     ),
 ]
 

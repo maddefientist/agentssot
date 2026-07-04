@@ -243,7 +243,9 @@ class TestPrivateKeyPatterns:
 
     def test_hex_private_key(self):
         hex_key = "0x" + "a1b2c3d4" * 9  # 72 hex chars
-        result = scan_text(f"Key: {hex_key}")
+        # Use a genuine private-key field context; a bare 0x-hex blob (content
+        # hash / tx hash) must NOT trip this pattern.
+        result = scan_text(f"private_key = {hex_key}")
         assert result.has_secrets
         assert "private_key_hex" in result.matched_patterns
 

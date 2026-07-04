@@ -470,7 +470,10 @@ async def health() -> dict:
 
 
 @app.get("/doctor")
-async def doctor(session: Session = Depends(get_session)) -> dict:
+async def doctor(
+    session: Session = Depends(get_session),
+    _auth: AuthContext = Depends(require_api_key),
+) -> dict:
     """Health snapshot with LIVE provider reachability, index stats, key counts.
 
     Provider state comes from real Ollama pings (audit P0: the old /doctor reported
@@ -644,8 +647,10 @@ def adherence_page():
 def cortex_data(
     namespace: str = Query(default="claude-shared"),
     session: Session = Depends(get_session),
+    _auth: AuthContext = Depends(require_api_key),
 ):
-    """Public read-only endpoint for the cortex visualization. Returns concept metadata only."""
+    """Authenticated read-only endpoint for the cortex visualization. Returns concept metadata only."""
+    ensure_namespace_access(_auth, namespace, {ApiRole.reader.value, ApiRole.writer.value, ApiRole.admin.value})
     concepts = crud.list_concepts(session, namespace, limit=1000)
     # Also grab knowledge count for the HUD
     stats = crud.get_namespace_stats(session, namespace)
@@ -666,8 +671,10 @@ def cortex_links(
     limit: int = Query(default=200, le=500),
     min_weight: float = Query(default=0.3, ge=0.0, le=1.0),
     session: Session = Depends(get_session),
+    _auth: AuthContext = Depends(require_api_key),
 ):
-    """Public read-only endpoint for cortex edges. Returns concept_links."""
+    """Authenticated read-only endpoint for cortex edges. Returns concept_links."""
+    ensure_namespace_access(_auth, namespace, {ApiRole.reader.value, ApiRole.writer.value, ApiRole.admin.value})
     return {"links": crud.list_concept_links(session, namespace, limit, min_weight)}
 
 
@@ -675,8 +682,10 @@ def cortex_links(
 def cortex_system_info(
     namespace: str = Query(default="claude-shared"),
     session: Session = Depends(get_session),
+    _auth: AuthContext = Depends(require_api_key),
 ):
-    """Public read-only endpoint for cortex drawer. Returns config, health, agents."""
+    """Authenticated read-only endpoint for cortex drawer. Returns config, health, agents."""
+    ensure_namespace_access(_auth, namespace, {ApiRole.reader.value, ApiRole.writer.value, ApiRole.admin.value})
     settings = app.state.settings
 
     health = {
@@ -734,8 +743,10 @@ def cortex_activity(
     namespace: str = Query(default="claude-shared"),
     limit: int = Query(default=50, le=100),
     session: Session = Depends(get_session),
+    _auth: AuthContext = Depends(require_api_key),
 ):
-    """Public read-only endpoint for cortex activity ticker. Returns recent events."""
+    """Authenticated read-only endpoint for cortex activity ticker. Returns recent events."""
+    ensure_namespace_access(_auth, namespace, {ApiRole.reader.value, ApiRole.writer.value, ApiRole.admin.value})
     from .models import RecallEvent, ConceptFeedback, Concept
 
     events = []
@@ -781,12 +792,14 @@ def cortex_activity(
 def dashboard_stats(
     namespace: str = Query(default="claude-shared"),
     session: Session = Depends(get_session),
+    _auth: AuthContext = Depends(require_api_key),
 ):
-    """Enhanced stats endpoint for dashboard. No auth required.
+    """Enhanced stats endpoint for dashboard. Requires a valid API key.
 
     Includes: basic counts, memory type distribution (M3), staleness distribution (M3),
     secret scanning stats (M8), sync checkpoint status (M10).
     """
+    ensure_namespace_access(_auth, namespace, {ApiRole.reader.value, ApiRole.writer.value, ApiRole.admin.value})
     from sqlalchemy import func, text as sa_text, case, literal_column
     from .models import Concept, KnowledgeItem, RecallEvent, ConceptFeedback
 
@@ -1352,6 +1365,36 @@ def admin_grant_namespaces(
     session.refresh(target)
     return {"key_id": key_id, "namespaces": list(target.namespaces or [])}
 
+
+@app.post("/admin/api-keys/{key_id}/deactivate")
+def admin_deactivate_api_key(
+    key_id: str,
+    auth: AuthContext = Depends(require_api_key),
+    session: Session = Depends(get_session),
+):
+    """Deactivate an API key immediately, including cache invalidation.
+
+    Without the clear_auth_cache() call below, a revoked key would keep
+    authenticating for up to _AUTH_CACHE_TTL_SECONDS (3600s) via the bcrypt
+    lookup cache in security.py.
+    """
+    require_admin(auth)
+    from uuid import UUID as _UUID
+
+    try:
+        target_id = _UUID(key_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid key_id")
+
+    target = session.get(ApiKey, target_id)
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="key not found")
+
+    target.is_active = False
+    session.commit()
+    clear_auth_cache()
+
+    return {"key_id": key_id, "is_active": False, "deactivated": True}
 
 
 @app.post("/admin/feedback/complete-sessions")

@@ -26,33 +26,50 @@ from sqlalchemy.orm import Session
 from starlette import status
 
 from .db import get_session
+from .models import ApiRole
+from .security import AuthContext, ensure_namespace_access, require_api_key
 
 logger = logging.getLogger("agentssot.cortex")
 
 router = APIRouter(prefix="/cortex", tags=["cortex"])
 
 # ---------------------------------------------------------------------------
-# Fast internal auth (no bcrypt — plaintext token match for local-network use)
+# Fast internal auth
 # ---------------------------------------------------------------------------
 # Cortex endpoints are called from hooks on every conversation turn.
-# The standard require_api_key uses bcrypt verify (~3s per call).
-# This fast path does a constant-time string comparison instead.
+# CORTEX_INTERNAL_TOKEN is an exact-match (==) shared secret fast path so
+# trusted internal callers skip the bcrypt lookup below. Any other key must
+# resolve to a real, active ApiKey row (via require_api_key's cached bcrypt
+# verify) — a bare "ssot_"-prefixed string with no DB record is rejected.
 
 _INTERNAL_TOKEN = os.environ.get("CORTEX_INTERNAL_TOKEN", "")
 
 
 def _require_cortex_key(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
-) -> str:
-    """Fast API key check for cortex endpoints. No bcrypt, no DB lookup."""
+    session: Session = Depends(get_session),
+) -> "AuthContext | None":
+    """API key check for cortex endpoints: internal-token fast path, else real verify.
+
+    Returns None for the trusted internal token (full access, used by session hooks),
+    or the resolved AuthContext for a real API key (namespace-scoped)."""
     if not x_api_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing X-API-Key")
-    # Accept the internal token OR any key starting with ssot_ (trusted local network)
     if _INTERNAL_TOKEN and x_api_key == _INTERNAL_TOKEN:
-        return x_api_key
-    if x_api_key.startswith("ssot_"):
-        return x_api_key
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid key")
+        return None  # trusted internal token — full access, skip namespace ACL
+    # Not the internal token — verify it's a real, active API key.
+    return require_api_key(x_api_key=x_api_key, session=session)
+
+
+def _enforce_cortex_ns(
+    auth: "AuthContext | None", namespace: str, roles: set[str]
+) -> None:
+    """Namespace authorization for cortex endpoints. Internal-token callers
+    (auth is None) are fully trusted; real API keys must be scoped to the
+    namespace they touch."""
+    if auth is None:
+        return
+    ensure_namespace_access(auth, namespace, roles)
 
 
 
@@ -201,11 +218,11 @@ def ensure_cortex_tables(session) -> None:
 @router.post("/update", response_model=CortexUpdateResponse)
 def cortex_update(
     req: CortexUpdateRequest,
-    _key: str = Depends(_require_cortex_key),
+    auth: "AuthContext | None" = Depends(_require_cortex_key),
     session: Session = Depends(get_session),
 ):
     """Upsert working memory for an agent's task."""
-    # Internal auth — no namespace access check needed (local network only)
+    _enforce_cortex_ns(auth, req.namespace, {ApiRole.writer.value, ApiRole.admin.value})
 
     task_id = req.task_id or f"task-{uuid4().hex[:12]}"
 
@@ -309,11 +326,11 @@ def cortex_state(
     namespace: str = Query(default="claude-shared"),
     agent_key: str = Query(...),
     include_completed: bool = Query(default=False),
-    _key: str = Depends(_require_cortex_key),
+    auth: "AuthContext | None" = Depends(_require_cortex_key),
     session: Session = Depends(get_session),
 ):
     """Get current working memory state for an agent."""
-    # Internal auth — no namespace access check needed (local network only)
+    _enforce_cortex_ns(auth, namespace, {ApiRole.reader.value, ApiRole.writer.value, ApiRole.admin.value})
 
     status_filter = "AND status NOT IN ('completed', 'abandoned')" if not include_completed else ""
 
@@ -382,7 +399,7 @@ def cortex_state(
 @router.post("/reconstruct", response_model=CortexReconstructResponse)
 def cortex_reconstruct(
     req: CortexReconstructRequest,
-    _key: str = Depends(_require_cortex_key),
+    auth: "AuthContext | None" = Depends(_require_cortex_key),
     session: Session = Depends(get_session),
 ):
     """Build a budget-aware context injection string from working memory.
@@ -390,7 +407,7 @@ def cortex_reconstruct(
     Returns a structured text block ready to inject into an agent's system
     prompt or session start message. Respects max_chars budget.
     """
-    # Internal auth — no namespace access check needed (local network only)
+    _enforce_cortex_ns(auth, req.namespace, {ApiRole.reader.value, ApiRole.writer.value, ApiRole.admin.value})
 
     # 1. Get active tasks
     rows = session.execute(
@@ -471,11 +488,11 @@ def cortex_tasks_list(
     namespace: str = Query(default="claude-shared"),
     status: str | None = Query(default=None),
     agent_key: str | None = Query(default=None),
-    _key: str = Depends(_require_cortex_key),
+    auth: "AuthContext | None" = Depends(_require_cortex_key),
     session: Session = Depends(get_session),
 ):
     """List all active tasks across agents."""
-    # Internal auth — no namespace access check needed (local network only)
+    _enforce_cortex_ns(auth, namespace, {ApiRole.reader.value, ApiRole.writer.value, ApiRole.admin.value})
 
     conditions = ["namespace = :ns"]
     params: dict[str, Any] = {"ns": namespace}

@@ -30,7 +30,10 @@ except Exception as exc:
     raise SystemExit(f"Cannot read agent config at {_agent_path}: {exc}") from exc
 
 BASE_URL: str = _cfg.get("base_url", "http://192.168.1.225:8088")
-API_KEY: str = _cfg.get("admin_api_key") or _cfg.get("api_key", "")
+# Default client key is the writer/reader key from agent.json. The admin key
+# (admin.json) is used ONLY by tools that explicitly request role="admin" via
+# _client()/_api_key_for() below — never as a blanket default for every tool.
+API_KEY: str = _cfg.get("api_key", "")
 DEFAULT_NS: str = _cfg.get("default_namespace", "claude-shared")
 DEVICE_NAME: str = _cfg.get("device_name", "unknown")
 AGENT_KEY: str = f"device-{DEVICE_NAME}-writer"
@@ -67,10 +70,10 @@ async def _client(role: str | None = None) -> httpx.AsyncClient:
     """Build an AsyncClient. Default uses the cached writer key; pass role='admin'
     to swap in the admin key from admin.json."""
     if role and role != "writer":
-        try:
-            key = _api_key_for(role)
-        except (PermissionError, FileNotFoundError, KeyError):
-            key = API_KEY
+        # Admin ops must fail loudly if admin.json is missing/unreadable — never
+        # silently downgrade to the writer key, which would mask a permissions
+        # error as some other failure downstream.
+        key = _api_key_for(role)
         headers = {"X-API-Key": key, "Content-Type": "application/json"}
         return httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=TIMEOUT)
     return httpx.AsyncClient(base_url=BASE_URL, headers=HEADERS, timeout=TIMEOUT)
@@ -545,6 +548,8 @@ async def hive_create_namespace(name: str) -> str:
             resp = await c.post("/admin/namespaces", json={"name": name})
     except httpx.HTTPError as exc:
         return f"Connection error: {exc}"
+    except PermissionError as exc:
+        return f"Permission error: {exc}"
     if resp.status_code not in (200, 201):
         return await _api_error(resp)
 
@@ -578,6 +583,8 @@ async def hive_list_keys() -> str:
             resp = await c.get("/admin/api-keys")
     except httpx.HTTPError as exc:
         return f"Connection error: {exc}"
+    except PermissionError as exc:
+        return f"Permission error: {exc}"
     if resp.status_code != 200:
         return await _api_error(resp)
     keys = resp.json()
@@ -614,11 +621,20 @@ async def hive_create_key(
             resp = await c.post("/admin/api-keys", json=body)
     except httpx.HTTPError as exc:
         return f"Connection error: {exc}"
+    except PermissionError as exc:
+        return f"Permission error: {exc}"
     if resp.status_code not in (200, 201):
         return await _api_error(resp)
     data = resp.json()
     key_val = data.get("api_key") or data.get("key", "")
-    return f"Key created: name={name} role={role}\nKey value: {key_val}\n(Store this -- it cannot be retrieved again.)"
+    return (
+        f"Key created: name={name} role={role}\n"
+        f"Key value: {key_val}\n"
+        "(Store this -- it cannot be retrieved again.)\n"
+        "WARNING: this plaintext key will appear in this conversation transcript. "
+        "Store it securely (e.g. agent.json/admin.json, a secrets manager) and "
+        "rotate/deactivate it immediately if this transcript is ever shared or leaked."
+    )
 
 
 @mcp.tool()
@@ -639,6 +655,8 @@ async def hive_delete_items(
             resp = await c.post("/admin/delete-items", json=body)
     except httpx.HTTPError as exc:
         return f"Connection error: {exc}"
+    except PermissionError as exc:
+        return f"Permission error: {exc}"
     if resp.status_code != 200:
         return await _api_error(resp)
     data = resp.json()
@@ -664,6 +682,8 @@ async def hive_dedup(
             resp = await c.post("/admin/dedup", json=body)
     except httpx.HTTPError as exc:
         return f"Connection error: {exc}"
+    except PermissionError as exc:
+        return f"Permission error: {exc}"
     if resp.status_code != 200:
         return await _api_error(resp)
     data = resp.json()

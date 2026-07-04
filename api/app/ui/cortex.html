@@ -1110,7 +1110,7 @@ document.getElementById('detailClose').addEventListener('click', unfocus);
 // ---------------------------------------------------------------------------
 async function loadLinks() {
   try {
-    const resp = await fetch('/cortex/links?namespace=claude-shared&limit=200');
+    const resp = await window.cortexFetch('/cortex/links?namespace=claude-shared&limit=200');
     const data = await resp.json();
     allLinks = data.links || [];
     buildGlobalEdges();
@@ -1524,8 +1524,8 @@ document.querySelectorAll('.drawer-tab').forEach(function(tab) {
 async function loadDrawerData() {
   try {
     var responses = await Promise.all([
-      fetch('/cortex/system-info?namespace=claude-shared'),
-      fetch('/cortex/activity?namespace=claude-shared'),
+      window.cortexFetch('/cortex/system-info?namespace=claude-shared'),
+      window.cortexFetch('/cortex/activity?namespace=claude-shared'),
     ]);
     systemInfo = await responses[0].json();
     activityData = await responses[1].json();
@@ -1681,7 +1681,7 @@ function renderDrawer() {
 // ---------------------------------------------------------------------------
 async function loadData() {
   try {
-    const resp = await fetch('/cortex/data?namespace=claude-shared');
+    const resp = await window.cortexFetch('/cortex/data?namespace=claude-shared');
     const data = await resp.json();
     const incoming = data.concepts || [];
 
@@ -1826,7 +1826,7 @@ function showTickerItem(event) {
 
 async function pollActivity() {
   try {
-    const resp = await fetch('/cortex/activity?namespace=claude-shared&limit=10');
+    const resp = await window.cortexFetch('/cortex/activity?namespace=claude-shared&limit=10');
     const data = await resp.json();
     if (!data.events || data.events.length === 0) return;
 
