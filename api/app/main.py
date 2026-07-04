@@ -1729,7 +1729,7 @@ _SETTING_DESCRIPTIONS: dict[str, str] = {
     "llm_provider": "LLM backend: none/openai/ollama (restart required)",
     "openai_chat_model": "OpenAI chat model name (restart required)",
     "ollama_chat_model": "Ollama chat model name (restart required)",
-    "reranker_provider": "Reranker backend: none/ollama (restart required)",
+    "reranker_provider": "Reranker backend: none/ollama (hot-swappable; rebuilds providers live)",
     "ollama_reranker_model": "Ollama deep reranker model name (runtime override persists until deleted)",
     "ollama_reranker_base_url": "Ollama deep reranker base URL (runtime override persists until deleted)",
     "ollama_reranker_fast_model": "Ollama fast reranker model name (runtime override persists until deleted)",

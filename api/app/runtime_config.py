@@ -21,6 +21,7 @@ HOT_KEYS = frozenset({
     "synthesis_window_days",
     "synthesis_similarity_threshold",
     "synthesis_min_cluster_size",
+    "reranker_provider",
     "ollama_reranker_model",
     "ollama_reranker_base_url",
     "ollama_reranker_fast_model",
@@ -49,6 +50,11 @@ NUMERIC_RANGES: dict[str, tuple[float, float]] = {
     "synthesis_min_cluster_size": (1, 1000),
     "synthesis_window_days": (1, 3650),
     "reranker_candidate_multiplier": (1, 10),
+}
+
+# Keys whose value must be one of a fixed set (enum-like Settings fields).
+ENUM_KEYS: dict[str, frozenset[str]] = {
+    "reranker_provider": frozenset({"none", "ollama"}),
 }
 
 
@@ -141,6 +147,8 @@ def coerce_value(settings: Any, key: str, raw: Any) -> Any:
             raise ValueError(f"{key}: value {value} out of range [{lo}, {hi}]")
     if key in URL_KEYS:
         _validate_url(key, str(value))
+    if key in ENUM_KEYS and str(value) not in ENUM_KEYS[key]:
+        raise ValueError(f"{key}: expected one of {sorted(ENUM_KEYS[key])}")
     return value
 
 
