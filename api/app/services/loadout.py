@@ -84,11 +84,15 @@ def fetch_loadout_candidates(
     ) or 0
     doctrine_item: list = []
     if doctrine_count > 0:
-        rotation_index = int(hashlib.sha256(_date.today().isoformat().encode()).hexdigest(), 16) % doctrine_count
+        # UTC date keeps rotation consistent with the rest of the system (server-local
+        # midnight would flip the rotation at the wrong time relative to UTC-stamped data).
+        rotation_index = int(hashlib.sha256(datetime.now(timezone.utc).date().isoformat().encode()).hexdigest(), 16) % doctrine_count
+        # The modulo naturally re-phases when the doctrine set size changes; that's
+        # acceptable for a daily rotation (a different principle surfaces each day).
         doctrine_stmt = (
             select(KnowledgeItem)
             .where(and_(*base_filters, KnowledgeItem.memory_type == MemoryType.doctrine))
-            .order_by(KnowledgeItem.created_at)
+            .order_by(KnowledgeItem.created_at, KnowledgeItem.id)
             .offset(rotation_index)
             .limit(1)
         )

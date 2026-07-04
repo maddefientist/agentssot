@@ -226,69 +226,41 @@ def cortex_update(
 
     task_id = req.task_id or f"task-{uuid4().hex[:12]}"
 
-    # Check if task exists
-    existing = session.execute(
+    # Atomic upsert: a single INSERT ... ON CONFLICT avoids the SELECT-then-INSERT
+    # race where two concurrent turns for the same new task could double-insert
+    # and collide on UNIQUE(namespace, agent_key, task_id). xmax = 0 in RETURNING
+    # indicates the row was freshly inserted (vs. updated by the conflict branch).
+    row = session.execute(
         text("""
-            SELECT id, version FROM cortex_working_memory
-            WHERE namespace = :ns AND agent_key = :agent AND task_id = :tid
+            INSERT INTO cortex_working_memory
+                (namespace, agent_key, task_id, task_title, status,
+                 decisions, pending_actions, artifacts, context_snapshot, version)
+            VALUES (:ns, :agent, :tid, :title, :status,
+                    :decisions, :pending, :artifacts, :snapshot, 1)
+            ON CONFLICT (namespace, agent_key, task_id) DO UPDATE SET
+                task_title = EXCLUDED.task_title,
+                status = EXCLUDED.status,
+                decisions = EXCLUDED.decisions,
+                pending_actions = EXCLUDED.pending_actions,
+                artifacts = EXCLUDED.artifacts,
+                context_snapshot = EXCLUDED.context_snapshot,
+                version = cortex_working_memory.version + 1
+            RETURNING version, (xmax = 0) AS created
         """),
-        {"ns": req.namespace, "agent": req.agent_key, "tid": task_id},
-    ).first()
-
-    if existing:
-        # Update existing task
-        new_version = existing.version + 1
-        session.execute(
-            text("""
-                UPDATE cortex_working_memory
-                SET task_title = :title,
-                    status = :status,
-                    decisions = :decisions,
-                    pending_actions = :pending,
-                    artifacts = :artifacts,
-                    context_snapshot = :snapshot,
-                    version = :version
-                WHERE namespace = :ns AND agent_key = :agent AND task_id = :tid
-            """),
-            {
-                "title": req.task_title,
-                "status": req.status,
-                "decisions": _to_json(req.decisions),
-                "pending": _to_json(req.pending_actions),
-                "artifacts": _to_json(req.artifacts),
-                "snapshot": req.context_snapshot,
-                "version": new_version,
-                "ns": req.namespace,
-                "agent": req.agent_key,
-                "tid": task_id,
-            },
-        )
-        created = False
-        version = new_version
-    else:
-        # Insert new task
-        session.execute(
-            text("""
-                INSERT INTO cortex_working_memory
-                    (namespace, agent_key, task_id, task_title, status,
-                     decisions, pending_actions, artifacts, context_snapshot, version)
-                VALUES (:ns, :agent, :tid, :title, :status,
-                        :decisions, :pending, :artifacts, :snapshot, 1)
-            """),
-            {
-                "ns": req.namespace,
-                "agent": req.agent_key,
-                "tid": task_id,
-                "title": req.task_title,
-                "status": req.status,
-                "decisions": _to_json(req.decisions),
-                "pending": _to_json(req.pending_actions),
-                "artifacts": _to_json(req.artifacts),
-                "snapshot": req.context_snapshot,
-            },
-        )
-        created = True
-        version = 1
+        {
+            "ns": req.namespace,
+            "agent": req.agent_key,
+            "tid": task_id,
+            "title": req.task_title,
+            "status": req.status,
+            "decisions": _to_json(req.decisions),
+            "pending": _to_json(req.pending_actions),
+            "artifacts": _to_json(req.artifacts),
+            "snapshot": req.context_snapshot,
+        },
+    ).one()
+    version = int(row.version)
+    created = bool(row.created)
 
     # Record delta if provided
     if req.delta:

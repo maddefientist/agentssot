@@ -48,14 +48,19 @@ def reconcile_concepts(
                 logger.warning("failed to embed concept, storing without embedding")
 
         if matched_id:
+            # Only a malformed UUID is treated as "no match" (fall through to create
+            # a new concept). Genuine DB/query errors must propagate, not be swallowed.
             try:
+                matched_uuid = UUID(matched_id)
+            except ValueError:
+                matched_uuid = None
+            existing = None
+            if matched_uuid is not None:
                 existing = session.scalar(
                     select(Concept).where(
-                        and_(Concept.id == UUID(matched_id), Concept.namespace == namespace)
+                        and_(Concept.id == matched_uuid, Concept.namespace == namespace)
                     )
                 )
-            except (ValueError, Exception):
-                existing = None
 
             if existing and not is_contradiction:
                 existing.confidence = min(existing.confidence + 0.05, 1.0)

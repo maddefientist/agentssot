@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func
+from sqlalchemy import select, func, cast
+from sqlalchemy.dialects.postgresql import ARRAY, TEXT
 from sqlalchemy.orm import Session
 
 from app.db import get_session
@@ -23,18 +24,40 @@ async def list_entities(
     if auth.role not in (ApiRole.writer.value, ApiRole.admin.value):
         raise HTTPException(status_code=403, detail="writer or admin role required")
 
-    rows = session.execute(
-        select(Entity).where(Entity.namespace == namespace).limit(limit)
-    ).scalars()
+    entities = list(
+        session.execute(
+            select(Entity).where(Entity.namespace == namespace).limit(limit)
+        ).scalars()
+    )
+
+    # Compute all ref-counts in ONE query: unnest each knowledge item's
+    # entity_refs within the same namespace, group by referenced entity id, then
+    # map counts back. The namespace filter scopes counts to this namespace only.
+    counts: dict[str, int] = {}
+    if entities:
+        entity_id_strs = [str(e.id) for e in entities]
+        ref_subq = (
+            select(
+                func.jsonb_array_elements_text(KnowledgeItem.entity_refs).label("eid")
+            )
+            .select_from(KnowledgeItem)
+            .where(KnowledgeItem.namespace == namespace)
+            .where(
+                func.jsonb_exists_any(
+                    KnowledgeItem.entity_refs, cast(entity_id_strs, ARRAY(TEXT))
+                )
+            )
+        )
+        count_rows = session.execute(
+            select(ref_subq.c.eid, func.count().label("cnt"))
+            .select_from(ref_subq)
+            .group_by(ref_subq.c.eid)
+        ).all()
+        counts = {r.eid: int(r.cnt) for r in count_rows}
 
     out = []
-    for e in rows:
-        # Count knowledge items referencing this entity
-        ref_count = session.execute(
-            select(func.count(KnowledgeItem.id)).where(
-                KnowledgeItem.entity_refs.contains([str(e.id)])
-            )
-        ).scalar_one()
+    for e in entities:
+        ref_count = counts.get(str(e.id), 0)
 
         out.append({
             "id": str(e.id),
