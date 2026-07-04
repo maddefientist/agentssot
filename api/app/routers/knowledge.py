@@ -139,14 +139,30 @@ async def ingest_tiered(
     namespace = data.namespace or "default"
     ensure_namespace_access(auth, namespace, {ApiRole.writer.value, ApiRole.admin.value})
 
-    # Generate embedding for full content
+    # Generate embedding for full content.
+    # Two distinct "no embedding" cases:
+    #   1. No provider configured / provider unavailable -> intentional None,
+    #      item still stores (unembedded items are a supported, if degraded, state).
+    #   2. Provider IS available but embed_text raises -> a real failure. Storing
+    #      the item anyway would silently create a permanently un-recallable row
+    #      (recall requires embedding IS NOT NULL), i.e. "taught it and it forgot".
+    #      Fail loudly instead so the caller can retry.
     embedding = None
     embedding_provider = request.app.state.embedding_provider
     if embedding_provider and embedding_provider.is_available:
         try:
             embedding = await asyncio.to_thread(embedding_provider.embed_text, data.content)
         except Exception:
-            embedding = None
+            _log.warning(
+                "ingest_tiered: embedding backend failed for namespace=%s (provider available); "
+                "refusing to store an unrecallable item",
+                namespace,
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=503,
+                detail="embedding backend failed; item not stored — retry",
+            )
 
     # Map memory_type to category if category not specified
     category_value = _map_memory_type(data.category, data.memory_type)
@@ -274,34 +290,46 @@ async def ingest_tiered(
     # entity_refs: merge caller-supplied refs with classifier-extracted refs after flush.
     _caller_entity_refs = list(data.entity_refs) if data.entity_refs else []
 
+    # Core insert. This is the one thing that MUST survive: everything after
+    # this point (review-queue rows, entity-ref resolution, supersession scan,
+    # contradiction scan) is optional enrichment. Each such sub-step runs in
+    # its own SAVEPOINT (session.begin_nested()) so a failure there rolls back
+    # only that sub-step — logged, not raised — instead of losing the core
+    # item or leaving a half-applied ingest. There is a single session.commit()
+    # at the very end of the successful path (see bottom of function).
     session.add(ki)
     session.flush()
     session.refresh(ki)
 
     if needs_review:
-        rq = ReviewQueueItem(
-            namespace=namespace,
-            kind=ReviewQueueKind.low_conf,
-            priority=10,
-            primary_id=ki.id,
-            reason=f"classifier_confidence={classifier_out.get('confidence', 0.0):.2f}; reason={classifier_out.get('_reason','low_conf')}",
-            status=ReviewQueueStatus.pending,
-        )
-        session.add(rq)
+        try:
+            with session.begin_nested():
+                session.add(ReviewQueueItem(
+                    namespace=namespace,
+                    kind=ReviewQueueKind.low_conf,
+                    priority=10,
+                    primary_id=ki.id,
+                    reason=f"classifier_confidence={classifier_out.get('confidence', 0.0):.2f}; reason={classifier_out.get('_reason','low_conf')}",
+                    status=ReviewQueueStatus.pending,
+                ))
+        except Exception:
+            _log.warning("ingest_tiered: failed to enqueue low-confidence review item for %s", ki.id, exc_info=True)
 
     if near_dup_review is not None:
         existing_id, similarity = near_dup_review
-        session.add(ReviewQueueItem(
-            namespace=namespace,
-            kind=ReviewQueueKind.dup,
-            priority=3,
-            primary_id=ki.id,
-            secondary_id=existing_id,
-            reason=f"near-duplicate on ingest: cosine_similarity={similarity:.4f} (>= {dedup_threshold} review floor, < {DEDUP_COLLAPSE_SIMILARITY} collapse cutoff)",
-            status=ReviewQueueStatus.pending,
-        ))
-
-    session.commit()
+        try:
+            with session.begin_nested():
+                session.add(ReviewQueueItem(
+                    namespace=namespace,
+                    kind=ReviewQueueKind.dup,
+                    priority=3,
+                    primary_id=ki.id,
+                    secondary_id=existing_id,
+                    reason=f"near-duplicate on ingest: cosine_similarity={similarity:.4f} (>= {dedup_threshold} review floor, < {DEDUP_COLLAPSE_SIMILARITY} collapse cutoff)",
+                    status=ReviewQueueStatus.pending,
+                ))
+        except Exception:
+            _log.warning("ingest_tiered: failed to enqueue near-dup review item for %s", ki.id, exc_info=True)
 
     # Plan 1 T2.5: supersession + contradiction scans.
     # Both the caller AND the classifier supply entity references as human names
@@ -315,100 +343,112 @@ async def ingest_tiered(
     if classifier_out:
         classifier_mentions = list(classifier_out.get("entity_mentions") or [])
     raw_refs = list(dict.fromkeys(_caller_entity_refs + classifier_mentions))
-    resolved_refs, unresolved_refs = _resolve_entity_refs(session, namespace, raw_refs)
-    _refs_changed = False
-    if resolved_refs:
-        ki.entity_refs = resolved_refs
-        _refs_changed = True
-    if unresolved_refs:
-        new_tags = list(ki.tags or [])
-        for name in unresolved_refs:
-            tag = f"entity:{name}"
-            if tag not in new_tags:
-                new_tags.append(tag)
-        ki.tags = new_tags
-        _refs_changed = True
-    if _refs_changed:
-        session.commit()
-    new_entity_refs = resolved_refs  # supersession scan uses resolved entity UUIDs only
+    new_entity_refs: list = []  # supersession scan uses resolved entity UUIDs only
+    try:
+        with session.begin_nested():
+            resolved_refs, unresolved_refs = _resolve_entity_refs(session, namespace, raw_refs)
+            if resolved_refs:
+                ki.entity_refs = resolved_refs
+            if unresolved_refs:
+                new_tags = list(ki.tags or [])
+                for name in unresolved_refs:
+                    tag = f"entity:{name}"
+                    if tag not in new_tags:
+                        new_tags.append(tag)
+                ki.tags = new_tags
+            new_entity_refs = resolved_refs
+    except Exception:
+        _log.warning("ingest_tiered: entity-ref resolution failed for %s; leaving refs unresolved", ki.id, exc_info=True)
+        new_entity_refs = []
 
     if ki.memory_type and new_entity_refs:
-        cand_stmt = (
-            select(KnowledgeItem)
-            .where(
-                KnowledgeItem.namespace == namespace,
-                KnowledgeItem.memory_type == ki.memory_type,
-                KnowledgeItem.id != ki.id,
-                KnowledgeItem.superseded_by.is_(None),
-                # ?| requires text[] on the right; cast prevents 'jsonb ?| jsonb' error
-                func.jsonb_exists_any(KnowledgeItem.entity_refs, cast(new_entity_refs, ARRAY(TEXT))),
-            )
-            .limit(20)
-        )
-        candidates = list(session.execute(cand_stmt).scalars())
-        superseded = find_supersession_candidates(ki, candidates)
-        # Similarity gate: entity+type match alone produced false supersessions
-        # (unrelated notes about the same project hiding each other). Require the
-        # pair to be genuinely similar — a real v1->v2 update — before suppressing.
-        sims: dict = {}
-        sup_threshold = get_settings().supersession_similarity_threshold
-        if superseded and sup_threshold > 0 and ki.embedding is not None:
-            cand_ids = [o.id for o in superseded]
-            sims = {
-                row["id"]: float(row["sim"])
-                for row in session.execute(text(
-                    """
-                    SELECT s.id AS id, 1 - (s.embedding <=> p.embedding) AS sim
-                    FROM knowledge_items s, knowledge_items p
-                    WHERE p.id = :pid AND s.id = ANY(:cids) AND s.embedding IS NOT NULL
-                    """
-                ), {"pid": ki.id, "cids": cand_ids}).mappings()
-            }
-            superseded = [o for o in superseded if sims.get(o.id, 0.0) >= sup_threshold]
-        for old in superseded:
-            apply_supersession(old, ki)
-            sim_note = sims.get(old.id)
-            session.add(ReviewQueueItem(
-                namespace=namespace,
-                kind=ReviewQueueKind.supersede,
-                priority=5,
-                primary_id=ki.id,
-                secondary_id=old.id,
-                reason=(f"auto-supersession on entity+type match (sim={sim_note:.3f})"
-                        if sim_note is not None else "auto-supersession on entity+type match"),
-                status=ReviewQueueStatus.pending,
-            ))
-        if superseded:
-            session.commit()
+        try:
+            with session.begin_nested():
+                cand_stmt = (
+                    select(KnowledgeItem)
+                    .where(
+                        KnowledgeItem.namespace == namespace,
+                        KnowledgeItem.memory_type == ki.memory_type,
+                        KnowledgeItem.id != ki.id,
+                        KnowledgeItem.superseded_by.is_(None),
+                        # ?| requires text[] on the right; cast prevents 'jsonb ?| jsonb' error
+                        func.jsonb_exists_any(KnowledgeItem.entity_refs, cast(new_entity_refs, ARRAY(TEXT))),
+                    )
+                    .limit(20)
+                )
+                candidates = list(session.execute(cand_stmt).scalars())
+                superseded = find_supersession_candidates(ki, candidates)
+                # Similarity gate: entity+type match alone produced false supersessions
+                # (unrelated notes about the same project hiding each other). Require the
+                # pair to be genuinely similar — a real v1->v2 update — before suppressing.
+                sims: dict = {}
+                sup_threshold = get_settings().supersession_similarity_threshold
+                if superseded and sup_threshold > 0 and ki.embedding is not None:
+                    cand_ids = [o.id for o in superseded]
+                    sims = {
+                        row["id"]: float(row["sim"])
+                        for row in session.execute(text(
+                            """
+                            SELECT s.id AS id, 1 - (s.embedding <=> p.embedding) AS sim
+                            FROM knowledge_items s, knowledge_items p
+                            WHERE p.id = :pid AND s.id = ANY(:cids) AND s.embedding IS NOT NULL
+                            """
+                        ), {"pid": ki.id, "cids": cand_ids}).mappings()
+                    }
+                    superseded = [o for o in superseded if sims.get(o.id, 0.0) >= sup_threshold]
+                for old in superseded:
+                    apply_supersession(old, ki)
+                    sim_note = sims.get(old.id)
+                    session.add(ReviewQueueItem(
+                        namespace=namespace,
+                        kind=ReviewQueueKind.supersede,
+                        priority=5,
+                        primary_id=ki.id,
+                        secondary_id=old.id,
+                        reason=(f"auto-supersession on entity+type match (sim={sim_note:.3f})"
+                                if sim_note is not None else "auto-supersession on entity+type match"),
+                        status=ReviewQueueStatus.pending,
+                    ))
+        except Exception:
+            _log.warning("ingest_tiered: supersession scan failed for %s", ki.id, exc_info=True)
 
     if str(ki.memory_type) in ("command", "skill") and new_entity_refs:
-        rule_stmt = (
-            select(KnowledgeItem)
-            .where(
-                KnowledgeItem.namespace == namespace,
-                KnowledgeItem.memory_type == "rule",
-                func.jsonb_exists_any(KnowledgeItem.entity_refs, cast(new_entity_refs, ARRAY(TEXT))),
-                KnowledgeItem.superseded_by.is_(None),
-            )
-        )
-        rules = list(session.execute(rule_stmt).scalars())
-        contras = detect_contradictions(
-            new_type=str(ki.memory_type),
-            new_entity_refs=new_entity_refs,
-            existing_rules=rules,
-        )
-        for rule in contras:
-            session.add(ReviewQueueItem(
-                namespace=namespace,
-                kind=ReviewQueueKind.contradiction,
-                priority=20,
-                primary_id=ki.id,
-                secondary_id=rule.id,
-                reason=f"new {ki.memory_type} contradicts negation rule",
-                status=ReviewQueueStatus.pending,
-            ))
-        if contras:
-            session.commit()
+        try:
+            with session.begin_nested():
+                rule_stmt = (
+                    select(KnowledgeItem)
+                    .where(
+                        KnowledgeItem.namespace == namespace,
+                        KnowledgeItem.memory_type == "rule",
+                        func.jsonb_exists_any(KnowledgeItem.entity_refs, cast(new_entity_refs, ARRAY(TEXT))),
+                        KnowledgeItem.superseded_by.is_(None),
+                    )
+                )
+                rules = list(session.execute(rule_stmt).scalars())
+                contras = detect_contradictions(
+                    new_type=str(ki.memory_type),
+                    new_entity_refs=new_entity_refs,
+                    existing_rules=rules,
+                )
+                for rule in contras:
+                    session.add(ReviewQueueItem(
+                        namespace=namespace,
+                        kind=ReviewQueueKind.contradiction,
+                        priority=20,
+                        primary_id=ki.id,
+                        secondary_id=rule.id,
+                        reason=f"new {ki.memory_type} contradicts negation rule",
+                        status=ReviewQueueStatus.pending,
+                    ))
+        except Exception:
+            _log.warning("ingest_tiered: contradiction scan failed for %s", ki.id, exc_info=True)
+
+    # Single commit for the whole ingest: core item + any sub-steps that
+    # succeeded. A crash before this point leaves nothing durable (the
+    # session simply never commits); there is no window where a
+    # half-applied item (inserted but supersession/contradiction/refs
+    # partially done) is visible to other transactions.
+    session.commit()
 
     wal.log_event(
         "knowledge.ingest",
