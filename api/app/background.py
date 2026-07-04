@@ -101,9 +101,17 @@ async def lifecycle_sweep_loop(app) -> None:
         sleep_seconds = (next_run - now).total_seconds()
         logger.info("lifecycle_sweep next run at %s UTC (sleep %.0fs)", next_run, sleep_seconds)
         await asyncio.sleep(sleep_seconds)
+        from sqlalchemy import select
+        from .models import Namespace
         try:
             with SessionLocal() as s:
-                result = run_sweep(s, namespace="claude-shared", dry_run=False)
-            logger.info("lifecycle_sweep complete: %s", result)
+                names = list(s.execute(select(Namespace.name)).scalars())
+            for name in names:
+                try:
+                    with SessionLocal() as s:
+                        result = run_sweep(s, namespace=name, dry_run=False)
+                    logger.info("lifecycle_sweep complete for namespace=%s: %s", name, result)
+                except Exception:
+                    logger.exception("lifecycle_sweep failed for namespace=%s", name)
         except Exception:
-            logger.exception("lifecycle_sweep failed")
+            logger.exception("lifecycle_sweep namespace enumeration failed")

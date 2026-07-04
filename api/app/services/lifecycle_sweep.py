@@ -3,8 +3,6 @@
 Steps (idempotent):
 1. Decay: items with last_recalled_at older than 90d lose 10% confidence.
 2. Expire: episodic items older than 180d get expires_at = now if unset.
-3. (Stub) Contradiction recheck.
-4. (Stub) Supersession recheck.
 """
 from __future__ import annotations
 
@@ -26,8 +24,6 @@ EPISODIC_TTL = timedelta(days=180)
 class SweepResult:
     decayed: int
     expired: int
-    contradictions_flagged: int
-    supersessions_applied: int
 
     def as_dict(self) -> dict:
         return self.__dict__
@@ -72,5 +68,4 @@ def run_sweep(session: Session, namespace: str = "claude-shared",
 
     return SweepResult(
         decayed=decayed, expired=expired,
-        contradictions_flagged=0, supersessions_applied=0,
     ).as_dict()
