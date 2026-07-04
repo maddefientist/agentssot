@@ -588,32 +588,87 @@ async def _recall_bucketed(
     reranker_name, reranker = pick_reranker(tiers, fast_provider, deep_provider)
     multiplier = get_settings().reranker_candidate_multiplier or 3
 
+    settings = get_settings()
     rerank_total_ms = 0
     for tier in tiers:
         top_k = data.top_per_tier.get(tier, 5)
         candidate_pool = top_k * multiplier
+        tier_filters = and_(*base_filters, KnowledgeItem.memory_type == tier)
         dist_col = KnowledgeItem.embedding.cosine_distance(query_embedding).label("distance")
-        stmt = (
+
+        # --- Vector track (always) ---
+        vec_stmt = (
             select(KnowledgeItem, dist_col)
-            .where(and_(*base_filters, KnowledgeItem.memory_type == tier))
+            .where(tier_filters)
             .order_by(dist_col)
             .limit(candidate_pool)
         )
-        rows = list(session.execute(stmt))
-        candidates_per_tier[tier] = len(rows)
-        if not rows:
+        vec_rows = await asyncio.to_thread(lambda: list(session.execute(vec_stmt)))
+
+        by_id: dict[str, tuple] = {}
+        vec_order: list[str] = []
+        for item, distance in vec_rows:
+            sid = str(item.id)
+            by_id[sid] = (item, distance)
+            vec_order.append(sid)
+
+        # --- Keyword track (optional, hybrid fusion) ---
+        fts_order: list[str] = []
+        hybrid_on = (
+            getattr(settings, "recall_hybrid_search", True)
+            and data.query
+            and data.query.strip()
+        )
+        if hybrid_on:
+            lang = getattr(settings, "recall_fts_language", "english")
+            tsv = func.to_tsvector(lang, KnowledgeItem.content)
+            tsq = func.websearch_to_tsquery(lang, data.query)
+            fts_rank = func.ts_rank(tsv, tsq).label("fts_rank")
+            try:
+                fts_stmt = (
+                    select(KnowledgeItem, dist_col)
+                    .where(tier_filters)
+                    .where(tsv.op("@@")(tsq))
+                    .order_by(fts_rank.desc())
+                    .limit(candidate_pool)
+                )
+                fts_rows = await asyncio.to_thread(lambda: list(session.execute(fts_stmt)))
+                for item, distance in fts_rows:
+                    sid = str(item.id)
+                    if sid not in by_id:
+                        by_id[sid] = (item, distance)
+                    fts_order.append(sid)
+            except Exception:
+                # FTS is best-effort — never break recall on a malformed tsquery.
+                _log.warning("Hybrid FTS track failed for tier %s; falling back to vector-only", tier, exc_info=True)
+                fts_order = []
+
+        # --- Reciprocal-rank fusion ---
+        if fts_order:
+            rrf_k = getattr(settings, "recall_hybrid_rrf_k", 60)
+            rrf: dict[str, float] = {}
+            for rank, sid in enumerate(vec_order, start=1):
+                rrf[sid] = rrf.get(sid, 0.0) + 1.0 / (rrf_k + rank)
+            for rank, sid in enumerate(fts_order, start=1):
+                rrf[sid] = rrf.get(sid, 0.0) + 1.0 / (rrf_k + rank)
+            ordered_ids = sorted(rrf, key=lambda s: rrf[s], reverse=True)[:candidate_pool]
+        else:
+            ordered_ids = vec_order[:candidate_pool]
+
+        candidates_per_tier[tier] = len(ordered_ids)
+        if not ordered_ids:
             buckets[tier] = []
             continue
 
-        items = [r[0] for r in rows]
-        scores = [1.0 - float(r[1]) for r in rows]
+        items = [by_id[sid][0] for sid in ordered_ids]
+        scores = [1.0 - float(by_id[sid][1]) for sid in ordered_ids]
 
         # Optional rerank
         if reranker.is_available:
             t1 = time.perf_counter()
             try:
                 texts = [it.summary or it.abstract or it.content[:500] for it in items]
-                reranked = reranker.rerank(data.query, texts)
+                reranked = await asyncio.to_thread(reranker.rerank, data.query, texts)
                 # Reorder items + scores by reranked indices
                 paired = sorted(zip(items, reranked), key=lambda p: -p[1])
                 items = [p[0] for p in paired][:top_k]
