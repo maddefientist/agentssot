@@ -12,8 +12,14 @@ default:
   # Test namespace is wiped and recreated per run.
   namespace: bench_longmemeval
   top_k: [1, 5, 10]
-  # layer_preference to send on recall. "full" is the honest baseline.
+  # layer_preference to send on recall -> maps to bucketed expand_layer.
+  # "full" is the honest baseline.
   layer_preference: full
+  # Bucketed recall params (current API). Request a broad tier set with
+  # exclude_episodic:false so the harness finds the answer session regardless
+  # of how the auto-classifier typed it. per-tier fanout = max(top_k).
+  recall_tiers: [episodic, fact, decision, entity, skill, rule, command]
+  exclude_episodic: false
   # Max questions to evaluate (null = all). Useful for quick iteration.
   limit: null
   # Tag written on every ingested item so we can purge the namespace cleanly.

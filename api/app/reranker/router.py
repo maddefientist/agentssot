@@ -47,12 +47,17 @@ def build_reranker_pair(settings) -> tuple[RerankerProvider, RerankerProvider]:
 
 
 def pick_reranker(tiers: list[str], fast: RerankerProvider, deep: RerankerProvider) -> tuple[str, RerankerProvider]:
-    """Pick the model name + provider instance for the given tier set."""
+    """Pick the model name + provider instance for the given tier set.
+
+    Returns the provider's ACTUAL configured model (from `.model`), not a static
+    label — so `diagnostics.reranker_used` reflects the live `ollama_reranker_model`
+    hot-key rather than a hardcoded guess.
+    """
     choice = select_reranker_model(tiers)
     if choice == "fast" and fast.is_available:
-        return "qwen3-reranker-4b", fast
+        return fast.model, fast
     if deep.is_available:
-        return "qwen3-reranker-8b", deep
+        return deep.model, deep
     if fast.is_available:
-        return "qwen3-reranker-4b", fast
+        return fast.model, fast
     return "none", deep   # disabled stub; caller will skip rerank

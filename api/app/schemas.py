@@ -547,6 +547,7 @@ class BucketedRecallRequest(BaseModel):
 class BucketedRecallItem(BaseModel):
     id: UUID
     memory_type: str
+    source_ref: str | None = None  # provenance: origin id/ref the item was ingested with
     abstract: str | None
     summary: str | None = None
     content: str | None = None
@@ -560,7 +561,7 @@ class BucketedRecallDiagnostics(BaseModel):
     candidates_per_tier: dict[str, int]
     vec_ms: int
     rerank_ms: int
-    reranker_used: str  # "qwen3-reranker-4b" | "qwen3-reranker-8b" | "none"
+    reranker_used: str  # actual configured reranker model name, or "none"
 
 
 class BucketedRecallResponse(BaseModel):

@@ -143,13 +143,32 @@ class QueryOutcome:
     latency_ms: float
     expected: list[str]
     returned: list[str]
+    reranker_used: str | None = None
+
+
+def _merge_buckets(buckets: dict[str, list[dict]]) -> list[dict]:
+    """Flatten all per-tier buckets into one list ranked by score desc.
+
+    The bucketed endpoint returns {tier: [item, ...]}; each item carries its own
+    score (rerank score when the reranker is on, else vector similarity). We fuse
+    across tiers by score so recall@k is measured over the single ranked list the
+    caller would actually see.
+    """
+    merged: list[dict] = []
+    for items in buckets.values():
+        merged.extend(items)
+    merged.sort(key=lambda it: it.get("score", 0.0), reverse=True)
+    return merged
 
 
 def run_queries(client: httpx.Client, cfg: dict, dataset: list[dict]) -> list[QueryOutcome]:
     namespace = cfg["namespace"]
     ks = sorted(cfg["top_k"])
     max_k = max(ks)
-    layer_preference = cfg.get("layer_preference", "full")
+    expand_layer = cfg.get("layer_preference", "full")
+    tiers = cfg.get("recall_tiers") or ["episodic", "fact"]
+    exclude_episodic = bool(cfg.get("exclude_episodic", False))
+    top_per_tier = {tier: max_k for tier in tiers}
 
     outcomes: list[QueryOutcome] = []
 
@@ -162,18 +181,22 @@ def run_queries(client: httpx.Client, cfg: dict, dataset: list[dict]) -> list[Qu
             continue
         expected_set = set(expected)
 
+        # Bucketed recall schema (BucketedRecallRequest). source_ref now rides
+        # on each returned item, so we match hits back to ground truth directly.
         payload = {
             "query": question,
             "namespace": namespace,
-            "limit": max_k,
-            "layer_preference": layer_preference,
+            "tiers": tiers,
+            "top_per_tier": top_per_tier,
+            "exclude_episodic": exclude_episodic,
+            "expand_layer": expand_layer,
         }
         t0 = time.time()
         try:
-            r = client.post("/api/v1/knowledge/recall", json=payload, timeout=60)
+            r = client.post("/api/v1/knowledge/recall", json=payload, timeout=120)
             latency_ms = (time.time() - t0) * 1000.0
             r.raise_for_status()
-            results = r.json().get("results", [])
+            body = r.json()
         except Exception as e:
             outcomes.append(
                 QueryOutcome(
@@ -187,7 +210,8 @@ def run_queries(client: httpx.Client, cfg: dict, dataset: list[dict]) -> list[Qu
             )
             continue
 
-        refs = [item.get("source_ref") or "" for item in results]
+        merged = _merge_buckets(body.get("buckets", {}))
+        refs = [it.get("source_ref") or "" for it in merged]
         hit_at = {k: bool(set(refs[:k]) & expected_set) for k in ks}
 
         outcomes.append(
@@ -198,6 +222,7 @@ def run_queries(client: httpx.Client, cfg: dict, dataset: list[dict]) -> list[Qu
                 latency_ms=round(latency_ms, 1),
                 expected=expected,
                 returned=refs,
+                reranker_used=(body.get("diagnostics") or {}).get("reranker_used"),
             )
         )
 
@@ -227,22 +252,23 @@ def _pct(xs: list[float], p: float) -> float:
 
 
 def purge_namespace(client: httpx.Client, namespace: str, tag: str) -> None:
-    """Best-effort cleanup — delete previously-ingested bench items.
+    """No-op: the API exposes no bulk delete-by-tag endpoint.
 
-    Requires an admin-level endpoint that accepts tag filter. If unavailable, log
-    and continue (stale items only inflate the haystack, they don't corrupt scoring
-    as long as source_refs are unique per run).
+    Purge is intentionally manual — stale items only inflate the haystack, they
+    don't corrupt scoring as long as source_refs are unique per run. To wipe a
+    bench namespace between runs, delete rows directly, e.g.:
+
+        docker compose exec -T db psql -U ssot -d ssot -c \\
+          "DELETE FROM review_queue WHERE primary_id IN
+             (SELECT id FROM knowledge_items WHERE :tag = ANY(tags));
+           DELETE FROM knowledge_items WHERE :tag = ANY(tags);"
+
+    (review_queue FKs are primary_id/secondary_id, not knowledge_item_id.)
     """
-    try:
-        r = client.post(
-            "/admin/delete-by-tag",
-            json={"namespace": namespace, "tag": tag},
-            timeout=30,
-        )
-        if r.status_code >= 300:
-            print(f"[warn] purge failed ({r.status_code}); continuing with stale bench data")
-    except Exception as e:
-        print(f"[warn] purge not available ({e!r}); continuing")
+    print(
+        f"[info] --purge is a no-op (no bulk delete endpoint). To clear ns={namespace} "
+        f"tag={tag}, delete rows directly in the db container (see purge_namespace docstring)."
+    )
 
 
 def main() -> int:

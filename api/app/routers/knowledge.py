@@ -725,6 +725,7 @@ async def _recall_bucketed(
             BucketedRecallItem(
                 id=it.id,
                 memory_type=str(it.memory_type) if it.memory_type else "fact",
+                source_ref=getattr(it, "source_ref", None),
                 abstract=it.abstract,
                 summary=it.summary if data.expand_layer in ("summary", "full") else None,
                 content=it.content if data.expand_layer == "full" else None,
