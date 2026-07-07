@@ -73,7 +73,67 @@ ingest, or make classification lazy/off-path. Flag for its own investigation.
 *(Prior 500Q flat-path baseline for reference: vector-only recall@1=0.286 / @10=0.664 — NOT directly
 comparable to today's numbers: different namespace, n, and the flat vs bucketed path.)*
 
+## 2026-07-07 follow-up — code fixes deployed + the recall-coverage finding
+
+Three fixes landed (`e8d6636`) and deployed to live `:8088` (verified via probe):
+1. **Honest reranker telemetry** — `pick_reranker` now returns the provider's actual
+   `.model` instead of the static `"qwen3-reranker-8b"`. Live probe confirms
+   `diagnostics.reranker_used = "dengcao/Qwen3-Reranker-8B:Q8_0"` (was mislabeled).
+2. **`source_ref` provenance in recall** — `BucketedRecallItem` now carries `source_ref`
+   (populated from the ORM row). Live probe confirms `source_ref="answer_e5131a1b_1"` etc.
+   This is a product win (recall now says WHERE a memory came from) and unbreaks the harness.
+3. **`runner.py` rewired to the bucketed schema** — reads `buckets`, requests a broad tier
+   set + `exclude_episodic:false`, matches on `source_ref`. No more false `recall@0.0`.
+   `purge_namespace` no longer POSTs the phantom `/admin/delete-by-tag` (no such endpoint
+   exists — documents the manual DB purge instead).
+
+### THE headline finding — `hive_recall` can only see ~40% of the hive
+`hive_recall` (MCP, `plugin/mcp_server.py:149`) hard-codes `top_per_tier` to
+`{command, rule, skill, entity, decision}` and never sets `tiers`/`exclude_episodic`, so
+tier resolution collapses to `DEFAULT_RECALL_TIERS` (those same 5 governance types). Every
+semantic recall an agent does searches ONLY those 5 tiers. Live DB, `claude-shared` (n=7490):
+
+| reachable by hive_recall (semantic) | count | | NOT semantically reachable | count |
+|---|---|---|---|---|
+| skill | 1800 | | episodic | 1844 |
+| fact* (*not even added by exclude_episodic:false) | — | | fact | 994 |
+| rule | 596 | | doctrine | 676 |
+| decision | 294 | | NULL memory_type | 711 |
+| entity | 236 | | session_summary | 192 |
+| command | 39 | | correction / preference / reference | 108 |
+| **total ~2965 (~40%)** | | | **total ~4525 (~60%)** | |
+
+**~60% of the production hive — all episodic conversation, all facts, doctrine, and every
+NULL-typed item — is invisible to semantic `hive_recall`.** It is still reachable by keyword
+`hive_query` (FTS `/query` applies no tier filter), but NOT by natural-language similarity —
+which is the whole point of an embedding memory and exactly the path agents use to "remember."
+
+Mechanism confirmed at `knowledge.py:636`: `KnowledgeItem.memory_type == tier`. A NULL
+memory_type matches no tier string, so **NULL-typed items (2069/9087 = 23% of ALL memory)
+are unreachable via the bucketed path for ANY tier request** — keyword-only, permanently,
+until typed.
+
+This is the "living memory" north-star risk in one number: you teach it a fact or a
+preference or a correction, and the primary recall interface will never semantically surface
+it. Two fixes to weigh (operator decision — it changes retrieval semantics):
+  a) widen `hive_recall`'s tier set (add episodic/fact/etc. — more recall, more latency/noise);
+  b) backfill NULL memory_types + lean on the synthesis loop to promote raw episodic/fact
+     into governance tiers (keeps recall lean but depends on promotion keeping up).
+
+### Ingest ~200× regression — root cause CONFIRMED (not the dedup)
+Traced `ingest_tiered`: the per-item cost is the **synchronous `classify()` call**
+(`llm/classifier.py:134`) → `httpx.post` to Ollama `/api/generate` with
+`classifier_model = gemma4:31b-cloud` (a 31B CLOUD model), on the write hot-loop, for every
+item lacking an explicit abstract/summary. That is the ~10s/item. The semantic-dedup scan is
+**index-backed** (`idx_knowledge_items_embedding_hnsw` exists, `ENABLE_HNSW_INDEX=true`) so it
+is NOT the culprit — theory retired. April's 0.05s/item predates the T2.3 auto-classify feature.
+Fix options (operator decision — affects how memory is typed, which drives the tier gap above):
+fast local classifier / async off-path classify / batch classify.
+
 ## Decision state
+- [x] **2026-07-07:** telemetry + source_ref + runner fixes landed (`e8d6636`) & deployed; both prod fixes verified live.
+- [x] **2026-07-07:** ingest regression root-caused to synchronous per-item `gemma4:31b-cloud` classify (dedup exonerated — HNSW-indexed).
+- [x] **2026-07-07:** quantified the recall-coverage gap — `hive_recall` reaches ~40% of claude-shared; 23% of all memory is NULL-typed and bucket-unreachable.
 - [x] Deployed landed main, healthy, clean startup.
 - [x] Baseline (ON) + re-measure (OFF) latency captured (~73× latency delta).
 - [x] **QUALITY A/B measured** via standalone bucketed probe (runner.py was broken).
@@ -81,8 +141,12 @@ comparable to today's numbers: different namespace, n, and the flat vs bucketed 
 - [ ] **C2 REVISED:** don't retire the reranker. Legacy `crud.recall`/`ingest_batch` retirement is
       a *separate* question (path parity), unblocked by this — but the reranker stays.
 - [ ] **New P-item:** fix reranker latency (batched logits / 4B-fast) so quality is kept at ~sub-second.
-- [ ] **Architectural flag:** default bucketed recall EXCLUDES episodic + omits `fact` from
-      `DEFAULT_RECALL_TIERS` — so default `hive_recall` returns nothing for conversational/factual
-      memory. Intended (governance-first) or a gap vs the "living memory" vision? Needs a decision.
+- [ ] **Architectural decision (QUANTIFIED above):** `hive_recall` reaches only ~40% of the hive;
+      ~60% (episodic/fact/doctrine/NULL/...) is semantically dark; 23% of all memory is NULL-typed.
+      Widen recall tiers vs. backfill types + trust the synthesis/promotion loop? Operator call.
+- [ ] **Ingest-regression fix (root-caused):** move the per-item `gemma4:31b-cloud` classify off
+      the write hot-loop (fast-local / async / batch). Operator call — it changes how memory is typed.
 - [x] Current live state: reranker **ON** (restored prior prod default; no silent quality regression).
-- [ ] Fix `runner.py` to the bucketed schema so future runs aren't false-zero.
+- [x] **Fixed `runner.py`** to the bucketed schema (`e8d6636`); source_ref matching verified live.
+- [ ] Full 500-Q bucketed benchmark still pending — needs classified data (bench_longmemeval's 940
+      April items are NULL-typed → unrecallable); re-ingest is gated on the slow classify path above.
