@@ -153,10 +153,6 @@ async def hive_recall(
         "top_per_tier": {
             "command": top_k, "rule": top_k, "skill": top_k,
             "entity": top_k, "decision": top_k,
-            # content tiers (widened 2026-07-08) — smaller fanout to bound the
-            # per-tier rerank latency cost while still surfacing facts/etc.
-            "fact": top_k, "correction": max(2, top_k // 2),
-            "preference": max(2, top_k // 2), "doctrine": max(2, top_k // 2),
         },
         "session_id": session_id or f"session-{_time.time_ns()}",
     }
