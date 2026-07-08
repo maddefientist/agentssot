@@ -521,13 +521,23 @@ class SettingsUpdateResponse(BaseModel):
 # Memory tier values exposed to recall callers (subset of MemoryType for clarity)
 MemoryTierLiteral = Literal[
     "command", "rule", "skill", "entity", "decision", "episodic",
-    # backwards-compat — older items may still be typed as these
-    "fact", "preference", "reference", "correction", "session_summary",
+    # content/knowledge tiers — legitimate recall targets (facts, corrections,
+    # preferences, doctrine). Included in DEFAULT_RECALL_TIERS as of 2026-07-08.
+    "fact", "preference", "reference", "correction", "doctrine", "session_summary",
 ]
 
-DEFAULT_RECALL_TIERS: list[str] = ["command", "rule", "skill", "entity", "decision"]
+# Default semantic-recall tier set. Governance tiers (how-to-do-things) PLUS the
+# content tiers that are legitimate NL-recall targets. Episodic + session_summary
+# stay OUT by default (raw/near-raw conversation is noise; the synthesis loop
+# promotes it into the tiers below). Widened 2026-07-08 — see
+# docs/plans/measurements/RERANKER-EXPERIMENT-2026-07-06.md (the ~40%-coverage finding).
+DEFAULT_RECALL_TIERS: list[str] = [
+    "command", "rule", "skill", "entity", "decision",
+    "fact", "correction", "preference", "doctrine",
+]
 DEFAULT_TOP_PER_TIER: dict[str, int] = {
     "command": 3, "rule": 2, "skill": 5, "entity": 3, "decision": 2,
+    "fact": 3, "correction": 2, "preference": 2, "doctrine": 2,
 }
 
 
