@@ -130,6 +130,41 @@ is NOT the culprit — theory retired. April's 0.05s/item predates the T2.3 auto
 Fix options (operator decision — affects how memory is typed, which drives the tier gap above):
 fast local classifier / async off-path classify / batch classify.
 
+## 2026-07-08 — tier-widening experiment: coverage WORKS, latency KILLS it (reverted)
+
+Shipped the widened recall set (`fact/correction/preference/doctrine` added to
+`DEFAULT_RECALL_TIERS` + `hive_recall`, `10c6145`), deployed, measured on live
+`claude-shared`, then **reverted (`57d2d72`)**. What the measurement showed:
+
+- **Coverage: confirmed.** Every new tier returned a full bucket — `fact:5,
+  correction:5, preference:5, doctrine:5` on real queries. The ~23% dark slice
+  becomes semantically recallable exactly as predicted.
+- **Latency: unacceptable.** Wide (9-tier) recall p50 = **~12.9s** (42s cold),
+  `rerank_ms ≈ 12.7s`. Reverting to 5 tiers restored p50 = **~7.4s**
+  (`rerank_ms ≈ 7.2s`). That is **~1.4s PER TIER, sequential** — the per-tier
+  rerank loop (`knowledge.py:633`) awaits each tier's rerank in turn.
+
+**The reframe:** rerank is **GPU-bound sequential scoring**, so *baseline* recall
+was ALREADY ~7s — widening just makes an existing latency problem worse linearly.
+The plan's premise ("4B keeps widening affordable") is **falsified**: 4B is ~40%
+faster per call (→ ~8s wide), still unacceptable, and the flip was correctly
+blocked (needs larger-sample confirm anyway). Client-side parallelism won't help
+either — the GPU serializes the forward passes.
+
+**Corrected sequence — latency fix is the PREREQUISITE, not a companion:**
+1. **Batched rerank** (score all candidates across all tiers in ONE forward pass,
+   or a true batch endpoint) — this is the real unlock. Drops *baseline* recall
+   from ~7s toward sub-2s and makes tier-count nearly free. Provider-level change
+   in `reranker/ollama_provider.py`.
+2. **THEN re-land the widening** (the diff is proven correct; just reverted) — now
+   affordable. Optionally 4B on top, larger-sample confirmed.
+3. Coverage recovery (~23%) is real and waiting; it is **gated on step 1**, not
+   abandoned.
+
+Prod is back to the exact prior state: 5 governance tiers, reranker ON / 8B, ~7.4s.
+No net change shipped from this experiment except the knowledge that widening is a
+latency problem wearing a coverage-problem costume.
+
 ## Decision state
 - [x] **2026-07-07:** telemetry + source_ref + runner fixes landed (`e8d6636`) & deployed; both prod fixes verified live.
 - [x] **2026-07-07:** ingest regression root-caused to synchronous per-item `gemma4:31b-cloud` classify (dedup exonerated — HNSW-indexed).
