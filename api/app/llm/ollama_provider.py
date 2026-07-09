@@ -54,6 +54,52 @@ class OllamaLLMProvider(LLMProvider):
             raise LLMProviderError("Ollama chat response format was unexpected")
         return content.strip()
 
+    def distill(self, transcript: str, model: str | None = None) -> str:
+        if not self.is_available:
+            raise LLMProviderError(self.unavailable_reason or "Ollama LLM provider unavailable")
+
+        system_prompt = (
+            "You are a learning-intake distiller. Extract atomic, reusable lessons from the transcript.\n\n"
+            "Output ONLY valid JSON lines, one JSON object per line. No markdown, no commentary.\n"
+            "Each object MUST contain:\n"
+            "- claim: concise actionable lesson or factual takeaway\n"
+            "- citation: source anchor supporting the claim; use a timestamp for audio/video when available, otherwise a quote or paragraph anchor\n"
+            '- memory_type: "skill" | "decision" | "fact"; default to "skill" for best-practices\n'
+            "- confidence: number from 0.0 to 1.0\n\n"
+            "Rules:\n"
+            "- Prefer specific best-practices over generic summaries.\n"
+            "- Each lesson must stand alone and cite evidence from the source.\n"
+            "- Do not invent claims not supported by the transcript.\n"
+            "- If no useful lessons exist, output an empty line."
+        )
+
+        payload = {
+            "model": model or self.model,
+            "stream": False,
+            "options": {"num_ctx": 8192},
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": transcript},
+            ],
+        }
+
+        url = f"{self.base_url}/api/chat"
+
+        try:
+            response = httpx.post(url, json=payload, timeout=self.timeout_seconds)
+        except Exception as exc:
+            raise LLMProviderError(f"Ollama distill request failed: {exc}") from exc
+
+        if response.status_code >= 400:
+            raise LLMProviderError(f"Ollama distill request failed with {response.status_code}: {response.text[:400]}")
+
+        data = response.json()
+        message = data.get("message", {})
+        content = message.get("content")
+        if not isinstance(content, str):
+            raise LLMProviderError("Ollama distill response format was unexpected")
+        return content.strip()
+
     def synthesize_concepts(
         self,
         facts: str,
