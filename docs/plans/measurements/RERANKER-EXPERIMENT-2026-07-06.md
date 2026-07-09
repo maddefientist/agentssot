@@ -165,6 +165,43 @@ Prod is back to the exact prior state: 5 governance tiers, reranker ON / 8B, ~7.
 No net change shipped from this experiment except the knowledge that widening is a
 latency problem wearing a coverage-problem costume.
 
+## 2026-07-09 — "batched rerank" investigation: the premise is empirically dead
+
+Went to design the batched-rerank latency fix. Instrumented the live 8B reranker
+(`dengcao/Qwen3-Reranker-8B:Q8_0`) on hari's Ollama directly. Findings, all measured:
+
+- **`OLLAMA_NUM_PARALLEL=1`** on the shared server — but raising it is **useless**:
+  amortized cost/doc is **FLAT from 4→32 concurrent** (~75ms/doc np=5). The GPU is
+  throughput-saturated at ~8 concurrent; more parallel slots don't raise throughput.
+  Infra lever ruled OUT (and it would cost shared-fleet VRAM for nothing).
+- **`num_predict` reduction is a mirage.** np=1 returns empty; the text-gen scorer
+  needs ~5 tokens to emit `"0.95"`. Rerank is **prefill-bound**, not decode-bound, so
+  cutting decode tokens barely helps. Ruled OUT.
+- **Document length has ZERO effect** — 49ms/doc from 100 to 1200 chars. The per-
+  candidate cost is a fixed ~50ms floor (model + system/template prefill overhead),
+  not doc tokens. Truncation ruled OUT.
+- **Net: rerank throughput is ~20 docs/sec (8B), fixed per candidate.** There is **no
+  batching/config trick** for this Ollama serving setup. The ~7s baseline = 75
+  candidates (multiplier 3 × top_k 5 × 5 tiers) ÷ ~20 docs/sec.
+
+**So the ONLY real latency levers are:**
+1. **Fewer candidates** — `reranker_candidate_multiplier` 3→2 (75→50 docs → ~2.5s).
+   Direct rerank-quality tradeoff; must be measured, not assumed.
+2. **The 4B model** — smaller = faster prefill (~2×). Auth-gated (correctly).
+3. **A different serving layer** — TEI/vLLM with **prefix caching** would amortize the
+   shared system+instruct prefill across candidates (the fixed ~50ms floor) and do true
+   continuous batching. This is the real structural fix, but it's an infra project.
+
+**The one unambiguous WIN found — logit scoring (quality, not speed):** Ollama 0.20.0
+exposes top-level `logprobs`. Using the **official Qwen3-Reranker chat template + `raw:true`
++ `num_predict:1`** and reading `P(yes)` vs `P(no)` from `top_logprobs` gives clean,
+continuous, correctly-ordered scores (validated HIGH `yes@-0.1` ≫ MED `no@-0.71` ≫ LOW).
+The current provider instead prompts for a "0-1" float and regex-parses it — which returns
+COARSE, near-binary scores (mostly `0.0` or `0.95`). Logit scoring is the correct way to
+use a cross-encoder reranker: ~equal speed, materially better ranking signal. In-repo,
+no infra. **This is worth building — but it changes the core ranking path, so it needs a
+recall@k quality gate (via the now-fixed harness) before it goes live, not a blind swap.**
+
 ## Decision state
 - [x] **2026-07-07:** telemetry + source_ref + runner fixes landed (`e8d6636`) & deployed; both prod fixes verified live.
 - [x] **2026-07-07:** ingest regression root-caused to synchronous per-item `gemma4:31b-cloud` classify (dedup exonerated — HNSW-indexed).
