@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     openai_chat_model: str = Field(default="gpt-4o-mini", alias="OPENAI_CHAT_MODEL")
     ollama_chat_model: str = Field(default="llama3.1", alias="OLLAMA_CHAT_MODEL")
 
+    # Learning intake pipeline: voice-stack STT endpoint reached from inside
+    # the api container via the host-gateway extra_hosts mapping in
+    # docker-compose.yml. No hardcoded service URL.
+    voice_stack_stt_url: str = Field(
+        default="http://host.docker.internal:8402/transcribe",
+        alias="VOICE_STACK_STT_URL",
+    )
+
     # Reranker
     reranker_provider: Literal["none", "ollama"] = Field(default="none", alias="RERANKER_PROVIDER")
     ollama_reranker_base_url: str = Field(
