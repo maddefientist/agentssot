@@ -11,6 +11,11 @@ from app.intake import extract as extract_mod
 from app.intake.extract import IntakeExtractionError, extract, validate_source_url
 
 
+class _FakeSettings:
+    intake_source_url_allowed_hosts = "example.com,youtube.com,youtu.be"
+    yt_dlp_proxy_url = ""
+
+
 def _addrinfo(ip: str):
     """Build a getaddrinfo-shaped result for a single address."""
     fam = socket.AF_INET6 if ":" in ip else socket.AF_INET
@@ -28,6 +33,7 @@ def _stub_dns(monkeypatch):
     monkeypatch.setattr(
         extract_mod.socket, "getaddrinfo", lambda host, *a, **k: _addrinfo("93.184.216.34")
     )
+    monkeypatch.setattr(extract_mod, "get_settings", lambda: _FakeSettings())
 
 
 # ---------------------------------------------------------------------------
@@ -103,12 +109,54 @@ def test_validate_source_url_raises_on_unresolvable_host(monkeypatch):
 
     monkeypatch.setattr(extract_mod.socket, "getaddrinfo", boom)
     with pytest.raises(IntakeExtractionError, match="could not resolve"):
-        validate_source_url("https://nope.invalid/x")
+        validate_source_url("https://example.com/x")
 
 
 def test_validate_source_url_rejects_missing_host():
     with pytest.raises(IntakeExtractionError):
         validate_source_url("https:///path-only")
+
+
+def test_validate_source_url_rejects_host_not_on_allowlist(monkeypatch):
+    class S:
+        intake_source_url_allowed_hosts = "youtube.com,youtu.be"
+        yt_dlp_proxy_url = ""
+
+    monkeypatch.setattr(extract_mod, "get_settings", lambda: S())
+    with pytest.raises(IntakeExtractionError, match="allowed intake host list"):
+        validate_source_url("https://evil.example.com/a")
+
+
+def test_validate_source_url_allows_subdomain_of_allowed_host(monkeypatch):
+    class S:
+        intake_source_url_allowed_hosts = "youtube.com"
+        yt_dlp_proxy_url = ""
+
+    monkeypatch.setattr(extract_mod, "get_settings", lambda: S())
+    assert (
+        validate_source_url("https://www.youtube.com/watch?v=x")
+        == "https://www.youtube.com/watch?v=x"
+    )
+
+
+def test_validate_source_url_does_not_allow_suffix_confusion(monkeypatch):
+    class S:
+        intake_source_url_allowed_hosts = "youtube.com"
+        yt_dlp_proxy_url = ""
+
+    monkeypatch.setattr(extract_mod, "get_settings", lambda: S())
+    with pytest.raises(IntakeExtractionError, match="allowed intake host list"):
+        validate_source_url("https://youtube.com.evil.test/x")
+
+
+def test_validate_source_url_rejects_empty_allowlist(monkeypatch):
+    class S:
+        intake_source_url_allowed_hosts = ""
+        yt_dlp_proxy_url = ""
+
+    monkeypatch.setattr(extract_mod, "get_settings", lambda: S())
+    with pytest.raises(IntakeExtractionError, match="allowed intake host list"):
+        validate_source_url("https://example.com/a")
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +340,34 @@ def test_video_success_mocked_returns_transcript(monkeypatch):
     assert calls[1][2:4] == ["-i", calls[0][-2]]  # -i <download_path>
     assert calls[1][4:8] == ["-ar", "16000", "-ac", "1"]
     assert calls[1][-1] == calls[0][4].replace("download", "audio.wav") or calls[1][-1].endswith("audio.wav")
+    assert "--proxy" not in calls[0]
+
+
+def test_video_success_adds_yt_dlp_proxy_when_configured(monkeypatch):
+    class S:
+        intake_source_url_allowed_hosts = "example.com"
+        yt_dlp_proxy_url = "http://proxy.local:8080"
+
+    monkeypatch.setattr(extract_mod, "get_settings", lambda: S())
+    monkeypatch.setattr(extract_mod.shutil, "which", _fake_which_present)
+    fake_run, calls = _make_subprocess_that_writes_wav()
+    monkeypatch.setattr(extract_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        extract_mod.httpx,
+        "post",
+        lambda url, files=None, timeout=None: httpx.Response(200, json={"text": "ok"}),
+    )
+
+    extract(
+        source_url="https://example.com/v.mp4",
+        text=None,
+        media_type="video",
+        stt_url="http://stt.local/transcribe",
+    )
+
+    assert calls[0][0] == "/usr/bin/yt-dlp"
+    assert calls[0][1:3] == ["--proxy", "http://proxy.local:8080"]
+    assert calls[0][-1] == "https://example.com/v.mp4"
 
 
 def test_audio_success_uses_transcript_key(monkeypatch):

@@ -14,6 +14,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from app.settings import get_settings
+
 logger = logging.getLogger(__name__)
 
 MediaType = Literal["video", "audio", "article", "thread"]
@@ -71,20 +73,41 @@ def _host_resolves_to_internal(host: str) -> bool:
     return False
 
 
+def _parse_allowed_hosts(raw: str) -> set[str]:
+    return {
+        item.strip().lower().rstrip(".")
+        for item in raw.split(",")
+        if item.strip()
+    }
+
+
+def _host_matches_allowed(host: str, allowed_hosts: set[str]) -> bool:
+    normalized = host.lower().rstrip(".")
+    return any(
+        normalized == allowed
+        or normalized.endswith(f".{allowed}")
+        for allowed in allowed_hosts
+    )
+
+
 def validate_source_url(source_url: str | None) -> str:
     """Validate a source URL for video/audio extraction.
 
     SSRF guard (defense-in-depth; the endpoint is API-key gated to Corra):
       - scheme MUST be http or https,
-      - host MUST be present, and
+      - host MUST be present,
+      - host MUST be on the env-configurable intake allowlist
+        (exact match or a subdomain of an allowed host), and
       - host MUST NOT resolve to a loopback/private/link-local/reserved address
         (blocks internal services and the 169.254.169.254 metadata endpoint).
 
-    RESIDUAL RISK (documented): yt-dlp follows HTTP redirects itself and does
-    not re-run this validator on the redirect target, so a public host that
-    302-redirects to an internal address is not blocked here. A full fix needs
-    an SSRF-filtering fetch proxy or a pinned resolver; tracked as a follow-up.
-    The download cap + API-key gate bound the blast radius for v1.
+    RESIDUAL RISK (documented): the allowlist reduces redirect-SSRF exposure to
+    a fixed set of trusted content platforms, but redirects inside yt-dlp are
+    still followed by yt-dlp itself and cannot be revalidated in Python, so a
+    public host that 302-redirects to an internal address is not blocked here.
+    Deploy with an SSRF-filtering proxy or egress restrictions for complete
+    enforcement; tracked as a follow-up. The download cap + API-key gate bound
+    the blast radius for v1.
     """
     if not isinstance(source_url, str) or not source_url.strip():
         raise IntakeExtractionError("source_url is required for video/audio media")
@@ -97,6 +120,12 @@ def validate_source_url(source_url: str | None) -> str:
     host = parsed.hostname
     if not host:
         raise IntakeExtractionError("invalid source_url: missing host")
+    settings = get_settings()
+    allowed_hosts = _parse_allowed_hosts(settings.intake_source_url_allowed_hosts)
+    if not allowed_hosts or not _host_matches_allowed(host, allowed_hosts):
+        raise IntakeExtractionError(
+            "source_url host is not in the allowed intake host list"
+        )
     try:
         blocked = _host_resolves_to_internal(host)
     except socket.gaierror as exc:
@@ -232,6 +261,9 @@ def extract(
                 str(download_path),
                 url,
             ]
+            proxy_url = get_settings().yt_dlp_proxy_url.strip()
+            if proxy_url:
+                yt_dlp_argv[1:1] = ["--proxy", proxy_url]
             _run_subprocess(
                 yt_dlp_argv,
                 timeout=_DOWNLOAD_TIMEOUT,
