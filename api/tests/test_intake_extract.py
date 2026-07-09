@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import socket
 import subprocess
 from pathlib import Path
 
@@ -8,6 +9,25 @@ import pytest
 
 from app.intake import extract as extract_mod
 from app.intake.extract import IntakeExtractionError, extract, validate_source_url
+
+
+def _addrinfo(ip: str):
+    """Build a getaddrinfo-shaped result for a single address."""
+    fam = socket.AF_INET6 if ":" in ip else socket.AF_INET
+    return [(fam, socket.SOCK_STREAM, 6, "", (ip, 0))]
+
+
+@pytest.fixture(autouse=True)
+def _stub_dns(monkeypatch):
+    """Keep the SSRF resolver off the real network by default.
+
+    validate_source_url now resolves the host (SSRF guard), so every test that
+    passes a URL would otherwise hit real DNS. Default all hosts to a benign
+    public IP; SSRF tests override getaddrinfo to return internal addresses.
+    """
+    monkeypatch.setattr(
+        extract_mod.socket, "getaddrinfo", lambda host, *a, **k: _addrinfo("93.184.216.34")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +65,45 @@ def test_validate_source_url_rejects_non_string():
 def test_validate_source_url_rejects_non_http_scheme(scheme):
     with pytest.raises(IntakeExtractionError):
         validate_source_url(scheme)
+
+
+@pytest.mark.parametrize(
+    "internal_ip",
+    [
+        "127.0.0.1",       # loopback
+        "10.0.0.5",        # private
+        "192.168.1.10",    # private
+        "172.16.0.1",      # private
+        "169.254.169.254", # link-local / cloud metadata
+        "::1",             # ipv6 loopback
+        "fd00::1",         # ipv6 unique-local (private)
+    ],
+)
+def test_validate_source_url_blocks_internal_addresses(monkeypatch, internal_ip):
+    monkeypatch.setattr(
+        extract_mod.socket, "getaddrinfo", lambda host, *a, **k: _addrinfo(internal_ip)
+    )
+    with pytest.raises(IntakeExtractionError, match="internal/private"):
+        validate_source_url("https://sneaky.example.com/x")
+
+
+def test_validate_source_url_blocks_when_any_resolved_addr_is_internal(monkeypatch):
+    # DNS-rebind style: a host resolving to BOTH public and internal must block.
+    def mixed(host, *a, **k):
+        return _addrinfo("93.184.216.34") + _addrinfo("10.1.2.3")
+
+    monkeypatch.setattr(extract_mod.socket, "getaddrinfo", mixed)
+    with pytest.raises(IntakeExtractionError, match="internal/private"):
+        validate_source_url("https://rebind.example.com/x")
+
+
+def test_validate_source_url_raises_on_unresolvable_host(monkeypatch):
+    def boom(host, *a, **k):
+        raise socket.gaierror("name or service not known")
+
+    monkeypatch.setattr(extract_mod.socket, "getaddrinfo", boom)
+    with pytest.raises(IntakeExtractionError, match="could not resolve"):
+        validate_source_url("https://nope.invalid/x")
 
 
 def test_validate_source_url_rejects_missing_host():
@@ -217,12 +276,20 @@ def test_video_success_mocked_returns_transcript(monkeypatch):
 
     # Two subprocess invocations, both with shell=False and list argv.
     assert len(calls) == 2
-    assert calls[0][0] == "yt-dlp"
-    assert calls[0][1:4] == ["-f", "bestaudio/best", "-o"]
+    # yt-dlp uses the RESOLVED binary path (not a bare "yt-dlp") and carries the
+    # SSRF/DoS hardening flags: no-playlist + a hard download cap.
+    assert calls[0][0] == "/usr/bin/yt-dlp"
+    assert "--no-playlist" in calls[0]
+    assert calls[0][calls[0].index("--max-filesize") + 1] == "500M"
+    assert calls[0][calls[0].index("-f") + 1] == "bestaudio/best"
+    assert "-o" in calls[0]
     assert calls[0][-1] == "https://example.com/v.mp4"
     assert calls[1][0] == "/usr/bin/ffmpeg"
     assert calls[1][1] == "-y"
-    assert calls[1][2:4] == ["-i", calls[0][4]]  # -i <download_path>
+    # yt-dlp's -o output path is the second-to-last arg (url is last); ffmpeg
+    # reads that same path via -i.
+    assert calls[0][-2] == calls[0][calls[0].index("-o") + 1]  # download_path
+    assert calls[1][2:4] == ["-i", calls[0][-2]]  # -i <download_path>
     assert calls[1][4:8] == ["-ar", "16000", "-ac", "1"]
     assert calls[1][-1] == calls[0][4].replace("download", "audio.wav") or calls[1][-1].endswith("audio.wav")
 

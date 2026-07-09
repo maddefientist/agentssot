@@ -90,9 +90,14 @@ def distill_source(
             transcript.encode("utf-8")
         ).hexdigest()
     except IntakeExtractionError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        # Full detail (may contain subprocess stderr / STT bodies / internal
+        # hostnames) goes to the server log only; the client gets a generic
+        # message so we never leak internal infrastructure to the caller.
+        logger.warning("/distill extraction failed: %s", exc)
+        raise HTTPException(status_code=502, detail="source extraction failed") from exc
     except LLMProviderError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.warning("/distill distillation failed: %s", exc)
+        raise HTTPException(status_code=502, detail="lesson distillation failed") from exc
     except Exception as exc:
         logger.exception("unexpected error during /distill")
         raise HTTPException(status_code=500, detail="internal error") from exc

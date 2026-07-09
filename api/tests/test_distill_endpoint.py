@@ -41,6 +41,20 @@ def _fake_auth() -> AuthContext:
     return AuthContext(key_id="k1", key_name="tester", role="admin", namespaces=["*"])
 
 
+@pytest.fixture(autouse=True)
+def _restore_extract():
+    """Restore the module-global extract after each test.
+
+    The router calls `extract(...)` as a plain module function, NOT a FastAPI
+    dependency, so app.dependency_overrides can't intercept it — patching the
+    module attribute is the only thing that keeps these unit tests off the real
+    network / yt-dlp. This fixture guarantees the real function is put back.
+    """
+    original = intake_mod.extract
+    yield
+    intake_mod.extract = original
+
+
 def _make_app(
     *,
     extract_returns: tuple[str, dict] | Exception,
@@ -61,7 +75,10 @@ def _make_app(
             assert stt_url == "http://stt.local/transcribe"
             return transcript, provenance
 
-    app.dependency_overrides[intake_mod.extract] = fake_extract
+    # Patch the module global the router closure resolves. dependency_overrides
+    # would be a no-op here (extract is not a Depends()). The autouse fixture
+    # above restores the original after the test.
+    intake_mod.extract = fake_extract
     app.dependency_overrides[intake_mod.require_api_key] = _fake_auth
     app.include_router(intake_router)
     return app
@@ -159,7 +176,10 @@ def test_extraction_failure_returns_502():
         },
     )
     assert r.status_code == 502
-    assert "yt-dlp failed" in r.json()["detail"]
+    # Detail is redacted — internal stderr/hostnames must NOT reach the client.
+    assert r.json()["detail"] == "source extraction failed"
+    assert "yt-dlp" not in r.json()["detail"]
+    assert "boom" not in r.json()["detail"]
     # distill never called when extraction fails
     assert llm.distill_calls == []
 
@@ -185,7 +205,9 @@ def test_distill_failure_returns_502():
         json={"text": transcript, "media_type": "article"},
     )
     assert r.status_code == 502
-    assert "ollama down" in r.json()["detail"]
+    # Provider error detail is redacted from the client response.
+    assert r.json()["detail"] == "lesson distillation failed"
+    assert "ollama down" not in r.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

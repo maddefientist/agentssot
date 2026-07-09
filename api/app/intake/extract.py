@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import shutil
+import socket
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -23,6 +25,10 @@ _DOWNLOAD_TIMEOUT = 600  # seconds — yt-dlp fetch
 _FFMPEG_TIMEOUT = 120  # seconds — ffmpeg wav conversion
 _STT_TIMEOUT = 300  # seconds — matches plan STT multipart timeout
 
+# Cap the download so a hostile/huge source can't exhaust disk/CPU before the
+# timeout fires. yt-dlp aborts a stream once it exceeds this.
+_MAX_FILESIZE = "500M"
+
 
 class IntakeExtractionError(RuntimeError):
     """Typed error for any failure in the extraction adapter.
@@ -40,10 +46,45 @@ def _make_provenance(source_url: str | None, media_type: MediaType) -> dict:
     }
 
 
+def _host_resolves_to_internal(host: str) -> bool:
+    """True if any resolved address for `host` is internal/non-routable.
+
+    Blocks the classic SSRF targets: loopback (127.0.0.0/8, ::1), private
+    ranges (10/8, 172.16/12, 192.168/16, fc00::/7), link-local incl. the cloud
+    metadata endpoint (169.254.169.254 / fe80::/10), plus reserved, multicast,
+    and unspecified. Resolution happens here so an IP literal and a hostname
+    pointing at an internal IP are both caught. Fails closed on resolution
+    error (treated as blocked by the caller).
+    """
+    infos = socket.getaddrinfo(host, None)
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (
+            ip.is_loopback
+            or ip.is_private
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return True
+    return False
+
+
 def validate_source_url(source_url: str | None) -> str:
     """Validate a source URL for video/audio extraction.
 
-    SSRF guard: scheme MUST be http or https. Empty/None/blank rejected.
+    SSRF guard (defense-in-depth; the endpoint is API-key gated to Corra):
+      - scheme MUST be http or https,
+      - host MUST be present, and
+      - host MUST NOT resolve to a loopback/private/link-local/reserved address
+        (blocks internal services and the 169.254.169.254 metadata endpoint).
+
+    RESIDUAL RISK (documented): yt-dlp follows HTTP redirects itself and does
+    not re-run this validator on the redirect target, so a public host that
+    302-redirects to an internal address is not blocked here. A full fix needs
+    an SSRF-filtering fetch proxy or a pinned resolver; tracked as a follow-up.
+    The download cap + API-key gate bound the blast radius for v1.
     """
     if not isinstance(source_url, str) or not source_url.strip():
         raise IntakeExtractionError("source_url is required for video/audio media")
@@ -53,8 +94,19 @@ def validate_source_url(source_url: str | None) -> str:
         raise IntakeExtractionError(
             f"unsupported URL scheme {parsed.scheme!r}; only http/https allowed"
         )
-    if not parsed.netloc:
+    host = parsed.hostname
+    if not host:
         raise IntakeExtractionError("invalid source_url: missing host")
+    try:
+        blocked = _host_resolves_to_internal(host)
+    except socket.gaierror as exc:
+        raise IntakeExtractionError(
+            f"could not resolve source_url host {host!r}"
+        ) from exc
+    if blocked:
+        raise IntakeExtractionError(
+            "source_url resolves to a disallowed internal/private address"
+        )
     return url
 
 
@@ -161,14 +213,19 @@ def extract(
 
     if media_type in ("video", "audio"):
         url = validate_source_url(source_url)
-        _, ffmpeg_bin = _resolve_binaries()
+        yt_dlp_bin, ffmpeg_bin = _resolve_binaries()
 
         with tempfile.TemporaryDirectory() as tmp:
             download_path = Path(tmp) / "download"
             wav_path = Path(tmp) / "audio.wav"
 
+            # Resolved binary path (not a bare "yt-dlp") + hard download cap and
+            # no-playlist so a single hostile URL can't fan out or exhaust disk.
             yt_dlp_argv = [
-                "yt-dlp",
+                yt_dlp_bin,
+                "--no-playlist",
+                "--max-filesize",
+                _MAX_FILESIZE,
                 "-f",
                 "bestaudio/best",
                 "-o",
