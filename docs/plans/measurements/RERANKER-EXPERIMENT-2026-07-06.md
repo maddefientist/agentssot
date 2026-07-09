@@ -202,6 +202,28 @@ use a cross-encoder reranker: ~equal speed, materially better ranking signal. In
 no infra. **This is worth building — but it changes the core ranking path, so it needs a
 recall@k quality gate (via the now-fixed harness) before it goes live, not a blind swap.**
 
+## 2026-07-09 (cont.) — logit scoring BUILT + recall@k gate PASSED
+
+Built logit-based scoring behind a `reranker_scoring_mode` hot-key (`generate`|`logit`,
+default `generate` — deployed behavior-neutral). Then ran the recall@k gate out-of-band
+(no prod flip): fetch each query's full candidate pool from the live endpoint, score the
+SAME candidates both ways, compare ranking. `device-hari-private`, n=25:
+
+| scorer | recall@1 | recall@5 | recall@10 |
+|--------|----------|----------|-----------|
+| generate (current prod) | 0.720 | 0.880 | 0.920 |
+| **logit (new)** | **0.800** | **0.960** | **0.960** |
+
+**Logit wins on all three k** (+8pts @1, +8pts @5, +4pts @10). The gate clears logit as
+the better scorer. It is a **quality** win, not a latency one — still ~7s baseline (the
+prefill wall stands). n=25 is directional but the margin is consistent across every k.
+
+**Recommendation:** flip the prod default to `logit` (hot-key
+`reranker_scoring_mode=logit`, reversible) — free recall-quality gain, zero latency cost.
+Latency remains a separate decision (4B model / TEI serving).
+
+Landed: `a5bc2d7` (logit provider + toggle). Activation is one hot-key, pending operator OK.
+
 ## Decision state
 - [x] **2026-07-07:** telemetry + source_ref + runner fixes landed (`e8d6636`) & deployed; both prod fixes verified live.
 - [x] **2026-07-07:** ingest regression root-caused to synchronous per-item `gemma4:31b-cloud` classify (dedup exonerated — HNSW-indexed).
