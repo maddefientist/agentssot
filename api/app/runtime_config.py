@@ -27,6 +27,7 @@ HOT_KEYS = frozenset({
     "ollama_reranker_fast_model",
     "ollama_reranker_fast_base_url",
     "reranker_candidate_multiplier",
+    "reranker_scoring_mode",
     "ollama_embed_model",
     "ollama_base_url",
     "ollama_chat_model",
@@ -55,6 +56,7 @@ NUMERIC_RANGES: dict[str, tuple[float, float]] = {
 # Keys whose value must be one of a fixed set (enum-like Settings fields).
 ENUM_KEYS: dict[str, frozenset[str]] = {
     "reranker_provider": frozenset({"none", "ollama"}),
+    "reranker_scoring_mode": frozenset({"generate", "logit"}),
 }
 
 

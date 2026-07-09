@@ -35,13 +35,16 @@ def build_reranker_pair(settings) -> tuple[RerankerProvider, RerankerProvider]:
     deep_url = settings.ollama_reranker_base_url or settings.ollama_base_url
     fast_url = settings.ollama_reranker_fast_base_url or deep_url
 
+    scoring_mode = getattr(settings, "reranker_scoring_mode", "generate")
     deep = OllamaRerankerProvider(
         base_url=deep_url,
         model=settings.ollama_reranker_model,
+        scoring_mode=scoring_mode,
     )
     fast = OllamaRerankerProvider(
         base_url=fast_url,
         model=settings.ollama_reranker_fast_model,
+        scoring_mode=scoring_mode,
     )
     return fast, deep
 

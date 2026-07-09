@@ -49,6 +49,12 @@ class Settings(BaseSettings):
         default=["command", "rule", "entity"],
         description="Tiers that route to the fast reranker when queried alone",
     )
+    # Reranker scoring mechanism. "generate" (legacy): prompt for a 0-1 float and
+    # regex-parse the generated text — coarse, near-binary. "logit": use the
+    # official Qwen3-Reranker template + Ollama logprobs to read P(yes) vs P(no)
+    # in one forward pass — the correct cross-encoder usage (continuous, granular).
+    # Hot-swappable; default stays "generate" until a recall@k gate clears "logit".
+    reranker_scoring_mode: str = Field(default="generate", alias="RERANKER_SCORING_MODE")
 
     compaction_enabled: bool = Field(default=True, alias="COMPACTION_ENABLED")
     compaction_event_threshold: int = Field(default=80, alias="COMPACTION_EVENT_THRESHOLD")
