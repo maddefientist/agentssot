@@ -11,6 +11,9 @@ class DisabledLLMProvider(LLMProvider):
     def summarize(self, transcript: str) -> str:
         raise LLMProviderError(self.unavailable_reason or "LLM provider disabled")
 
+    def distill(self, transcript: str, model: str | None = None) -> str:
+        raise LLMProviderError(self.unavailable_reason or "LLM provider disabled")
+
     def synthesize_concepts(self, facts: str, existing_concepts: str, model_override: str | None = None, fallback_model: str | None = None) -> str:
         raise LLMProviderError(self.unavailable_reason or "LLM provider disabled")
 

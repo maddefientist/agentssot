@@ -29,6 +29,28 @@ class Settings(BaseSettings):
     openai_chat_model: str = Field(default="gpt-4o-mini", alias="OPENAI_CHAT_MODEL")
     ollama_chat_model: str = Field(default="llama3.1", alias="OLLAMA_CHAT_MODEL")
 
+    # Learning intake pipeline: voice-stack STT endpoint reached from inside
+    # the api container via the host-gateway extra_hosts mapping in
+    # docker-compose.yml. No hardcoded service URL.
+    voice_stack_stt_url: str = Field(
+        default="http://host.docker.internal:8402/transcribe",
+        alias="VOICE_STACK_STT_URL",
+    )
+
+    # SSRF allowlist for intake source_url hosts. Reduces redirect-SSRF
+    # exposure to a fixed set of trusted content platforms; yt-dlp still
+    # follows redirects internally and cannot re-run this validator, so an
+    # SSRF-filtering proxy / egress restrictions are needed for full coverage.
+    intake_source_url_allowed_hosts: str = Field(
+        default=(
+            "youtube.com,youtu.be,vimeo.com,player.vimeo.com,"
+            "x.com,twitter.com,instagram.com,tiktok.com,"
+            "soundcloud.com,spotify.com,open.spotify.com"
+        ),
+        alias="INTAKE_SOURCE_URL_ALLOWED_HOSTS",
+    )
+    yt_dlp_proxy_url: str = Field(default="", alias="YT_DLP_PROXY_URL")
+
     # Reranker
     reranker_provider: Literal["none", "ollama"] = Field(default="none", alias="RERANKER_PROVIDER")
     ollama_reranker_base_url: str = Field(

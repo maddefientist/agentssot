@@ -17,6 +17,10 @@ class LLMProvider(ABC):
     def summarize(self, transcript: str, model: str | None = None) -> str:
         raise NotImplementedError
 
+    @abstractmethod
+    def distill(self, transcript: str, model: str | None = None) -> str:
+        raise NotImplementedError
+
     def synthesize_concepts(self, facts: str, existing_concepts: str, model_override: str | None = None, fallback_model: str | None = None) -> str:
         """Synthesize conceptual knowledge from facts. Uses model_override if set,
         falls back to fallback_model if primary fails, then to self.model."""

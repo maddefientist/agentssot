@@ -33,6 +33,7 @@ from .routers.signals import router as signals_router
 from .routers.doctrine import router as doctrine_router
 from .routers.adherence import router as adherence_router
 from .routers.review import router as review_router
+from .routers.intake import router as intake_router
 from .routers.wonder import router as wonder_router
 from .gateway.routes import build_router as build_gateway_router
 from .gateway.wiring import build_gateway
@@ -253,6 +254,7 @@ if UI_DIR.exists():
 app.include_router(cortex_router)
 app.include_router(synapse_router)
 app.include_router(knowledge_router, prefix="/api/v1")
+app.include_router(intake_router)
 app.include_router(agent_guide_router)
 app.include_router(entities_router)
 app.include_router(signals_router)
