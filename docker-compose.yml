@@ -25,6 +25,10 @@ services:
       - .env
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      # Override the stale .env OLLAMA_CHAT_MODEL (was qwen3:latest -> 404 on the
+      # Ollama server, which breaks /distill AND summarize). qwen3.6:27b is
+      # present and verified working. Move this into .env when convenient.
+      OLLAMA_CHAT_MODEL: qwen3.6:27b
     extra_hosts:
       # Allows reaching Ollama running on the Docker host via http://host.docker.internal:11434
       # (works on Linux with Docker 20.10+ / Compose v2).
