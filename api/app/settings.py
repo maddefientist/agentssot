@@ -96,6 +96,10 @@ class Settings(BaseSettings):
     synthesis_decay_floor: float = Field(default=0.15, alias="SYNTHESIS_DECAY_FLOOR")
     synthesis_feedback_protection_days: int = Field(default=180, alias="SYNTHESIS_FEEDBACK_PROTECTION_DAYS")
 
+    # Out-of-band evidence verification (alert-only unless explicitly opted in)
+    verifier_enabled: bool = Field(default=True, alias="VERIFIER_ENABLED")
+    verifier_mode: Literal["alert", "supersede"] = Field(default="alert", alias="VERIFIER_MODE")
+
     # Alerting (channel-agnostic webhook; empty URL = alerting no-ops)
     alert_enabled: bool = Field(default=True, alias="ALERT_ENABLED")
     alert_webhook_url: str = Field(default="", alias="ALERT_WEBHOOK_URL")

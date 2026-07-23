@@ -374,27 +374,43 @@ async def synthesis_loop(app) -> None:
 
             if not llm_provider.is_available:
                 logger.warning("synthesis skipped; LLM provider unavailable")
-                continue
+            else:
+                with SessionLocal() as session:
+                    namespaces = [ns.name for ns in session.scalars(select(Namespace)).all()]
 
-            with SessionLocal() as session:
-                namespaces = [ns.name for ns in session.scalars(select(Namespace)).all()]
+                for ns in namespaces:
+                    try:
+                        # Synthesis is CPU/IO-heavy and uses synchronous DB/LLM clients.
+                        # Run it in a worker thread so the FastAPI event loop can keep
+                        # serving health checks and recall/ingest requests while the
+                        # daily background job is processing namespaces.
+                        stats = await asyncio.to_thread(
+                            _run_synthesis_for_namespace,
+                            namespace=ns,
+                            settings=settings,
+                            llm_provider=llm_provider,
+                            embedding_provider=embedding_provider,
+                        )
+                        logger.info("synthesis complete", extra=stats)
+                    except Exception:
+                        logger.exception("synthesis failed for namespace", extra={"namespace": ns})
 
-            for ns in namespaces:
-                try:
-                    # Synthesis is CPU/IO-heavy and uses synchronous DB/LLM clients.
-                    # Run it in a worker thread so the FastAPI event loop can keep
-                    # serving health checks and recall/ingest requests while the
-                    # daily background job is processing namespaces.
-                    stats = await asyncio.to_thread(
-                        _run_synthesis_for_namespace,
-                        namespace=ns,
-                        settings=settings,
-                        llm_provider=llm_provider,
-                        embedding_provider=embedding_provider,
-                    )
-                    logger.info("synthesis complete", extra=stats)
-                except Exception:
-                    logger.exception("synthesis failed for namespace", extra={"namespace": ns})
+            # Global evidence verification is independent of namespace synthesis
+            # and must not make the nightly cycle fail.
+            try:
+                from .verifier import run_verifier as _run_memory_verifier
+
+                verifier_report = await asyncio.to_thread(_run_memory_verifier, settings=settings)
+                logger.info(
+                    "memory verifier complete",
+                    extra={
+                        "candidates": verifier_report.candidates_scanned,
+                        "models": len(verifier_report.model_ids),
+                        "findings": len(verifier_report.findings),
+                    },
+                )
+            except Exception:
+                logger.exception("memory verifier failed")
 
         except asyncio.CancelledError:
             raise
