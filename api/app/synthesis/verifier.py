@@ -61,6 +61,31 @@ _NOT_FOUND_RE = re.compile(
     r"(?:not\s+found|unknown)[^\n]{0,80}model|pull\s+model",
     re.IGNORECASE,
 )
+# Phrases that immediately precede a model id and mark it as the SUCCESSOR of
+# a retired/deprecated predecessor. The retirement keyword belongs to the
+# predecessor, not to the id that follows it, so a successor occurrence must be
+# classified LIVE without scanning its live/retired keyword window.
+_SUCCESSOR_PREFIX_RE = re.compile(
+    r"(?:superse[dc]ed|replaced|supplanted|deprecated|retired|migrated|moved|upgraded|switched)"
+    r"\s+(?:by|to|with|in\s+favou?r\s+of)\s+$"
+    r"|(?:use|prefer|now\s+use)\s+$"
+    r"|(?:->|→)\s*$",
+    re.IGNORECASE,
+)
+# A complete successor-introduction phrase: the introducer keyword(s) from
+# _SUCCESSOR_PREFIX_RE immediately followed by the successor model id. Stripped
+# from a predecessor occurrence's keyword window so the introducer word ("use",
+# "superseded") does not leak as a live/retired keyword for the predecessor.
+# The target's own "use <target>" claim is preserved (sid == model_id).
+_SUCCESSOR_PHRASE_RE = re.compile(
+    r"(?:"
+    r"(?:superse[dc]ed|replaced|supplanted|deprecated|retired|migrated|moved|upgraded|switched)"
+    r"\s+(?:by|to|with|in\s+favou?r\s+of)"
+    r"|(?:use|prefer|now\s+use)"
+    r"|(?:->|→)"
+    r")\s*(?P<sid>[A-Za-z0-9][A-Za-z0-9._-]*:[A-Za-z0-9][A-Za-z0-9._-]*)",
+    re.IGNORECASE,
+)
 
 
 class ProbeState(StrEnum):
@@ -125,7 +150,23 @@ def classify_assertion(content: str, model_id: str, window: int = 100) -> Assert
     )
     directions: set[AssertionDirection] = set()
     for match in occurrence.finditer(content or ""):
+        # If this occurrence is introduced as the SUCCESSOR of a retired
+        # predecessor ("superseded by <id>", "use <id> instead", "-> <id>"),
+        # the retirement keyword in the prefix belongs to the predecessor, not
+        # to this id. Classify it LIVE and skip the live/retired window entirely.
+        prefix = content[max(0, match.start() - 40):match.start()]
+        if _SUCCESSOR_PREFIX_RE.search(prefix):
+            directions.add(AssertionDirection.LIVE)
+            continue
         nearby = content[max(0, match.start() - window):match.end() + window]
+        # Strip successor-introduction phrases that refer to OTHER model ids
+        # ("use <other>", "superseded by <other>", "-> <other>") so the
+        # introducer keyword does not leak into this occurrence's live/retired
+        # window. The target's own "use <target>" claim is preserved.
+        nearby = _SUCCESSOR_PHRASE_RE.sub(
+            lambda m: "" if m.group("sid").lower() != model_id.lower() else m.group(0),
+            nearby,
+        )
         live = bool(_LIVE_RE.search(nearby))
         retired = bool(_RETIRED_RE.search(nearby))
         if retired and live:
@@ -238,7 +279,7 @@ def verify_items(
 ) -> VerifierReport:
     """Probe distinct ids and return contradictions; performs no writes."""
     probe = probe or probe_model
-    rows = list(items)
+    rows = list(items)[:CANDIDATE_LIMIT]
     item_models = [(item, extract_model_ids(item.content)) for item in rows]
     model_ids = sorted({model for _item, models in item_models for model in models})
     probes = {model: probe(model, base_url) for model in model_ids}
@@ -385,20 +426,14 @@ def _post_summary_alert(settings, report: VerifierReport) -> bool:
     )
 
 
-def run_verifier(
-    settings=None,
+def _run_verifier_inner(
+    settings,
+    active_session: Session,
     *,
-    session: Session | None = None,
-    dry_run: bool = False,
-    base_url: str | None = None,
+    dry_run: bool,
+    base_url: str | None,
 ) -> VerifierReport:
-    """Run one global verifier pass and apply the configured action mode."""
-    settings = settings or get_settings()
-    if not getattr(settings, "verifier_enabled", True):
-        return VerifierReport(enabled=False, dry_run=dry_run)
-
-    owns_session = session is None
-    active_session = session or SessionLocal()
+    """Run one verifier pass against an open session; performs writes per mode."""
     try:
         items = _load_candidates(active_session)
         report = verify_items(
@@ -442,9 +477,29 @@ def run_verifier(
         if not dry_run:
             active_session.rollback()
         raise
-    finally:
-        if owns_session:
-            active_session.close()
+
+
+def run_verifier(
+    settings=None,
+    *,
+    session: Session | None = None,
+    dry_run: bool = False,
+    base_url: str | None = None,
+) -> VerifierReport:
+    """Run one global verifier pass and apply the configured action mode.
+
+    A caller-supplied session is left open (caller owns it and its lifecycle).
+    When run_verifier creates its own session it is closed on every exit path,
+    including exceptions, via the repo's ``with SessionLocal()`` idiom.
+    """
+    settings = settings or get_settings()
+    if not getattr(settings, "verifier_enabled", True):
+        return VerifierReport(enabled=False, dry_run=dry_run)
+
+    if session is not None:
+        return _run_verifier_inner(settings, session, dry_run=dry_run, base_url=base_url)
+    with SessionLocal() as owned:
+        return _run_verifier_inner(settings, owned, dry_run=dry_run, base_url=base_url)
 
 
 def format_report(report: VerifierReport) -> str:

@@ -217,6 +217,113 @@ def test_model_regex_rejects_port_like_ids():
         "qwen3.5:27b",
     ]
     assert "localhost:9877" not in verifier.extract_model_ids(content)
+    # Timestamp-like numeric suffixes must not leak through as model ids.
+    assert "12:30" not in verifier.extract_model_ids(content)
+
+
+def test_successor_phrase_not_classified_retired():
+    content = "kimi-k2.6:cloud is retired, superseded by kimi-k2.7-code:cloud"
+
+    assert (
+        verifier.classify_assertion(content, "kimi-k2.7-code:cloud")
+        == verifier.AssertionDirection.LIVE
+    )
+    assert (
+        verifier.classify_assertion(content, "kimi-k2.6:cloud")
+        == verifier.AssertionDirection.RETIRED
+    )
+
+
+def test_use_x_instead_is_live():
+    content = "glm-5:cloud retired — use glm-5.2:cloud instead"
+
+    assert verifier.classify_assertion(content, "glm-5.2:cloud") == verifier.AssertionDirection.LIVE
+    assert verifier.classify_assertion(content, "glm-5:cloud") == verifier.AssertionDirection.RETIRED
+
+
+def test_arrow_successor_is_live():
+    content = "qwen3.5:cloud -> qwen3.5:397b-cloud"
+
+    assert (
+        verifier.classify_assertion(content, "qwen3.5:397b-cloud")
+        == verifier.AssertionDirection.LIVE
+    )
+
+
+def test_verify_items_enforces_candidate_limit():
+    items = [
+        _Item(f"Use qwen3.5:27b (item {n})", item_id=f"00000000-0000-0000-0000-{n:012d}")
+        for n in range(verifier.CANDIDATE_LIMIT + 10)
+    ]
+
+    report = verifier.verify_items(
+        items,
+        probe=lambda model, base: verifier.ProbeResult(
+            model, verifier.ProbeState.DEAD, "tags miss"
+        ),
+    )
+
+    assert report.candidates_scanned == verifier.CANDIDATE_LIMIT
+    assert len(items) == verifier.CANDIDATE_LIMIT + 10
+
+
+def test_run_verifier_does_not_close_caller_session(monkeypatch):
+    monkeypatch.setattr(verifier, "_load_candidates", lambda session: [])
+    monkeypatch.setattr(verifier, "_post_summary_alert", lambda *args: True)
+
+    class _SentinelSession:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    session = _SentinelSession()
+
+    verifier.run_verifier(_settings("alert"), session=session)
+
+    assert session.closed is False
+
+
+def test_unknown_takes_no_action_in_alert_mode(monkeypatch):
+    monkeypatch.setattr(
+        verifier.httpx,
+        "get",
+        lambda *args, **kwargs: _response(200, payload={"models": []}),
+    )
+
+    def timeout(*args, **kwargs):
+        raise httpx.ReadTimeout("timed out")
+
+    monkeypatch.setattr(verifier.httpx, "post", timeout)
+    monkeypatch.setattr(
+        verifier,
+        "_load_candidates",
+        lambda session: [_Item("Use missing:cloud as the canonical model")],
+    )
+    actions = {"alert": 0, "supersede": 0, "queue": 0}
+    monkeypatch.setattr(
+        verifier,
+        "_post_summary_alert",
+        lambda *args: actions.__setitem__("alert", actions["alert"] + 1),
+    )
+    monkeypatch.setattr(
+        verifier,
+        "_enqueue_findings",
+        lambda *args: actions.__setitem__("queue", actions["queue"] + 1),
+    )
+    monkeypatch.setattr(
+        verifier,
+        "_supersede_findings",
+        lambda *args: actions.__setitem__("supersede", actions["supersede"] + 1),
+    )
+
+    report = verifier.run_verifier(_settings("alert"), session=SimpleNamespace())
+
+    assert report.probes[0].state == verifier.ProbeState.UNKNOWN
+    assert report.findings == []
+    assert report.alert_attempted is False
+    assert actions == {"alert": 0, "supersede": 0, "queue": 0}
 
 
 def test_alert_mode_enqueues_knowledge_item_level_review():
