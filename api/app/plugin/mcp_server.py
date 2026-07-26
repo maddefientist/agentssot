@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
@@ -33,6 +34,14 @@ BASE_URL: str = _cfg.get("base_url", "http://192.168.1.225:8088")
 # Default client key is the writer/reader key from agent.json. The admin key
 # (admin.json) is used ONLY by tools that explicitly request role="admin" via
 # _client()/_api_key_for() below — never as a blanket default for every tool.
+#
+# This previously read `_cfg.get("admin_api_key") or _cfg.get("api_key", "")`, which
+# preferred the ADMIN key for the default client that ~30 ordinary recall/teach/query
+# call sites use. Inert on hosts whose agent.json carries no admin_api_key (it does not
+# here — checked), but it removes the role separation entirely wherever that field
+# exists. Every other consumer in this tree (hooks/session-recall.sh, _synapse_lib.sh,
+# cortex-recall.sh, hive-session-start.sh, ...) reads api_key FIRST; only this line
+# preferred admin, so it was a local mutation against house convention, not an idiom.
 API_KEY: str = _cfg.get("api_key", "")
 DEFAULT_NS: str = _cfg.get("default_namespace", "claude-shared")
 DEVICE_NAME: str = _cfg.get("device_name", "unknown")
@@ -73,6 +82,13 @@ async def _client(role: str | None = None) -> httpx.AsyncClient:
         # Admin ops must fail loudly if admin.json is missing/unreadable — never
         # silently downgrade to the writer key, which would mask a permissions
         # error as some other failure downstream.
+        #
+        # The removed handler was `except (PermissionError, FileNotFoundError,
+        # KeyError): key = API_KEY`. Its intent was "fall back to writer", but paired
+        # with the old API_KEY line above it substituted ANOTHER ADMIN key — so a
+        # missing admin.json, the file whose entire purpose is to gate admin ops,
+        # stopped denying them. Dropping it also restores the PermissionError handler
+        # in hive_review_queue, which was dead code while this swallowed the raise.
         key = _api_key_for(role)
         headers = {"X-API-Key": key, "Content-Type": "application/json"}
         return httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=TIMEOUT)
@@ -231,21 +247,42 @@ async def hive_ingest(
         source: Optional source identifier (e.g. file path, URL).
         namespace: Target namespace (default: claude-shared).
     """
+    # Posts to the TIERED route (/api/v1/knowledge/ingest), not legacy /ingest.
+    #
+    # Legacy /ingest -> crud.ingest_batch, which stores the row and returns counts. It
+    # skips everything that makes an item usable later: auto-classification into a
+    # memory_type/category, abstract+summary tiering (so the item can never surface in a
+    # tier-bucketed loadout), and the review queue. It also stores items whose embedding
+    # failed, which creates a permanently un-recallable row — recall requires
+    # embedding IS NOT NULL, so the item is accepted and silently never found again.
+    #
+    # The tiered route classifies, enqueues for review when it had to guess, and returns
+    # 503 rather than storing something unrecallable. hive_teach already used it; this
+    # tool had drifted onto the legacy path, so ~30 items were ingested un-deduped and
+    # unclassified.
+    #
+    # Shape differs: legacy took {namespace, knowledge_items: [...]}, tiered takes ONE
+    # item at the top level (TieredKnowledgeCreate) and returns TieredKnowledgeResponse.
     ns = namespace or DEFAULT_NS
-    item: dict[str, Any] = {"content": content, "tags": tags or []}
+    body: dict[str, Any] = {"namespace": ns, "content": content, "tags": tags or []}
     if source:
-        item["source"] = source
-    body = {"namespace": ns, "knowledge_items": [item]}
+        body["source"] = source
     try:
         async with await _client() as c:
-            resp = await c.post("/ingest", json=body)
+            resp = await c.post("/api/v1/knowledge/ingest", json=body)
     except httpx.HTTPError as exc:
         return f"Connection error: {exc}"
-    if resp.status_code != 200:
+    if resp.status_code not in (200, 201):
         return await _api_error(resp)
     data = resp.json()
-    counts = data.get("counts", {})
-    return f"Ingested into {ns}: {json.dumps(counts)}"
+    bits = [f"Ingested into {ns}: id={data.get('id', '?')}"]
+    if data.get("category"):
+        bits.append(f"category={data['category']}")
+    if data.get("layer"):
+        bits.append(f"layer={data['layer']}")
+    if data.get("abstract"):
+        bits.append(f"abstract={data['abstract'][:80]}")
+    return " ".join(bits)
 
 
 # ---------------------------------------------------------------------------
@@ -627,6 +664,9 @@ async def hive_create_key(
         return await _api_error(resp)
     data = resp.json()
     key_val = data.get("api_key") or data.get("key", "")
+    # The warning is not decoration: this returns a live credential into a transcript
+    # that gets logged, summarized, and sometimes pasted. Upstream carried this and the
+    # installed copy had drifted without it.
     return (
         f"Key created: name={name} role={role}\n"
         f"Key value: {key_val}\n"
@@ -761,22 +801,26 @@ async def hive_teach(
     if success_hint:
         content += f"\nVerify: {success_hint}"
 
+    # Use the tiered ingest endpoint so memory_type='rule' is set correctly.
+    # This ensures hive_teach items are visible to the tier-bucketed loadout
+    # (fetch_loadout_candidates includes rules unconditionally per namespace).
     payload = {
         "namespace": ns,
-        "knowledge_items": [{
-            "content": content,
-            "source": "hive_teach",
-            "tags": ["skill", "operator-taught"],
-        }],
+        "content": content,
+        "source": "hive_teach",
+        "tags": ["operator-taught"],
+        "memory_type": "rule",
+        "loadout_priority": 5,
     }
     try:
         async with await _client() as c:
-            r = await c.post("/ingest", json=payload)
+            r = await c.post("/api/v1/knowledge/ingest", json=payload)
             r.raise_for_status()
     except httpx.HTTPError as exc:
         return f"Connection error: {exc}"
 
-    return f"Skill taught: '{trigger}' -> '{action}'"
+    item_id = r.json().get("id", "?")
+    return f"Rule taught (id={item_id}): '{trigger}' -> '{action}'"
 
 
 @mcp.tool()
@@ -864,6 +908,11 @@ async def hive_status() -> str:
     ]
 
     # 1. Health check
+    # Bound before the try so the functional probe below can compare against it even when
+    # /health is non-200 or unparseable. Without this, an unreachable /health made the
+    # probe raise NameError, which its own except-clause then reported as "recall FAILED"
+    # — misreporting a working memory as broken.
+    h: dict[str, Any] = {}
     try:
         async with await _client() as c:
             resp = await c.get("/health")
@@ -886,6 +935,71 @@ async def hive_status() -> str:
         lines.append("")
         lines.append("Issues: " + "; ".join(issues))
         return "\n".join(lines)
+
+    # 1b. Functional probe — a real recall round-trip.
+    #
+    # The /health flags above are SELF-REPORTED booleans: the service stating that a
+    # provider is *configured*, not that it works. This tool once printed "Reranker: OK"
+    # straight through a total recall outage, because nothing here ever exercised the
+    # path an agent actually depends on. Liveness is not function.
+    #
+    # So issue a real recall and read the server's own diagnostics: `vec_ms` proves the
+    # vector search executed, and `reranker_used` is the functional counterpart to
+    # /health's `reranker_available` claim — the two disagreeing IS the outage signature.
+    # Tagged with a probe session_id so it stays distinguishable in recall telemetry.
+    lines.append("--- Recall Round-Trip (functional) ---")
+    try:
+        import time as _t
+
+        async with await _client() as c:
+            probe = await c.post(
+                "/api/v1/knowledge/recall",
+                json={
+                    "query": "hive status functional probe",
+                    "namespace": DEFAULT_NS,
+                    "bucketed": True,
+                    "top_per_tier": {"rule": 1},
+                    "session_id": f"hive-status-probe-{_t.time_ns()}",
+                },
+            )
+        if probe.status_code != 200:
+            lines.append(f"  Recall: FAILED (HTTP {probe.status_code})")
+            issues.append(
+                f"Recall round-trip failed with HTTP {probe.status_code} — memory is NOT usable"
+            )
+        else:
+            pbody = probe.json()
+            # A 200 whose body has no bucket container is still a broken recall. The
+            # failure mode worth catching is the one that returns something shaped like
+            # success, which is how the original outage stayed invisible.
+            if not isinstance(pbody, dict) or "buckets" not in pbody:
+                lines.append("  Recall: DEGRADED (HTTP 200, no bucket container)")
+                issues.append(
+                    "Recall returned 200 with an unrecognised body — memory may be silently broken"
+                )
+            else:
+                pdiag = pbody.get("diagnostics") or {}
+                hits = sum(len(v or []) for v in (pbody.get("buckets") or {}).values())
+                vec_ms = pdiag.get("vec_ms")
+                used = pdiag.get("reranker_used") or "none"
+                lines.append(f"  Recall: OK ({hits} hits, vec={vec_ms}ms, reranker={used})")
+                if not pdiag:
+                    # No diagnostics means we cannot tell whether retrieval really ran,
+                    # so say that rather than let a bare 200 read as health.
+                    lines.append("  (no diagnostics returned — retrieval path unverified)")
+                    issues.append(
+                        "Recall returned no diagnostics — cannot confirm vector search actually ran"
+                    )
+                elif h.get("reranker_available") and used == "none":
+                    issues.append(
+                        "/health claims reranker_available but recall did not use one — "
+                        "this is the exact 'reports OK during an outage' signature"
+                    )
+    except Exception as exc:
+        lines.append(f"  Recall: FAILED ({type(exc).__name__}: {exc})")
+        issues.append(
+            f"Recall round-trip raised {type(exc).__name__} — memory is NOT usable"
+        )
 
     # 2. Stats
     try:
@@ -1154,6 +1268,208 @@ async def hive_doctor() -> str:
         f"Active keys: {d.get('active_key_count')}",
     ]
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Synapse tools — fleet-awareness layer
+# ---------------------------------------------------------------------------
+
+def _synapse_is_enabled() -> tuple[bool, str | None]:
+    """Mirror of bash _synapse_lib.sh::synapse_is_enabled.
+
+    Returns (enabled, reason). reason is None when enabled, else one of:
+      "env_kill_switch" | "flag_missing" | "flag_false"
+    """
+    if os.environ.get("SYNAPSE_DISABLED"):
+        return False, "env_kill_switch"
+    try:
+        cfg = json.loads(_agent_path.read_text())
+    except Exception:
+        return False, "flag_missing"
+    val = cfg.get("synapse_enabled")
+    if val is True:
+        return True, None
+    return False, "flag_false" if val is False else "flag_missing"
+
+
+@mcp.tool()
+async def synapse_active(
+    repo: str | None = None,
+    host: str | None = None,
+    since_seconds: int = 600,
+) -> dict[str, Any]:
+    """List currently-active Claude sessions across the fleet.
+
+    Use before starting work on a file or repo that other Claude sessions might
+    also be touching, to detect concurrent edits before they happen.
+
+    Args:
+        repo: Filter to sessions working in this repo (optional).
+        host: Filter to sessions on this host (optional).
+        since_seconds: Only include sessions active within this window (default 600s).
+    """
+    enabled, reason = _synapse_is_enabled()
+    if not enabled:
+        return {
+            "status": "disabled_local",
+            "reason": reason,
+            "hint": "Call synapse_status() for the exact operator instruction to enable.",
+        }
+    params: dict[str, Any] = {"since_seconds": since_seconds}
+    if repo is not None:
+        params["repo"] = repo
+    if host is not None:
+        params["host"] = host
+    try:
+        async with await _client() as c:
+            resp = await c.get("/synapse/active", params=params)
+    except httpx.HTTPError as exc:
+        return {"error": f"Connection error: {exc}"}
+    if resp.status_code != 200:
+        return {"error": await _api_error(resp)}
+    sessions = resp.json()
+    return {"sessions": sessions, "count": len(sessions)}
+
+
+@mcp.tool()
+async def synapse_collisions(
+    file: str,
+    window_seconds: int = 300,
+) -> dict[str, Any]:
+    """Check if any OTHER active Claude session has recently touched a specific file.
+
+    Before editing a file, call this to detect whether another Claude session has
+    touched it in the last few minutes. Returns sessions that are potential collision
+    risks. An empty list means the file is clear to edit.
+
+    Args:
+        file: Absolute file path to check for concurrent access.
+        window_seconds: Look-back window in seconds (default 300 = 5 minutes).
+    """
+    enabled, reason = _synapse_is_enabled()
+    if not enabled:
+        return {
+            "status": "disabled_local",
+            "reason": reason,
+            "hint": "Call synapse_status() for the exact operator instruction to enable.",
+        }
+    # Derive our own session_id for the exclude_session filter.
+    # Claude Code sets CLAUDE_SESSION_ID; fall back to ANTHROPIC_SESSION_ID.
+    own_session = (
+        os.environ.get("CLAUDE_SESSION_ID")
+        or os.environ.get("ANTHROPIC_SESSION_ID")
+        or ""
+    )
+    params: dict[str, Any] = {"file": file, "window_seconds": window_seconds}
+    if own_session:
+        params["exclude_session"] = own_session
+    try:
+        async with await _client() as c:
+            resp = await c.get("/synapse/collisions", params=params)
+    except httpx.HTTPError as exc:
+        return {"error": f"Connection error: {exc}"}
+    if resp.status_code != 200:
+        return {"error": await _api_error(resp)}
+    collisions = resp.json()
+    return {
+        "file": file,
+        "collisions": collisions,
+        "count": len(collisions),
+        "own_session_excluded": own_session or None,
+    }
+
+
+@mcp.tool()
+async def synapse_status() -> dict[str, Any]:
+    """Diagnose synapse state on the current host.
+
+    Call this first when uncertain about synapse. If `synapse_active` or
+    `synapse_collisions` returned `{"status": "disabled_local"}`, call here
+    to get the exact operator instruction to enable synapse on this host.
+    """
+    enabled, reason = _synapse_is_enabled()
+
+    # agentssot reachability (1s timeout)
+    agentssot_reachable = False
+    try:
+        async with httpx.AsyncClient(base_url=BASE_URL, timeout=1.0) as c:
+            r = await c.get("/health")
+            agentssot_reachable = r.status_code == 200
+    except Exception:
+        agentssot_reachable = False
+
+    # listener daemon state (systemctl --user)
+    listener = "unknown"
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "systemctl", "--user", "is-active", "synapse-listener.service",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=1.0)
+        state = out.decode().strip()
+        if state == "active":
+            listener = "running"
+        elif state in ("inactive", "failed"):
+            listener = "stopped"
+        else:
+            listener = "not_installed"
+    except FileNotFoundError:
+        listener = "not_installed"
+    except Exception:
+        listener = "unknown"
+
+    # active sessions visible + self-registration check
+    active_count: int | None = None
+    self_registered: bool | None = None
+    own = os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("ANTHROPIC_SESSION_ID") or ""
+    if agentssot_reachable:
+        try:
+            async with await _client() as c:
+                r = await c.get("/synapse/active", params={"since_seconds": 600})
+            if r.status_code == 200:
+                sessions = r.json()
+                active_count = len(sessions)
+                if own:
+                    self_registered = any(s.get("session_id") == own for s in sessions)
+        except Exception:
+            pass
+
+    # onboarding hint
+    hint: str | None = None
+    if not enabled:
+        if reason == "env_kill_switch":
+            hint = "SYNAPSE_DISABLED env var is set on this shell. Unset it to re-enable: unset SYNAPSE_DISABLED."
+        else:
+            hint = (
+                "Synapse is dormant on this host. To enable: edit "
+                '~/.claude/agentssot/local/agent.json and set "synapse_enabled": true '
+                "(top-level key, JSON boolean). Next hook firing picks it up — no restart needed."
+            )
+    elif not agentssot_reachable:
+        hint = (
+            f"Local flag on but cannot reach agentssot at {BASE_URL}. "
+            "Confirm LAN connectivity to hari (192.168.1.225)."
+        )
+    elif listener == "not_installed":
+        hint = (
+            "Synapse working but listener daemon not installed — cross-host "
+            "collision detection unavailable. To install: "
+            "bash /opt/agentssot/scripts/install-synapse-listener.sh on this host."
+        )
+    elif listener == "stopped":
+        hint = "Listener daemon is installed but stopped. Start with: systemctl --user start synapse-listener.service"
+
+    return {
+        "local_enabled": enabled,
+        "local_disabled_reason": reason,
+        "agentssot_reachable": agentssot_reachable,
+        "agentssot_base_url": BASE_URL,
+        "listener_daemon": listener,
+        "device_name": DEVICE_NAME,
+        "active_sessions_visible": active_count,
+        "self_session_registered": self_registered,
+        "onboarding_hint": hint,
+    }
 
 
 # ---------------------------------------------------------------------------
