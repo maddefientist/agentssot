@@ -112,6 +112,8 @@ def test_backup_compose_uses_atomic_validated_dumps_and_runtime_retention():
     text = compose.read_text()
     assert 'BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}' in text
     assert 'partfile="$${outfile}.part"' in text
+    assert "umask 077" in text
+    assert "chmod 700 /backups" in text
     assert 'pg_restore --list "$$partfile"' in text
     assert 'mv "$$partfile" "$$outfile"' in text
     assert "/backups/.last_success" in text

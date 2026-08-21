@@ -70,7 +70,9 @@ services:
       - -c
       - |
         set -eu
+        umask 077
         mkdir -p /backups
+        chmod 700 /backups
 
         dump_and_validate() {
           ts="$(date +%Y%m%d_%H%M%S)"
