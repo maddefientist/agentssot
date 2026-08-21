@@ -191,11 +191,17 @@ async def hive_recall(
         lines.append(f"\n[{tier}] ({len(items)})")
         for it in items:
             abs_text = it.get("abstract") or ""
-            lines.append(f"  • {abs_text} (id={it['id']})")
+            lines.append(f"  • {abs_text} (knowledge_item_id={it['id']})")
     if total == 0:
         return f"No results for '{query}' in {ns}."
     if diag:
         lines.append(f"\n— vec={diag.get('vec_ms',0)}ms rerank={diag.get('rerank_ms',0)}ms ({diag.get('reranker_used','none')})")
+    # These ids are knowledge_items rows. hive_feedback(knowledge_item_id=...)
+    # accepts them directly; hive_feedback(concept_id=...) does NOT -- concepts
+    # are a separate table with a disjoint id space.
+    lines.append(
+        "\nTo rate one of these: hive_feedback(signal=..., knowledge_item_id=<id above>)."
+    )
     return "\n".join(lines)
 
 
@@ -734,31 +740,43 @@ async def hive_dedup(
 @mcp.tool()
 async def hive_feedback(
     signal: str,
+    knowledge_item_id: str = "",
     concept_id: str = "",
     query: str = "",
     note: str = "",
     session_id: str = "",
+    namespace: str = "",
 ) -> str:
-    """Rate a concept: 'useful' (helped with task), 'noted' (good reminder), or 'wrong' (outdated/incorrect).
-    Provide concept_id for direct reference, or query for fuzzy semantic match.
-    Add a note for corrections (especially with 'wrong' signal).
+    """Rate a recalled memory: 'useful' (helped), 'noted' (good reminder), or 'wrong' (outdated/incorrect).
+
+    PREFER knowledge_item_id -- pass the `id=` value printed by hive_recall.
+    That is a knowledge-item id and it is the only way to rate the exact thing
+    you were shown. concept_id targets the separate concepts table (ids from
+    hive_concepts, NOT from hive_recall). `query` is a last-resort fuzzy match
+    against concepts; if nothing is confidently close it now records NOTHING
+    and tells you so, rather than silently rating an unrelated neighbour.
 
     Args:
         signal: Feedback signal -- 'useful', 'noted', or 'wrong'.
-        concept_id: Direct concept UUID to reference.
-        query: Fuzzy semantic query to identify the concept (alternative to concept_id).
+        knowledge_item_id: UUID from hive_recall output (`id=...`). Preferred.
+        concept_id: Direct concept UUID (from hive_concepts / concept scope).
+        query: Fuzzy semantic query -- fallback only, may resolve to nothing.
         note: Optional correction or context note (recommended for 'wrong' signal).
         session_id: Optional session identifier.
+        namespace: Namespace the target lives in (default: claude-shared).
     """
-    if not concept_id and not query:
-        return "Error: provide concept_id or query to identify the concept"
+    if not knowledge_item_id and not concept_id and not query:
+        return "Error: provide knowledge_item_id (preferred), concept_id, or query"
     if signal not in ("useful", "noted", "wrong"):
         return "Error: signal must be 'useful', 'noted', or 'wrong'"
 
+    ns = namespace or DEFAULT_NS
     body: dict[str, Any] = {"signal": signal, "agent_key": AGENT_KEY}
-    if concept_id:
+    if knowledge_item_id:
+        body["knowledge_item_id"] = knowledge_item_id
+    elif concept_id:
         body["concept_id"] = concept_id
-    if query:
+    else:
         body["query"] = query
     if note:
         body["note"] = note
@@ -767,17 +785,43 @@ async def hive_feedback(
 
     try:
         async with await _client() as c:
-            resp = await c.post("/feedback", json=body)
+            resp = await c.post("/feedback", json=body, params={"namespace": ns})
     except httpx.HTTPError as exc:
         return f"Connection error: {exc}"
     if resp.status_code != 200:
         return await _api_error(resp)
     data = resp.json()
-    if "error" in data or "detail" in data:
-        return f"Feedback error: {data.get('error') or data.get('detail')}"
+    if "error" in data:
+        return f"Feedback error: {data['error']}"
+
+    # Explicit no-match: the query failed the relevance floor and NOTHING was
+    # written. Surface it loudly -- reporting this as success is the exact bug
+    # that let ~18 unrelated 'wrong' signals pile onto one concept.
+    if not data.get("matched", True):
+        return (
+            f"NOT RECORDED: no confident match for that query "
+            f"(distance {data.get('match_distance', 0):.3f} > "
+            f"{data.get('match_threshold', 0):.3f}). "
+            f"Nearest was '{data.get('nearest_concept_title', '?')}' "
+            f"(concept_id={data.get('nearest_concept_id', '')}). "
+            f"Re-send with knowledge_item_id from hive_recall, or that concept_id "
+            f"if it is genuinely the item you meant."
+        )
+
+    if data.get("knowledge_item_id"):
+        return (
+            f"Feedback recorded: {data['signal']} for knowledge item "
+            f"{data['knowledge_item_id']} (new strength: {data.get('strength', 0):.2f})"
+        )
+    dist = data.get("match_distance")
+    how = (
+        f" [fuzzy match, distance {dist:.3f} -- verify this is the right target]"
+        if dist is not None
+        else ""
+    )
     return (
-        f"Feedback recorded: {data['signal']} for '{data['concept_title']}' "
-        f"(confidence: {data['confidence']:.2f})"
+        f"Feedback recorded: {data['signal']} for concept '{data['concept_title']}' "
+        f"(concept's own stored confidence: {data['confidence']:.2f}){how}"
     )
 
 

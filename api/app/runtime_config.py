@@ -35,6 +35,7 @@ HOT_KEYS = frozenset({
     "classifier_base_url",
     "semantic_dedup_threshold",
     "supersession_similarity_threshold",
+    "feedback_match_max_distance",
 })
 
 URL_KEYS = frozenset({
@@ -48,6 +49,8 @@ NUMERIC_RANGES: dict[str, tuple[float, float]] = {
     "synthesis_similarity_threshold": (0.0, 1.0),
     "semantic_dedup_threshold": (0.0, 1.0),
     "supersession_similarity_threshold": (0.0, 1.0),
+    # Cosine DISTANCE, not similarity: pgvector's cosine_distance ranges [0, 2].
+    "feedback_match_max_distance": (0.0, 2.0),
     "synthesis_min_cluster_size": (1, 1000),
     "synthesis_window_days": (1, 3650),
     "reranker_candidate_multiplier": (1, 10),

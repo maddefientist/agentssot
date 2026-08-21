@@ -473,8 +473,22 @@ class FeedbackResponse(BaseModel):
     concept_title: str = ""
     knowledge_item_id: str = ""
     signal: str
+    # The target's OWN stored confidence/strength -- NOT a match score. Kept for
+    # backward compatibility; read match_distance/match_confidence to judge how
+    # well a query-mode request actually resolved.
     confidence: float = 0.0
     strength: float = 0.0
+    # Resolution metadata. matched/recorded are False when a `query` failed the
+    # relevance floor, in which case nothing was persisted.
+    matched: bool = True
+    recorded: bool = True
+    resolved_by: str = ""
+    match_distance: float | None = None
+    match_confidence: float | None = None
+    match_threshold: float | None = None
+    nearest_concept_id: str = ""
+    nearest_concept_title: str = ""
+    detail: str = ""
 
 
 class SessionCompleteRequest(BaseModel):

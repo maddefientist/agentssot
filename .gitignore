@@ -3,7 +3,6 @@
 *.bak-*
 .chain/
 .chain-runs/
-after
 data/
 backups/
 dropbox/
@@ -20,3 +19,5 @@ firebase-debug.log
 .DS_Store
 .isolation-keys.json
 benchmarks/isolation/results/
+logs/
+.pi-subagents/

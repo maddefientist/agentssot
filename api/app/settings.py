@@ -161,6 +161,15 @@ class Settings(BaseSettings):
     # existing item. Verbatim items bypass this check. 0.0 disables dedup.
     semantic_dedup_threshold: float = Field(default=0.0, alias="SEMANTIC_DEDUP_THRESHOLD")
 
+    # Relevance floor for /feedback query-mode (fuzzy) concept resolution. A
+    # `query` whose nearest concept is farther than this cosine distance
+    # resolves to NOTHING instead of to the argmax. See the derivation comment
+    # on crud.FEEDBACK_MATCH_MAX_DISTANCE — this number was measured against
+    # the live corpus, not guessed. Raising it re-opens the misfire class.
+    feedback_match_max_distance: float = Field(
+        default=0.35, alias="FEEDBACK_MATCH_MAX_DISTANCE"
+    )
+
     # Auto-classifier (Plan 1 Phase 2)
     classifier_provider: Literal["none", "ollama"] = Field(
         default="ollama", alias="CLASSIFIER_PROVIDER"

@@ -1797,6 +1797,37 @@ def log_recall_events(
     return count
 
 
+# Relevance floor for query-mode (fuzzy) concept resolution in /feedback.
+#
+# DERIVED BY MEASUREMENT, NOT GUESSED. Measured 2026-07-27 against the live
+# `claude-shared` namespace (1,445 embedded, non-superseded concepts;
+# nomic-embed-text, 768d) by replaying the exact query this function issues:
+#
+#   query class                                        n    min     p50     max
+#   ---------------------------------------------- ----  -----   -----   -----
+#   quotes the concept's own embedded text (EXACT)   45  0.000   0.000   0.007
+#   quotes title + first 200 chars   (TITLE_SNIP)    45  0.002   0.039   0.087
+#   real recall queries from recall_events (OPS)     60  0.209   0.327   0.443
+#   genuinely out-of-domain / meta queries           14  0.360   0.445   0.510
+#
+# Genuine, content-bearing feedback tops out at 0.087; true garbage floors at
+# 0.360. 0.35 sits below that floor with all 90 genuine matches retained.
+#
+# It is chosen specifically to kill the observed failure: the three phrasings
+# that produced the historical 18-signal sink on "Execute Feedback Loop Triad
+# Verification" measure 0.360 / 0.382 / 0.391 and are all rejected here.
+#
+# KNOWN LIMIT — do not read this as "matches above the floor are correct".
+# The 0.21-0.44 operational band overlaps the garbage band, so this floor
+# removes the blatant misfires, not the subtle ones. A short bare-title query
+# scores 0.099-0.438 against a title+content embedding, so query-mode remains
+# a lossy fallback. The real fix is callers sending knowledge_item_id /
+# concept_id; see submit_feedback in main.py.
+#
+# Overridable at runtime via the `feedback_match_max_distance` hot key.
+FEEDBACK_MATCH_MAX_DISTANCE = 0.35
+
+
 def create_concept_feedback(
     session: Session,
     namespace: str,
@@ -1807,10 +1838,25 @@ def create_concept_feedback(
     query: str | None = None,
     session_id: str | None = None,
     note: str | None = None,
+    max_match_distance: float | None = None,
 ) -> dict:
-    """Create feedback for a concept. Resolves by ID or fuzzy semantic match."""
+    """Create feedback for a concept. Resolves by ID or fuzzy semantic match.
+
+    Query-mode resolution is gated on ``max_match_distance``. When the nearest
+    concept is farther than that, this is a NO-OP: no ConceptFeedback row, no
+    correction KnowledgeItem, and ``recorded=False`` in the return. It used to
+    take the argmax unconditionally, which silently rated an arbitrary
+    neighbour and then reported the neighbour's own stored ``confidence`` as if
+    it were a match score.
+    """
     if not concept_id and not query:
         raise ValueError("Must provide concept_id or query")
+
+    threshold = (
+        FEEDBACK_MATCH_MAX_DISTANCE if max_match_distance is None else max_match_distance
+    )
+    match_distance: float | None = None
+    resolved_by = "concept_id"
 
     if concept_id:
         concept = session.get(Concept, concept_id)
@@ -1818,6 +1864,7 @@ def create_concept_feedback(
             raise ValueError(f"Concept {concept_id} not found in namespace {namespace}")
     else:
         # Fuzzy match: embed query, find closest concept
+        resolved_by = "query"
         query_embedding = embedding_provider.embed_text(query)
         score_col = Concept.embedding.cosine_distance(query_embedding).label("score")
         stmt = (
@@ -1831,7 +1878,34 @@ def create_concept_feedback(
         row = session.execute(stmt).first()
         if not row:
             raise ValueError("No concepts found to match query")
-        concept, _match_score = row
+        concept, match_score = row
+        match_distance = float(match_score)
+        if match_distance > threshold:
+            # No confident match. Record NOTHING — an argmax this far away is
+            # noise, and persisting it is what poisoned the ranking. Hand the
+            # caller the nearest candidate so it can re-send with an explicit
+            # id if the guess happens to be right.
+            return {
+                "concept_id": "",
+                "concept_title": "",
+                "signal": signal,
+                "confidence": 0.0,
+                "matched": False,
+                "recorded": False,
+                "resolved_by": resolved_by,
+                "match_distance": match_distance,
+                "match_confidence": max(0.0, 1.0 - match_distance),
+                "match_threshold": threshold,
+                "nearest_concept_id": str(concept.id),
+                "nearest_concept_title": concept.title,
+                "detail": (
+                    f"No concept in '{namespace}' matched the query within the "
+                    f"relevance floor (distance {match_distance:.3f} > {threshold:.3f}). "
+                    f"Nearest was '{concept.title}'. Nothing was recorded. Re-send with "
+                    f"knowledge_item_id (preferred — that is what recall returns) or an "
+                    f"explicit concept_id."
+                ),
+            }
         concept_id = concept.id
 
     fb = ConceptFeedback(
@@ -1847,16 +1921,30 @@ def create_concept_feedback(
     # If "wrong" signal with a note, also ingest the correction as knowledge.
     # Guard the embedding call: only embed when the provider is present and
     # available, otherwise store the correction without an embedding (no 500).
+    #
+    # The "(re: concept 'X')" attribution is only written when the caller named
+    # the concept. On a fuzzy resolution the caller never confirmed the target,
+    # so baking the title in manufactures an association the operator never
+    # asserted -- and because the correction is itself embedded and recalled,
+    # that false association then feeds back into recall. Fuzzy-resolved
+    # corrections keep the operator's text, drop the attribution, and carry a
+    # `fuzzy-resolved` tag so they stay auditable and filterable.
     if signal == "wrong" and note:
         correction_embedding = (
             embedding_provider.embed_text(note)
             if embedding_provider is not None and embedding_provider.is_available
             else None
         )
+        if resolved_by == "query":
+            correction_content = f"Correction: {note}"
+            correction_tags = ["correction", "operator-feedback", "fuzzy-resolved"]
+        else:
+            correction_content = f"Correction: {note} (re: concept '{concept.title}')"
+            correction_tags = ["correction", "operator-feedback"]
         session.add(KnowledgeItem(
             namespace=namespace,
-            content=f"Correction: {note} (re: concept '{concept.title}')",
-            tags=["correction", "operator-feedback"],
+            content=correction_content,
+            tags=correction_tags,
             embedding=correction_embedding,
             memory_type="correction",
         ))
@@ -1882,7 +1970,19 @@ def create_concept_feedback(
         "concept_id": str(concept_id),
         "concept_title": concept.title,
         "signal": signal,
+        # NOTE: `confidence` is the CONCEPT'S OWN stored confidence column. It
+        # is not, and never was, a measure of how well the query matched. It is
+        # kept only for backward compatibility with existing readers. Callers
+        # judging match quality must read `match_distance`/`match_confidence`.
         "confidence": concept.confidence,
+        "matched": True,
+        "recorded": True,
+        "resolved_by": resolved_by,
+        "match_distance": match_distance,
+        "match_confidence": (
+            None if match_distance is None else max(0.0, 1.0 - match_distance)
+        ),
+        "match_threshold": threshold if resolved_by == "query" else None,
     }
 
 
@@ -1962,6 +2062,9 @@ def create_knowledge_feedback(
         "knowledge_item_id": str(knowledge_item_id),
         "signal": signal,
         "strength": new_strength,
+        "matched": True,
+        "recorded": True,
+        "resolved_by": "knowledge_item_id",
     }
 
 

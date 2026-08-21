@@ -897,11 +897,7 @@ def submit_feedback(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         session.commit()
-        return schemas.FeedbackResponse(
-            knowledge_item_id=result["knowledge_item_id"],
-            signal=result["signal"],
-            strength=result["strength"],
-        )
+        return schemas.FeedbackResponse(**result)
 
     try:
         result = crud.create_concept_feedback(
@@ -914,10 +910,20 @@ def submit_feedback(
             query=payload.query,
             session_id=payload.session_id,
             note=payload.note,
+            max_match_distance=getattr(
+                app.state.settings,
+                "feedback_match_max_distance",
+                crud.FEEDBACK_MATCH_MAX_DISTANCE,
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    session.commit()
+    # A sub-threshold query resolves to nothing and writes nothing. Roll back
+    # rather than commit so an unrelated flush in this request cannot persist.
+    if not result.get("recorded", True):
+        session.rollback()
+    else:
+        session.commit()
     return schemas.FeedbackResponse(**result)
 
 
