@@ -31,6 +31,20 @@ def _session_or_404(session: Session, session_id: str) -> SynapseSession:
     return row
 
 
+def _to_session_out(row: SynapseSession) -> SessionOut:
+    """SessionOut.model_validate(row) plus computed age_seconds/idle_seconds.
+
+    No migration needed: both started_at and last_seen already exist on the
+    ORM row; this only computes the difference against "now" at serialization
+    time.
+    """
+    out = SessionOut.model_validate(row)
+    now = datetime.now(timezone.utc)
+    out.age_seconds = (now - row.started_at).total_seconds()
+    out.idle_seconds = (now - row.last_seen).total_seconds()
+    return out
+
+
 @router.post("/session", response_model=SessionOut)
 def register_session(
     payload: SessionRegister,
@@ -51,7 +65,7 @@ def register_session(
             existing.current_op = payload.current_op
         session.commit()
         session.refresh(existing)
-        return SessionOut.model_validate(existing)
+        return _to_session_out(existing)
 
     row = SynapseSession(
         session_id=payload.session_id,
@@ -65,7 +79,7 @@ def register_session(
     session.add(row)
     session.commit()
     session.refresh(row)
-    return SessionOut.model_validate(row)
+    return _to_session_out(row)
 
 
 @router.post("/heartbeat", response_model=SessionOut)
@@ -83,7 +97,7 @@ def heartbeat(
         row.current_op = payload.current_op
     session.commit()
     session.refresh(row)
-    return SessionOut.model_validate(row)
+    return _to_session_out(row)
 
 
 @router.post("/event", response_model=EventOut)
@@ -147,7 +161,7 @@ def list_active(
         q = q.where(SynapseSession.host == host)
     q = q.order_by(SynapseSession.last_seen.desc())
     rows = session.scalars(q).all()
-    return [SessionOut.model_validate(r) for r in rows]
+    return [_to_session_out(r) for r in rows]
 
 
 @router.get("/collisions", response_model=list[CollisionOut])

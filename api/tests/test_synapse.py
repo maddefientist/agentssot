@@ -93,6 +93,40 @@ class TestSynapseSchemas:
         )
         assert s.session_id == "x"
 
+    def test_session_out_age_idle_default_none(self):
+        """Plain model_validate (no routes.py wiring) must not fabricate ages."""
+        from datetime import datetime, timezone
+
+        from app.synapse.schemas import SessionOut
+
+        now = datetime.now(timezone.utc)
+        s = SessionOut(
+            session_id="x", host="h", cwd="/", repo=None, agent="a",
+            started_at=now, last_seen=now, current_file=None, current_op=None,
+        )
+        assert s.age_seconds is None
+        assert s.idle_seconds is None
+
+    def test_to_session_out_computes_age_and_idle(self):
+        """routes._to_session_out derives age_seconds/idle_seconds from the
+        existing started_at/last_seen columns -- no migration required."""
+        from datetime import datetime, timedelta, timezone
+        from types import SimpleNamespace
+
+        from app.synapse.routes import _to_session_out
+
+        now = datetime.now(timezone.utc)
+        row = SimpleNamespace(
+            session_id="x", host="h", cwd="/", repo=None, agent="a",
+            started_at=now - timedelta(seconds=120),
+            last_seen=now - timedelta(seconds=5),
+            current_file=None, current_op=None,
+        )
+        out = _to_session_out(row)
+        assert out.age_seconds == pytest.approx(120, abs=1)
+        assert out.idle_seconds == pytest.approx(5, abs=1)
+        assert out.age_seconds > out.idle_seconds
+
     def test_collision_out_schema(self):
         from datetime import datetime, timezone
 

@@ -1,4 +1,5 @@
 [tool.pytest.ini_options]
 markers = [
     "integration: requires live external services",
+    "smoke: requires a deployed service with representative data",
 ]

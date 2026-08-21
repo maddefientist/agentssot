@@ -38,6 +38,11 @@ class SessionOut(BaseModel):
     last_seen: datetime
     current_file: str | None
     current_op: str | None
+    # Computed convenience fields (no DB migration: both source timestamps
+    # already exist). None on plain `model_validate(row)` construction --
+    # routes.py sets them explicitly after validation.
+    age_seconds: float | None = None
+    idle_seconds: float | None = None
 
     model_config = {"from_attributes": True}
 

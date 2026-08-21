@@ -20,6 +20,8 @@ services:
   api:
     build:
       context: ./api
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
     container_name: agentssot-api
     env_file:
       - .env
@@ -36,6 +38,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      # Read-only: /doctor reports freshness (mtimes, .last_success) without
+      # ever reading dump contents. The API must never be able to write here.
+      - ./backups:/backups:ro
     ports:
       - "${API_PORT:-8088}:8000"
     healthcheck:
@@ -53,7 +59,7 @@ services:
       - .env
     environment:
       PGPASSWORD: ${POSTGRES_PASSWORD}
-      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
     depends_on:
       db:
         condition: service_healthy
@@ -65,20 +71,43 @@ services:
       - |
         set -eu
         mkdir -p /backups
-        while true; do
+
+        dump_and_validate() {
           ts="$(date +%Y%m%d_%H%M%S)"
           outfile="/backups/ssot_$${ts}.dump"
-          pg_dump -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -f "$$outfile"
-          fsize="$(stat -c%s "$$outfile" 2>/dev/null || echo 0)"
+          partfile="$${outfile}.part"
+          pg_dump -h db -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -Fc -f "$$partfile"
+          fsize="$(stat -c%s "$$partfile" 2>/dev/null || echo 0)"
           if [ "$$fsize" -le 0 ]; then
-            echo "[WARN] backup $$outfile is empty ($$fsize bytes), retrying in 60s..."
-            sleep 60
-            pg_dump -h db -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc -f "$$outfile" || true
-          else
-            echo "[OK] backup $$outfile ($$fsize bytes)"
+            echo "[WARN] backup $$partfile is empty ($$fsize bytes)"
+            rm -f "$$partfile"
+            return 1
           fi
+          # Validate the archive's table-of-contents BEFORE it is ever named
+          # a real .dump file or counted as a success — a corrupt/truncated
+          # dump must never look like a good backup.
+          if ! pg_restore --list "$$partfile" >/dev/null 2>&1; then
+            echo "[WARN] backup $$partfile failed pg_restore --list validation"
+            rm -f "$$partfile"
+            return 1
+          fi
+          # Atomic rename: readers only ever see a complete, validated file
+          # at the final .dump path.
+          mv "$$partfile" "$$outfile"
+          echo "[OK] backup $$outfile ($$fsize bytes, validated)"
+          date -u +%Y-%m-%dT%H:%M:%SZ > /backups/.last_success
+          return 0
+        }
+
+        while true; do
+          if ! dump_and_validate; then
+            echo "[WARN] retrying backup in 60s..."
+            sleep 60
+            dump_and_validate || echo "[WARN] backup retry also failed; will try again next cycle"
+          fi
+          find /backups -type f -name '*.dump.part' -mmin +60 -delete || true
           find /backups -type f -name '*.dump' -size 0 -delete || true
-          find /backups -type f -name '*.dump' -mtime +"$BACKUP_RETENTION_DAYS" -delete || true
+          find /backups -type f -name '*.dump' -mtime +"$$BACKUP_RETENTION_DAYS" -delete || true
           sleep 86400
         done
     restart: unless-stopped

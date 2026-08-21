@@ -112,6 +112,44 @@ DEDUP_COLLAPSE_SIMILARITY = 0.985
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
+# Process-local cooldown gate for slow-recall alerts (module state is fine
+# here: alert-storm suppression only needs to work per-process, not across
+# replicas, and resets naturally on restart).
+_last_slow_recall_alert_at: float = 0.0
+
+
+def _maybe_alert_slow_recall(vec_ms: int, rerank_ms: int, namespace: str) -> None:
+    """Warn + fire the existing non-throwing alert hook when a recall's total
+    vec+rerank time crosses a settings-driven threshold, cooldown-limited so
+    a sustained slow period (e.g. GPU contention during synthesis) fires one
+    alert per cooldown window instead of one per request."""
+    global _last_slow_recall_alert_at
+    import time as _time
+
+    settings = get_settings()
+    total_ms = vec_ms + rerank_ms
+    threshold_ms = getattr(settings, "recall_slow_alert_threshold_ms", 10000)
+    if total_ms <= threshold_ms:
+        return
+
+    cooldown_seconds = getattr(settings, "recall_slow_alert_cooldown_seconds", 900)
+    now = _time.time()
+    if now - _last_slow_recall_alert_at < cooldown_seconds:
+        return
+    _last_slow_recall_alert_at = now
+
+    _log.warning(
+        "slow recall: vec_ms=%s rerank_ms=%s total_ms=%s namespace=%s",
+        vec_ms, rerank_ms, total_ms, namespace,
+    )
+    from ..alerting import send_alert
+    send_alert(
+        "recall.slow",
+        "warning",
+        f"Recall took {total_ms}ms (vec={vec_ms}ms rerank={rerank_ms}ms) in namespace '{namespace}'",
+        {"namespace": namespace, "vec_ms": vec_ms, "rerank_ms": rerank_ms, "total_ms": total_ms, "threshold_ms": threshold_ms},
+    )
+
 
 def _map_memory_type(category: str | None, memory_type: str | None) -> str | None:
     """Map legacy memory_type to category if category not specified."""
@@ -630,6 +668,16 @@ async def _recall_bucketed(
 
     settings = get_settings()
     rerank_total_ms = 0
+    degraded_reason: str | None = None
+    # Checked once per request (not per-tier): the nightly synthesis run makes
+    # synchronous LLM calls against the same shared Ollama instance the
+    # reranker uses, so reranking is skipped for the whole request while
+    # synthesis is active rather than degrading tier-by-tier.
+    from ..synthesis.loop import is_synthesis_active
+    synthesis_active = is_synthesis_active()
+    if synthesis_active:
+        degraded_reason = "synthesis_active: reranking skipped, vector-only results"
+
     for tier in tiers:
         top_k = data.top_per_tier.get(tier, 5)
         candidate_pool = top_k * multiplier
@@ -703,8 +751,11 @@ async def _recall_bucketed(
         items = [by_id[sid][0] for sid in ordered_ids]
         scores = [1.0 - float(by_id[sid][1]) for sid in ordered_ids]
 
-        # Optional rerank
-        if reranker.is_available:
+        # Optional rerank — skipped entirely while synthesis is active (vector-only).
+        if synthesis_active:
+            items = items[:top_k]
+            scores = scores[:top_k]
+        elif reranker.is_available:
             t1 = time.perf_counter()
             try:
                 texts = [it.summary or it.abstract or it.content[:500] for it in items]
@@ -716,6 +767,7 @@ async def _recall_bucketed(
             except Exception:
                 items = items[:top_k]
                 scores = scores[:top_k]
+                degraded_reason = degraded_reason or f"reranker_error on tier '{tier}': vector-only fallback"
             rerank_total_ms += int((time.perf_counter() - t1) * 1000)
         else:
             items = items[:top_k]
@@ -743,6 +795,8 @@ async def _recall_bucketed(
             for bi in bucket_items:
                 sanitize_obj_fields(bi, ("abstract", "summary", "content"))
 
+    _maybe_alert_slow_recall(vec_ms, rerank_total_ms, namespace)
+
     return BucketedRecallResponse(
         buckets=buckets,
         diagnostics=BucketedRecallDiagnostics(
@@ -750,6 +804,7 @@ async def _recall_bucketed(
             vec_ms=vec_ms,
             rerank_ms=rerank_total_ms,
             reranker_used=reranker_name,
+            degraded_reason=degraded_reason,
         ),
     )
 

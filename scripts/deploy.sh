@@ -62,7 +62,8 @@ echo ""
 
 # ── Step 3: Rebuild + restart ──────────────────────────────────────
 echo -e "${YELLOW}Step 3: Rebuild + restart api (startup.py applies idempotent migrations)${NC}"
-run "ssh '$REMOTE_HOST' 'cd $REMOTE_DIR && docker compose build api && docker compose up -d api'"
+DEPLOY_SHA="$(cd "$LOCAL_DIR" && git rev-parse HEAD)"
+run "ssh '$REMOTE_HOST' 'cd $REMOTE_DIR && GIT_SHA=$DEPLOY_SHA docker compose build --build-arg GIT_SHA=$DEPLOY_SHA api && GIT_SHA=$DEPLOY_SHA docker compose up -d api'"
 echo ""
 
 # ── Step 4: Health ─────────────────────────────────────────────────

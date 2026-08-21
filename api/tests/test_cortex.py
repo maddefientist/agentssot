@@ -5,6 +5,8 @@ import pytest
 
 from .conftest import BASE_URL
 
+pytestmark = pytest.mark.integration
+
 API_KEY = None  # Will be set by fixture
 
 

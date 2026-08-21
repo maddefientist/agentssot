@@ -1,14 +1,14 @@
 """Entity admin endpoints."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, cast
 from sqlalchemy.dialects.postgresql import ARRAY, TEXT
 from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.models import Entity, KnowledgeItem
-from app.security import require_api_key, AuthContext, ApiRole
+from app.security import require_api_key, AuthContext, ApiRole, ensure_namespace_access
 
 router = APIRouter(prefix="/api/v1/entities", tags=["entities"])
 
@@ -20,9 +20,13 @@ async def list_entities(
     session: Session = Depends(get_session),
     auth: AuthContext = Depends(require_api_key),
 ):
-    """List entities in the namespace with reference counts. Writer or admin required."""
-    if auth.role not in (ApiRole.writer.value, ApiRole.admin.value):
-        raise HTTPException(status_code=403, detail="writer or admin role required")
+    """List entities in the namespace with reference counts. Writer or admin required.
+
+    Namespace-scoped: the caller's key must be authorized for this specific
+    namespace, not merely hold a writer/admin role globally (a writer key
+    scoped to namespace A must not be able to list entities in namespace B).
+    """
+    ensure_namespace_access(auth, namespace, {ApiRole.writer.value, ApiRole.admin.value})
 
     entities = list(
         session.execute(

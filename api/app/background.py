@@ -91,11 +91,18 @@ def _run_compaction_cycle(app) -> None:
 
 
 async def lifecycle_sweep_loop(app) -> None:
-    """Run lifecycle_sweep at 03:00 UTC daily."""
+    """Run lifecycle_sweep daily at settings.lifecycle_sweep_schedule_hour UTC.
+
+    Deliberately configured separately from synthesis_schedule_hour so the two
+    daily background jobs do not default to colliding on the same wall-clock
+    hour and contending for the same DB/GPU resources.
+    """
     from .services.lifecycle_sweep import run_sweep
+    settings = app.state.settings
     while True:
         now = datetime.now(timezone.utc)
-        next_run = now.replace(hour=3, minute=0, second=0, microsecond=0)
+        target_hour = getattr(settings, "lifecycle_sweep_schedule_hour", 5)
+        next_run = now.replace(hour=target_hour, minute=0, second=0, microsecond=0)
         if next_run <= now:
             next_run = next_run + timedelta(days=1)
         sleep_seconds = (next_run - now).total_seconds()

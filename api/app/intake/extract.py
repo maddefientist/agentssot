@@ -175,9 +175,15 @@ def _resolve_binaries() -> tuple[str, str]:
     yt_dlp_bin = shutil.which("yt-dlp")
     if not yt_dlp_bin:
         raise IntakeExtractionError("yt-dlp binary not found on PATH")
-    ffmpeg_bin = shutil.which("ffmpeg") or "/usr/bin/ffmpeg"
-    if not os.path.exists(ffmpeg_bin):
-        raise IntakeExtractionError("ffmpeg binary not found")
+    # shutil.which has already verified an executable returned from PATH. Only
+    # stat the legacy absolute fallback when PATH resolution failed; checking a
+    # successfully resolved path again made unit tests and non-Linux hosts
+    # depend on a fabricated /usr/bin/ffmpeg path.
+    ffmpeg_bin = shutil.which("ffmpeg")
+    if not ffmpeg_bin:
+        ffmpeg_bin = "/usr/bin/ffmpeg"
+        if not os.path.exists(ffmpeg_bin):
+            raise IntakeExtractionError("ffmpeg binary not found")
     return yt_dlp_bin, ffmpeg_bin
 
 

@@ -1,7 +1,9 @@
 import asyncio
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -395,6 +397,48 @@ async def _connection_rows() -> dict:
     return dict(rows)
 
 
+def _backup_status(s) -> dict:
+    """Report backup freshness by stat-ing filenames/mtimes only -- never opens
+    or reads dump contents. Used by /doctor, never by /health."""
+    backup_dir = Path(getattr(s, "backup_dir", "/backups"))
+    now = time.time()
+    stale_after_seconds = max(int(getattr(s, "backup_stale_after_hours", 36)), 1) * 3600
+
+    newest_dump_at = None
+    newest_dump_age_seconds = None
+    try:
+        dumps = [p for p in backup_dir.glob("*.dump") if p.is_file()]
+        if dumps:
+            newest = max(dumps, key=lambda p: p.stat().st_mtime)
+            mtime = newest.stat().st_mtime
+            newest_dump_at = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+            newest_dump_age_seconds = int(now - mtime)
+    except OSError:
+        pass
+
+    last_success_at = None
+    last_success_age_seconds = None
+    try:
+        marker = backup_dir / ".last_success"
+        if marker.is_file():
+            mtime = marker.stat().st_mtime
+            last_success_at = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
+            last_success_age_seconds = int(now - mtime)
+    except OSError:
+        pass
+
+    stale = last_success_age_seconds is None or last_success_age_seconds > stale_after_seconds
+
+    return {
+        "newest_dump_at": newest_dump_at,
+        "newest_dump_age_seconds": newest_dump_age_seconds,
+        "last_success_at": last_success_at,
+        "last_success_age_seconds": last_success_age_seconds,
+        "stale_after_hours": getattr(s, "backup_stale_after_hours", 36),
+        "stale": stale,
+    }
+
+
 @app.get("/admin/connections")
 async def admin_connections(auth: AuthContext = Depends(require_api_key)):
     require_admin(auth)
@@ -521,6 +565,7 @@ async def doctor(
 
     return {
         "status": "degraded" if unreachable else "ok",
+        "git_sha": os.environ.get("GIT_SHA", "unknown"),
         "embedding_provider": s.embedding_provider,
         "embedding_model": embedding_model,
         "reranker_provider": s.reranker_provider,
@@ -534,6 +579,7 @@ async def doctor(
         "active_key_count": active_key_count,
         "connections": connections,
         "unreachable_providers": unreachable,
+        "backup": _backup_status(s),
     }
 
 

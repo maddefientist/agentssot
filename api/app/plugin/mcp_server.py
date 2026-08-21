@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#   "mcp[cli]>=1.0.0",
+#   "mcp[cli]>=1.0.0,<2.0.0",
 #   "httpx>=0.27",
 # ]
 # ///
@@ -45,9 +45,6 @@ BASE_URL: str = _cfg.get("base_url", "http://192.168.1.225:8088")
 API_KEY: str = _cfg.get("api_key", "")
 DEFAULT_NS: str = _cfg.get("default_namespace", "claude-shared")
 DEVICE_NAME: str = _cfg.get("device_name", "unknown")
-AGENT_KEY: str = f"device-{DEVICE_NAME}-writer"
-
-HEADERS = {"X-API-Key": API_KEY, "Content-Type": "application/json"}
 TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
 mcp = FastMCP("hari-hive")
@@ -75,9 +72,46 @@ def _api_key_for(role: str = "writer") -> str:
     return json.loads(agent_path.read_text())["api_key"]
 
 
+def _read_agent_config() -> dict[str, str]:
+    """Re-read agent.json on every call instead of trusting the module-start
+    BASE_URL/API_KEY/DEFAULT_NS/DEVICE_NAME snapshot.
+
+    A long-lived stdio session (hours, sometimes over a day) would otherwise
+    keep using a stale base_url/api_key/namespace/device if an operator
+    rotates any of them mid-session. Falls back to the module-start values on
+    a read failure (missing/corrupt file mid-session) rather than raising —
+    unlike _api_key_for(role='admin'), a writer-path config re-read is a
+    best-effort refresh, not a permission gate, so it degrades gracefully to
+    "last known good" instead of failing the call outright. Never logs the
+    key material itself.
+    """
+    agent_path = Path(
+        os.environ.get("HIVE_AGENT_JSON", Path.home() / ".claude/agentssot/local/agent.json")
+    )
+    try:
+        cfg = json.loads(agent_path.read_text())
+    except Exception:
+        cfg = {}
+    device_name = cfg.get("device_name", DEVICE_NAME)
+    return {
+        "base_url": cfg.get("base_url", BASE_URL),
+        "api_key": cfg.get("api_key", API_KEY),
+        "default_ns": cfg.get("default_namespace", DEFAULT_NS),
+        "device_name": device_name,
+        "agent_key": f"device-{device_name}-writer",
+    }
+
+
+def _namespace_or_default(namespace: str) -> str:
+    """Resolve the default namespace at call time for long-lived sessions."""
+    return namespace or _read_agent_config()["default_ns"]
+
+
 async def _client(role: str | None = None) -> httpx.AsyncClient:
-    """Build an AsyncClient. Default uses the cached writer key; pass role='admin'
-    to swap in the admin key from admin.json."""
+    """Build an AsyncClient from a freshly re-read base_url/api_key rather
+    than the module-start cache. Pass role='admin' to swap in the admin key
+    from admin.json instead of the writer key."""
+    cfg = _read_agent_config()
     if role and role != "writer":
         # Admin ops must fail loudly if admin.json is missing/unreadable — never
         # silently downgrade to the writer key, which would mask a permissions
@@ -89,10 +123,11 @@ async def _client(role: str | None = None) -> httpx.AsyncClient:
         # missing admin.json, the file whose entire purpose is to gate admin ops,
         # stopped denying them. Dropping it also restores the PermissionError handler
         # in hive_review_queue, which was dead code while this swallowed the raise.
-        key = _api_key_for(role)
+        key = _api_key_for(role)  # raises PermissionError if admin.json is absent — preserved
         headers = {"X-API-Key": key, "Content-Type": "application/json"}
-        return httpx.AsyncClient(base_url=BASE_URL, headers=headers, timeout=TIMEOUT)
-    return httpx.AsyncClient(base_url=BASE_URL, headers=HEADERS, timeout=TIMEOUT)
+        return httpx.AsyncClient(base_url=cfg["base_url"], headers=headers, timeout=TIMEOUT)
+    headers = {"X-API-Key": cfg["api_key"], "Content-Type": "application/json"}
+    return httpx.AsyncClient(base_url=cfg["base_url"], headers=headers, timeout=TIMEOUT)
 
 
 def _fmt_recall_item(item: dict, idx: int) -> str:
@@ -139,6 +174,23 @@ async def _api_error(resp: httpx.Response) -> str:
     return f"API error {resp.status_code}: {detail}"
 
 
+def _degraded_timeout_message(exc: httpx.TimeoutException, hint: str = "") -> str:
+    """Message for a request that timed out (backend possibly slow-but-alive,
+    e.g. under nightly synthesis GPU contention) rather than unreachable.
+
+    No automatic retry: retrying would add more load to an already-saturated
+    shared Ollama instance, which is the likely root cause of the timeout in
+    the first place.
+    """
+    msg = (
+        f"degraded: request timed out after {TIMEOUT.read}s — possible GPU contention "
+        "(synthesis window?); the backend may be slow but alive, not necessarily down."
+    )
+    if hint:
+        msg += f" {hint}"
+    return f"{msg} ({exc})"
+
+
 # ---------------------------------------------------------------------------
 # Core tools
 # ---------------------------------------------------------------------------
@@ -160,7 +212,7 @@ async def hive_recall(
         top_k: Max results per tier (used as default for top_per_tier).
         session_id: Optional session identifier for tracking recall events.
     """
-    ns = namespace or DEFAULT_NS
+    ns = namespace or _read_agent_config()["default_ns"]
     import time as _time
     body: dict[str, Any] = {
         "query": query,
@@ -175,6 +227,8 @@ async def hive_recall(
     try:
         async with await _client() as c:
             resp = await c.post("/api/v1/knowledge/recall", json=body)
+    except httpx.TimeoutException as exc:
+        return _degraded_timeout_message(exc, "try hive_query for exact match instead of hive_recall.")
     except httpx.HTTPError as exc:
         return f"Connection error: {exc}"
     if resp.status_code != 200:
@@ -218,7 +272,7 @@ async def hive_query(
         namespace: Namespace to search (default: claude-shared).
         limit: Max results.
     """
-    ns = namespace or DEFAULT_NS
+    ns = _namespace_or_default(namespace)
     params: dict[str, Any] = {"q": q, "namespace": ns, "limit": limit}
     try:
         async with await _client() as c:
@@ -269,7 +323,7 @@ async def hive_ingest(
     #
     # Shape differs: legacy took {namespace, knowledge_items: [...]}, tiered takes ONE
     # item at the top level (TieredKnowledgeCreate) and returns TieredKnowledgeResponse.
-    ns = namespace or DEFAULT_NS
+    ns = _namespace_or_default(namespace)
     body: dict[str, Any] = {"namespace": ns, "content": content, "tags": tags or []}
     if source:
         body["source"] = source
@@ -302,7 +356,7 @@ async def hive_stats(namespace: str = "") -> str:
     Args:
         namespace: Namespace to check (default: claude-shared).
     """
-    ns = namespace or DEFAULT_NS
+    ns = _namespace_or_default(namespace)
     params = {"namespace": ns}
     try:
         async with await _client() as c:
@@ -351,7 +405,7 @@ async def hive_summarize(
         project_slug: Optional project slug for scoping.
         max_events: Max events to summarize at once.
     """
-    ns = namespace or DEFAULT_NS
+    ns = _namespace_or_default(namespace)
     body: dict[str, Any] = {
         "namespace": ns,
         "session_id": session_id,
@@ -394,7 +448,7 @@ async def cortex_state(
         namespace: Namespace (default: claude-shared).
         include_completed: If True, include completed/abandoned tasks.
     """
-    ns = namespace or DEFAULT_NS
+    ns = _namespace_or_default(namespace)
     params: dict[str, Any] = {
         "namespace": ns,
         "agent_key": agent_key,
@@ -471,7 +525,7 @@ async def cortex_reconstruct(
         include_recent_knowledge: If True, attach relevant knowledge snippets.
         top_k_knowledge: How many knowledge items to include (if enabled).
     """
-    ns = namespace or DEFAULT_NS
+    ns = _namespace_or_default(namespace)
     body: dict[str, Any] = {
         "namespace": ns,
         "agent_key": agent_key,
@@ -540,7 +594,7 @@ async def cortex_update(
             f"Invalid status '{status}'. Must be one of: "
             + ", ".join(sorted(valid_statuses))
         )
-    ns = namespace or DEFAULT_NS
+    ns = _namespace_or_default(namespace)
     body: dict[str, Any] = {
         "namespace": ns,
         "agent_key": agent_key,
@@ -604,7 +658,8 @@ async def hive_create_namespace(name: str) -> str:
             keys_resp = await c.get("/admin/api-keys")
         if keys_resp.status_code == 200:
             all_keys = keys_resp.json()
-            writer_key = next((k for k in all_keys if k.get("name") == AGENT_KEY), None)
+            agent_key = _read_agent_config()["agent_key"]
+            writer_key = next((k for k in all_keys if k.get("name") == agent_key), None)
             if writer_key:
                 key_id = writer_key["id"]
                 async with await _client(role="admin") as c:
@@ -615,7 +670,7 @@ async def hive_create_namespace(name: str) -> str:
     except Exception:
         pass  # grant failure is non-fatal; admin can grant manually
 
-    return f"Namespace '{name}' created and writer key '{AGENT_KEY}' granted access."
+    return f"Namespace '{name}' created and writer key '{_read_agent_config()['agent_key']}' granted access."
 
 
 @mcp.tool()
@@ -694,7 +749,7 @@ async def hive_delete_items(
         ids: List of item UUIDs to delete.
         namespace: Namespace (default: claude-shared).
     """
-    ns = namespace or DEFAULT_NS
+    ns = _namespace_or_default(namespace)
     body = {"namespace": ns, "ids": ids}
     try:
         async with await _client(role="admin") as c:
@@ -721,7 +776,7 @@ async def hive_dedup(
         namespace: Namespace to deduplicate (default: claude-shared).
         dry_run: If True, only report duplicates without deleting (default: True).
     """
-    ns = namespace or DEFAULT_NS
+    ns = _namespace_or_default(namespace)
     body = {"namespace": ns, "dry_run": dry_run}
     try:
         async with await _client(role="admin") as c:
@@ -770,8 +825,8 @@ async def hive_feedback(
     if signal not in ("useful", "noted", "wrong"):
         return "Error: signal must be 'useful', 'noted', or 'wrong'"
 
-    ns = namespace or DEFAULT_NS
-    body: dict[str, Any] = {"signal": signal, "agent_key": AGENT_KEY}
+    ns = _namespace_or_default(namespace)
+    body: dict[str, Any] = {"signal": signal, "agent_key": _read_agent_config()["agent_key"]}
     if knowledge_item_id:
         body["knowledge_item_id"] = knowledge_item_id
     elif concept_id:
@@ -840,7 +895,7 @@ async def hive_teach(
         success_hint: How to verify it worked (optional).
         namespace: Target namespace (default: claude-shared).
     """
-    ns = namespace or DEFAULT_NS
+    ns = _namespace_or_default(namespace)
     content = f"When: {trigger}\nDo: {action}"
     if success_hint:
         content += f"\nVerify: {success_hint}"
@@ -875,7 +930,7 @@ async def hive_profile(agent_key: str = "") -> str:
         agent_key: The agent key to look up. Leave empty for your own device profile.
     """
     # Default to own device key
-    key = agent_key or f"device-{_cfg.get('device_name', 'unknown')}-writer"
+    key = agent_key or _read_agent_config()["agent_key"]
     try:
         async with await _client() as c:
             r = await c.get(f"/agent-profile/{key}")
@@ -916,7 +971,7 @@ async def hive_session_end(
         "session_id": session_id or f"session-{_time.time_ns()}",
         "conversation_summary": conversation_summary,
         "recalled_concept_ids": [],
-        "agent_key": AGENT_KEY,
+        "agent_key": _read_agent_config()["agent_key"],
     }
     try:
         async with await _client() as c:
@@ -941,13 +996,14 @@ async def hive_status() -> str:
     recall/feedback stats, and any detected issues. Call this to verify you are
     properly connected and learning.
     """
+    cfg = _read_agent_config()
     issues: list[str] = []
     lines: list[str] = [
         "=== Hive Integration Status ===",
-        f"Device: {DEVICE_NAME}",
-        f"Agent Key: {AGENT_KEY}",
-        f"API: {BASE_URL}",
-        f"Namespace: {DEFAULT_NS}",
+        f"Device: {cfg['device_name']}",
+        f"Agent Key: {cfg['agent_key']}",
+        f"API: {cfg['base_url']}",
+        f"Namespace: {cfg['default_ns']}",
         "",
     ]
 
@@ -973,6 +1029,13 @@ async def hive_status() -> str:
                 issues.append("LLM provider is down — synthesis and fact extraction disabled")
         else:
             issues.append(f"Health endpoint returned {resp.status_code}")
+    except httpx.TimeoutException as exc:
+        msg = _degraded_timeout_message(exc)
+        issues.append(msg)
+        lines.append(f"API SLOW/DEGRADED: {msg}")
+        lines.append("")
+        lines.append("Issues: " + "; ".join(issues))
+        return "\n".join(lines)
     except httpx.HTTPError as exc:
         issues.append(f"Cannot reach API: {exc}")
         lines.append(f"API UNREACHABLE: {exc}")
@@ -1000,7 +1063,7 @@ async def hive_status() -> str:
                 "/api/v1/knowledge/recall",
                 json={
                     "query": "hive status functional probe",
-                    "namespace": DEFAULT_NS,
+                    "namespace": cfg["default_ns"],
                     "bucketed": True,
                     "top_per_tier": {"rule": 1},
                     "session_id": f"hive-status-probe-{_t.time_ns()}",
@@ -1048,16 +1111,16 @@ async def hive_status() -> str:
     # 2. Stats
     try:
         async with await _client() as c:
-            resp = await c.get("/cortex/system-info", params={"namespace": DEFAULT_NS})
+            resp = await c.get("/cortex/system-info", params={"namespace": cfg["default_ns"]})
         if resp.status_code == 200:
             info = resp.json()
-            cfg = info.get("config", {})
+            system_cfg = info.get("config", {})
             agents = info.get("agents", [])
             lines.append("")
             lines.append("--- Knowledge Stats ---")
             # Get counts from cortex data
             async with await _client() as c:
-                dr = await c.get("/cortex/data", params={"namespace": DEFAULT_NS})
+                dr = await c.get("/cortex/data", params={"namespace": cfg["default_ns"]})
             if dr.status_code == 200:
                 dd = dr.json()
                 lines.append(f"  Concepts: {dd.get('total', '?')}")
@@ -1065,7 +1128,7 @@ async def hive_status() -> str:
 
             lines.append("")
             lines.append("--- Your Profile ---")
-            my_profile = next((a for a in agents if a["agent_key"] == AGENT_KEY), None)
+            my_profile = next((a for a in agents if a["agent_key"] == cfg["agent_key"]), None)
             if my_profile:
                 lines.append(f"  Recalls: {my_profile.get('total_recalls', 0)}")
                 lines.append(f"  Feedback: {my_profile.get('total_feedback', 0)}")
@@ -1078,9 +1141,9 @@ async def hive_status() -> str:
 
             lines.append("")
             lines.append(f"--- Config ---")
-            lines.append(f"  Synthesis model: {cfg.get('synthesis_model', '?')}")
-            lines.append(f"  Embedding model: {cfg.get('embedding_model', '?')}")
-            lines.append(f"  Synthesis hour: {cfg.get('synthesis_schedule_hour', '?')}:00 UTC")
+            lines.append(f"  Synthesis model: {system_cfg.get('synthesis_model', '?')}")
+            lines.append(f"  Embedding model: {system_cfg.get('embedding_model', '?')}")
+            lines.append(f"  Synthesis hour: {system_cfg.get('synthesis_schedule_hour', '?')}:00 UTC")
     except Exception:
         issues.append("Could not fetch system info")
 
@@ -1177,8 +1240,8 @@ async def hive_loadout(
     """
     body = {
         "cwd": cwd or os.environ.get("PWD") or os.getcwd(),
-        "device_id": device_id or DEVICE_NAME,
-        "namespace": namespace or DEFAULT_NS,
+        "device_id": device_id or _read_agent_config()["device_name"],
+        "namespace": _namespace_or_default(namespace),
         "token_budget": token_budget,
     }
     try:
@@ -1436,7 +1499,8 @@ async def synapse_status() -> dict[str, Any]:
     # agentssot reachability (1s timeout)
     agentssot_reachable = False
     try:
-        async with httpx.AsyncClient(base_url=BASE_URL, timeout=1.0) as c:
+        cfg = _read_agent_config()
+        async with httpx.AsyncClient(base_url=cfg["base_url"], timeout=1.0) as c:
             r = await c.get("/health")
             agentssot_reachable = r.status_code == 200
     except Exception:
@@ -1491,7 +1555,7 @@ async def synapse_status() -> dict[str, Any]:
             )
     elif not agentssot_reachable:
         hint = (
-            f"Local flag on but cannot reach agentssot at {BASE_URL}. "
+            f"Local flag on but cannot reach agentssot at {cfg['base_url']}. "
             "Confirm LAN connectivity to hari (192.168.1.225)."
         )
     elif listener == "not_installed":
@@ -1507,9 +1571,9 @@ async def synapse_status() -> dict[str, Any]:
         "local_enabled": enabled,
         "local_disabled_reason": reason,
         "agentssot_reachable": agentssot_reachable,
-        "agentssot_base_url": BASE_URL,
+        "agentssot_base_url": cfg["base_url"],
         "listener_daemon": listener,
-        "device_name": DEVICE_NAME,
+        "device_name": cfg["device_name"],
         "active_sessions_visible": active_count,
         "self_session_registered": self_registered,
         "onboarding_hint": hint,

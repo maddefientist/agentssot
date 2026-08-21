@@ -7,6 +7,8 @@ import pytest
 
 from .conftest import BASE_URL
 
+pytestmark = pytest.mark.integration
+
 
 def _unique_name(prefix: str = "pytest") -> str:
     """Generate a unique device name to avoid collisions between test runs."""

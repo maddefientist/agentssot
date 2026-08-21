@@ -193,6 +193,34 @@ class Settings(BaseSettings):
 
     bootstrap_admin_namespaces: str = Field(default="default", alias="BOOTSTRAP_ADMIN_NAMESPACES")
 
+    # Backup freshness reporting (read-only: /doctor stats ./backups, mounted
+    # read-only into the API container; the dump loop itself lives in
+    # docker-compose.yml's `backup` service, not in this process).
+    backup_dir: str = Field(default="/backups", alias="BACKUP_DIR")
+    backup_retention_days: int = Field(default=30, alias="BACKUP_RETENTION_DAYS")
+    backup_stale_after_hours: int = Field(default=36, alias="BACKUP_STALE_AFTER_HOURS")
+
+    # Reranker HTTP timeout, bounded low so a saturated Ollama instance (e.g.
+    # during the nightly synthesis window) degrades to vector-only recall
+    # within a few seconds per tier instead of accumulating up to 30s/tier.
+    reranker_timeout_seconds: int = Field(default=5, alias="RERANKER_TIMEOUT_SECONDS")
+
+    # Lifecycle sweep runs on its own configurable hour, distinct from
+    # synthesis_schedule_hour, so the two daily background jobs do not
+    # collide on the same wall-clock hour and contend for the same DB/GPU.
+    lifecycle_sweep_schedule_hour: int = Field(default=5, alias="LIFECYCLE_SWEEP_SCHEDULE_HOUR")
+
+    # Pause between namespace iterations in the nightly synthesis loop, to
+    # spread synchronous LLM calls out instead of bursting all 159+
+    # namespaces back-to-back and saturating the shared Ollama instance.
+    synthesis_namespace_pause_seconds: float = Field(default=1.0, alias="SYNTHESIS_NAMESPACE_PAUSE_SECONDS")
+
+    # Slow-recall observability: warn + alert when a single recall's
+    # vec_ms + rerank_ms exceeds this threshold, with a cooldown to avoid
+    # alert storms during a sustained slow period (e.g. GPU contention).
+    recall_slow_alert_threshold_ms: int = Field(default=10000, alias="RECALL_SLOW_ALERT_THRESHOLD_MS")
+    recall_slow_alert_cooldown_seconds: int = Field(default=900, alias="RECALL_SLOW_ALERT_COOLDOWN_SECONDS")
+
     @property
     def bootstrap_namespace_list(self) -> list[str]:
         items = [ns.strip() for ns in self.bootstrap_admin_namespaces.split(",") if ns.strip()]

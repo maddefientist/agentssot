@@ -17,6 +17,18 @@ from .synthesizer import run_synthesis_batch
 
 logger = logging.getLogger("agentssot.synthesis.loop")
 
+# Set while the nightly per-namespace synthesis run is actively making
+# synchronous LLM calls against the shared Ollama instance. Interactive
+# recall checks this to skip reranking (also an Ollama call) and degrade to
+# vector-only results instead of queuing behind — or timing out under —
+# synthesis load. Managed with try/finally so it is always cleared, even if
+# a namespace run raises.
+_synthesis_active = False
+
+
+def is_synthesis_active() -> bool:
+    return _synthesis_active
+
 
 def _gather_recent_knowledge(
     session: Session,
@@ -378,22 +390,34 @@ async def synthesis_loop(app) -> None:
                 with SessionLocal() as session:
                     namespaces = [ns.name for ns in session.scalars(select(Namespace)).all()]
 
-                for ns in namespaces:
-                    try:
-                        # Synthesis is CPU/IO-heavy and uses synchronous DB/LLM clients.
-                        # Run it in a worker thread so the FastAPI event loop can keep
-                        # serving health checks and recall/ingest requests while the
-                        # daily background job is processing namespaces.
-                        stats = await asyncio.to_thread(
-                            _run_synthesis_for_namespace,
-                            namespace=ns,
-                            settings=settings,
-                            llm_provider=llm_provider,
-                            embedding_provider=embedding_provider,
-                        )
-                        logger.info("synthesis complete", extra=stats)
-                    except Exception:
-                        logger.exception("synthesis failed for namespace", extra={"namespace": ns})
+                pause_seconds = max(getattr(settings, "synthesis_namespace_pause_seconds", 1.0), 0.0)
+                global _synthesis_active
+                _synthesis_active = True
+                try:
+                    for idx, ns in enumerate(namespaces):
+                        try:
+                            # Synthesis is CPU/IO-heavy and uses synchronous DB/LLM clients.
+                            # Run it in a worker thread so the FastAPI event loop can keep
+                            # serving health checks and recall/ingest requests while the
+                            # daily background job is processing namespaces.
+                            stats = await asyncio.to_thread(
+                                _run_synthesis_for_namespace,
+                                namespace=ns,
+                                settings=settings,
+                                llm_provider=llm_provider,
+                                embedding_provider=embedding_provider,
+                            )
+                            logger.info("synthesis complete", extra=stats)
+                        except Exception:
+                            logger.exception("synthesis failed for namespace", extra={"namespace": ns})
+
+                        # Pace requests to the shared Ollama instance between
+                        # namespaces, but never after the last one (no reason
+                        # to delay the loop's own completion/cancellation).
+                        if pause_seconds and idx < len(namespaces) - 1:
+                            await asyncio.sleep(pause_seconds)
+                finally:
+                    _synthesis_active = False
 
             # Global evidence verification is independent of namespace synthesis
             # and must not make the nightly cycle fail.

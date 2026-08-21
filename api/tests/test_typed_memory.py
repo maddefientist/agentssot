@@ -49,7 +49,11 @@ class TestMemoryTypeEnum:
     def test_enum_values(self):
         from app.models import MemoryType
 
-        expected = {"fact", "decision", "preference", "skill", "reference", "correction", "session_summary"}
+        expected = {
+            "fact", "decision", "preference", "skill", "reference",
+            "correction", "session_summary", "command", "rule", "entity",
+            "episodic", "doctrine",
+        }
         actual = {m.value for m in MemoryType}
         assert actual == expected
 

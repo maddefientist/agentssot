@@ -576,6 +576,7 @@ class BucketedRecallDiagnostics(BaseModel):
     vec_ms: int
     rerank_ms: int
     reranker_used: str  # actual configured reranker model name, or "none"
+    degraded_reason: str | None = None  # e.g. "synthesis_active" when reranking was skipped
 
 
 class BucketedRecallResponse(BaseModel):
