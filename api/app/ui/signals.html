@@ -152,7 +152,7 @@
 function signalsApp() {
   return {
     apiKey: (window.cortexAuth ? window.cortexAuth.getKey() : ""),
-    namespace: localStorage.getItem('signalsNs') || 'claude-shared',
+    namespace: localStorage.getItem('signalsNs') || 'default',
     items: [],
     loading: false,
     newTitle: '',

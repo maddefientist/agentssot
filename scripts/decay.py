@@ -107,7 +107,7 @@ def log_health_summary():
     ki_stats = psql("""
         SELECT COALESCE(status, 'active') as status, COUNT(*), ROUND(AVG(COALESCE(strength, 1.0))::numeric, 2)
         FROM knowledge_items
-        WHERE namespace = 'claude-shared'
+        WHERE namespace = 'default'
         GROUP BY COALESCE(status, 'active')
         ORDER BY 1
     """)
@@ -124,7 +124,7 @@ def log_health_summary():
             COUNT(*) FILTER (WHERE tags @> ARRAY['dormant']::text[]) as dormant,
             COUNT(*) FILTER (WHERE tags @> ARRAY['superseded']::text[]) as superseded,
             ROUND(AVG(confidence)::numeric, 3) as avg_conf
-        FROM concepts WHERE namespace = 'claude-shared'
+        FROM concepts WHERE namespace = 'default'
     """)
     if concept_stats:
         log.info("Concepts: %s", concept_stats)

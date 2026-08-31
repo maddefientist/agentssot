@@ -1,11 +1,11 @@
-"""SessionStart loadout hook — happy path + timeout fallback."""
+"""SessionStart hook stays lightweight and does not perform automatic recall."""
 import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
-HOOK = Path("~/.claude/plugins/hari-hive/hooks/SessionStart.md").expanduser()
+HOOK = Path(__file__).resolve().parents[2] / "app" / "plugin" / "hooks" / "SessionStart.md"
 
 
 def _extract_bash(md_text: str) -> str:
@@ -15,7 +15,7 @@ def _extract_bash(md_text: str) -> str:
 
 
 @pytest.mark.integration
-def test_hook_emits_hive_block_on_success(tmp_path):
+def test_hook_emits_bounded_hive_hint(tmp_path):
     script = tmp_path / "hook.sh"
     script.write_text(_extract_bash(HOOK.read_text()))
     out = subprocess.run(
@@ -23,13 +23,14 @@ def test_hook_emits_hive_block_on_success(tmp_path):
         capture_output=True, text=True, timeout=8,
         env={**os.environ, "PWD": "/opt/agentssot"},
     )
-    assert "<hive-loadout>" in out.stdout
-    assert "</hive-loadout>" in out.stdout
+    assert "<hive-available>" in out.stdout
+    assert "</hive-available>" in out.stdout
+    assert "Use hive_recall only when" in out.stdout
+    assert "<hive-loadout>" not in out.stdout
 
 
 @pytest.mark.integration
-def test_hook_falls_back_under_timeout(tmp_path, monkeypatch):
-    """If HIVE_API_BASE is bogus, hook must still emit the static fallback within 3s."""
+def test_hook_does_not_contact_the_api(tmp_path):
     script = tmp_path / "hook.sh"
     script.write_text(_extract_bash(HOOK.read_text()))
     out = subprocess.run(
@@ -37,4 +38,5 @@ def test_hook_falls_back_under_timeout(tmp_path, monkeypatch):
         capture_output=True, text=True, timeout=4,
         env={**os.environ, "HIVE_API_BASE": "http://127.0.0.1:1"},
     )
-    assert "<hive-available>" in out.stdout  # static fallback marker
+    assert out.returncode == 0
+    assert "<hive-available>" in out.stdout

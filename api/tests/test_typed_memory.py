@@ -321,7 +321,7 @@ class TestTypedMemoryIntegration:
         resp = client.post(
             "/ingest",
             json={
-                "namespace": "claude-shared",
+                "namespace": "default",
                 "knowledge_items": [
                     {"content": "Test backward compat item", "tags": ["test-typed-memory"]},
                 ],
@@ -337,7 +337,7 @@ class TestTypedMemoryIntegration:
         resp = client.post(
             "/ingest",
             json={
-                "namespace": "claude-shared",
+                "namespace": "default",
                 "knowledge_items": [
                     {
                         "content": "User prefers dark terminals",
@@ -356,7 +356,7 @@ class TestTypedMemoryIntegration:
         resp = client.post(
             "/recall",
             json={
-                "namespace": "claude-shared",
+                "namespace": "default",
                 "query_text": "test backward compat",
                 "scope": "knowledge",
                 "top_k": 5,
@@ -372,7 +372,7 @@ class TestTypedMemoryIntegration:
         resp = client.post(
             "/recall",
             json={
-                "namespace": "claude-shared",
+                "namespace": "default",
                 "query_text": "dark terminals",
                 "scope": "knowledge",
                 "top_k": 5,
@@ -387,7 +387,7 @@ class TestTypedMemoryIntegration:
         resp = client.post(
             "/recall",
             json={
-                "namespace": "claude-shared",
+                "namespace": "default",
                 "query_text": "test",
                 "scope": "knowledge",
                 "top_k": 5,

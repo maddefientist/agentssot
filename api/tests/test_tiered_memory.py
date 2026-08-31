@@ -141,9 +141,9 @@ class TestTieredRecallRequestSchema:
     """TieredRecallRequest namespace default."""
 
     def test_namespace_defaults_to_default(self):
-        # TieredRecallRequest.namespace changed from "claude-shared" to "default"
+        # TieredRecallRequest.namespace changed from "default" to "default"
         # to be consistent with all other namespace fields in the app (IngestRequest,
-        # RecallRequest, etc.). "claude-shared" was a historical outlier.
+        # RecallRequest, etc.). "default" was a historical outlier.
         from app.schemas import TieredRecallRequest
 
         req = TieredRecallRequest(query="hello")

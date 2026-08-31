@@ -39,7 +39,7 @@ sandbox) — see api/app/db.py for connection details (SessionLocal).
 
 USAGE:
   python scripts/recall_quality_report.py
-  python scripts/recall_quality_report.py --namespace claude-shared --days 14
+  python scripts/recall_quality_report.py --namespace default --days 14
   python scripts/recall_quality_report.py --json
   python scripts/recall_quality_report.py --probe --api-base https://hive.example.com \\
       --api-key sk-... --probe-count 20
@@ -73,7 +73,7 @@ PROBE_QUERIES = [
     "what is the fleet webhook orchestrator host",
     "how to run the chain orchestrator for a coding task",
     "recall event feedback rate baseline",
-    "madi-guard pretooluse gate script",
+    "pretooluse policy gate script",
     "concept confidence versus knowledge item confidence",
 ]
 
@@ -656,7 +656,7 @@ def main(argv: list[str] | None = None) -> int:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--namespace", default="claude-shared", help="Namespace to report on (default: claude-shared)")
+    parser.add_argument("--namespace", default="default", help="Namespace to report on (default: default)")
     parser.add_argument("--days", type=int, default=14, help="Lookback window in days (default: 14)")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON instead of text")
     parser.add_argument("--probe", action="store_true", help="Fire live recall calls to measure latency")

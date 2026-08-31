@@ -12,7 +12,7 @@ import httpx
 
 BASE = os.environ.get("SSOT_TEST_URL", "http://localhost:8088")
 KEY = os.environ.get("SSOT_TEST_API_KEY", "")
-NS = os.environ.get("SSOT_TEST_NAMESPACE", "claude-shared")
+NS = os.environ.get("SSOT_TEST_NAMESPACE", "default")
 
 
 @pytest.mark.smoke

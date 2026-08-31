@@ -49,3 +49,23 @@ def test_deferred_briefing_is_honest():
     events = asyncio.run(_go())
     assert events[-1].data.get("deferred") is True
     assert any("deferred" in (e.data or "") for e in events if e.type == "token")
+
+
+def test_orchestrate_and_dispatch_fail_closed_by_default():
+    reg = build_registry(**_fakes())
+
+    async def _go(name):
+        return [event async for event in reg[name].execute(name, {})]
+
+    for name in ("orchestrate", "dispatch"):
+        events = asyncio.run(_go(name))
+        assert len(events) == 1
+        assert events[0].type == "error"
+        assert events[0].data["retryable"] is False
+        assert "explicit operator enablement" in events[0].data["message"]
+
+
+def test_execution_capabilities_require_explicit_enablement():
+    reg = build_registry(**_fakes(), execution_enabled=True)
+    assert reg["orchestrate"].__class__.__name__ == "OrchestrateExecutor"
+    assert reg["dispatch"].__class__.__name__ == "DispatchExecutor"

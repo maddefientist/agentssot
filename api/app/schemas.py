@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # Category enum for API
 MemoryCategoryLiteral = Literal[
@@ -55,8 +55,7 @@ class TieredKnowledgeResponse(BaseModel):
     created_at: datetime
     verbatim: bool = False
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TieredRecallRequest(BaseModel):
@@ -185,6 +184,9 @@ class RecallRequest(BaseModel):
     entity_slug: str | None = None
     session_id: str | None = None
     agent_key: str | None = None
+    # Fast retrieval is the safe default. Reranking consumes shared model
+    # capacity and must be requested only after it clears a deployment eval.
+    rerank: bool = False
     # Typed memory filters (opt-in, ignored when typed_memory_enabled=False)
     memory_type: Literal[
         "fact", "decision", "preference", "skill",
@@ -423,28 +425,6 @@ class NamespaceStatsResponse(BaseModel):
     concepts: ItemCountDetail | None = None
 
 
-class AutoEnrollRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-    passphrase: str = ""
-
-
-class AgentConfig(BaseModel):
-    base_url: str
-    api_key: str
-    device_name: str
-    default_namespace: str
-    default_scope: str
-    namespaces: list[str]
-
-
-class AutoEnrollResponse(BaseModel):
-    api_key: str
-    name: str
-    role: Literal["reader", "writer", "admin"]
-    namespaces: list[str]
-    agent_config: AgentConfig
-
-
 class AgentProfileResponse(BaseModel):
     agent_key: str
     namespace: str
@@ -459,7 +439,7 @@ class AgentProfileResponse(BaseModel):
 
 
 class FeedbackRequest(BaseModel):
-    signal: Literal["useful", "noted", "wrong"]
+    signal: Literal["useful", "noted", "wrong", "irrelevant"]
     concept_id: str | None = None
     knowledge_item_id: str | None = None
     query: str | None = None
@@ -594,8 +574,8 @@ class ExpandResponse(BaseModel):
 
 class LoadoutRequest(BaseModel):
     cwd: str = Field(..., description="Working directory the agent is operating in")
-    device_id: str | None = Field(None, description="Calling device identifier, e.g. 'hari'")
-    namespace: str = Field("claude-shared")
+    device_id: str | None = Field(None, description="Calling device identifier, e.g. 'workstation'")
+    namespace: str = Field("default")
     token_budget: int = Field(750, ge=200, le=3000)
 
 

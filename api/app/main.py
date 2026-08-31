@@ -8,8 +8,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -22,7 +21,14 @@ from .llm import LLMProviderError, build_llm_provider
 from .reranker import build_reranker_provider
 from .logging_config import configure_logging
 from .models import ApiKey, ApiRole
-from .security import AuthContext, clear_auth_cache, ensure_namespace_access, require_admin, require_api_key
+from .security import (
+    AuthContext,
+    auth_context_is_current,
+    clear_auth_cache,
+    ensure_namespace_access,
+    require_admin,
+    require_api_key,
+)
 from .settings import Settings, get_settings
 from .runtime_config import HOT_KEYS, apply_overrides, delete_override, load_overrides, set_override
 from .startup import initialize_system
@@ -39,6 +45,8 @@ from .routers.intake import router as intake_router
 from .routers.wonder import router as wonder_router
 from .gateway.routes import build_router as build_gateway_router
 from .gateway.wiring import build_gateway
+from .gateway.auth import TicketManager
+from .gateway.config import HIVE_NAMESPACE
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -265,13 +273,55 @@ app.include_router(adherence_router)
 app.include_router(review_router)
 app.include_router(wonder_router)
 
-# --- Madi gateway (HUD nervous system): WS command + SSE status ---
-_gateway_factory, _gateway_status = build_gateway(app)
-app.include_router(build_gateway_router(_gateway_factory, _gateway_status))
+# --- Optional operator gateway: WebSocket command + SSE status ---
+if settings.gateway_enabled:
+    # Tickets and abuse limits are process-local. Refuse a multi-worker setup
+    # until a shared ticket/rate/revocation backend exists. The production
+    # container entrypoint validates Uvicorn CLI arguments before the server
+    # starts and provides this safety attestation.
+    if os.environ.get("AGENTSSOT_LAUNCHER_ATTESTATION") != "single-worker-v1":
+        raise RuntimeError(
+            "GATEWAY_ENABLED requires the owned container entrypoint; direct ASGI "
+            "launchers are unsupported until gateway state uses a shared backend"
+        )
+    for worker_env in ("WEB_CONCURRENCY", "UVICORN_WORKERS"):
+        raw_workers = os.environ.get(worker_env)
+        if raw_workers is not None:
+            try:
+                worker_count = int(raw_workers)
+            except ValueError as exc:
+                raise RuntimeError(f"{worker_env} must be an integer when the gateway is enabled") from exc
+            if worker_count != 1:
+                raise RuntimeError(
+                    "GATEWAY_ENABLED requires a single API worker; disable the gateway "
+                    "or add a shared ticket/rate/revocation backend"
+                )
+    _gateway_factory, _gateway_status = build_gateway(
+        app,
+        execution_enabled=settings.gateway_execution_enabled,
+    )
+    app.include_router(
+        build_gateway_router(
+            _gateway_factory,
+            _gateway_status,
+            authorization_check=lambda auth: auth_context_is_current(
+                auth,
+                namespace=HIVE_NAMESPACE,
+                minimum_role=ApiRole.admin.value,
+            ),
+            ticket_manager=TicketManager(ttl_seconds=settings.gateway_ticket_ttl_seconds),
+            max_text_chars=settings.gateway_max_text_chars,
+            max_frame_bytes=settings.gateway_max_frame_bytes,
+            max_messages_per_minute=settings.gateway_max_messages_per_minute,
+            max_connections=settings.gateway_max_connections,
+            connection_ttl_seconds=settings.gateway_connection_ttl_seconds,
+            revalidate_seconds=settings.gateway_revalidate_seconds,
+        )
+    )
 
 
 def _render_hud() -> HTMLResponse:
-    """Render the Madi HUD as a full-bleed surface (no cortex nav chrome).
+    """Render the operator HUD as a full-bleed surface (no cortex nav chrome).
 
     Self-busts hud.css/hud.js by their own mtime so edits invalidate the cache.
     Shared by ``/`` (the default landing) and ``/hud`` (alias).
@@ -286,10 +336,11 @@ def _render_hud() -> HTMLResponse:
     return HTMLResponse(html.replace("__V__", str(v)))
 
 
-@app.get("/hud", include_in_schema=False)
-def hud_page():
-    """Alias for the HUD; the HUD is also the default landing at ``/``."""
-    return _render_hud()
+if settings.gateway_enabled:
+    @app.get("/hud", include_in_schema=False)
+    def hud_page():
+        """Authenticated-ticket HUD, available only when explicitly enabled."""
+        return _render_hud()
 
 
 @app.middleware("http")
@@ -585,11 +636,11 @@ async def doctor(
 
 @app.get("/", include_in_schema=False)
 def ui_home():
-    """Default landing is the Madi HUD (the cohesive hero surface).
+    """Default to the operator HUD only when that optional surface is enabled.
 
     The legacy Cortex admin index moved to /classic (still linked in the nav).
     """
-    if (UI_DIR / "hud.html").exists():
+    if settings.gateway_enabled and (UI_DIR / "hud.html").exists():
         return _render_hud()
     if (UI_DIR / "index.html").exists():
         return render_with_nav("index.html", active="home")
@@ -691,7 +742,7 @@ def adherence_page():
 
 @app.get("/cortex/data", include_in_schema=False)
 def cortex_data(
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     session: Session = Depends(get_session),
     _auth: AuthContext = Depends(require_api_key),
 ):
@@ -713,7 +764,7 @@ def cortex_data(
 
 @app.get("/cortex/links", include_in_schema=False)
 def cortex_links(
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     limit: int = Query(default=200, le=500),
     min_weight: float = Query(default=0.3, ge=0.0, le=1.0),
     session: Session = Depends(get_session),
@@ -726,7 +777,7 @@ def cortex_links(
 
 @app.get("/cortex/system-info", include_in_schema=False)
 def cortex_system_info(
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     session: Session = Depends(get_session),
     _auth: AuthContext = Depends(require_api_key),
 ):
@@ -786,7 +837,7 @@ def cortex_system_info(
 
 @app.get("/cortex/activity", include_in_schema=False)
 def cortex_activity(
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     limit: int = Query(default=50, le=100),
     session: Session = Depends(get_session),
     _auth: AuthContext = Depends(require_api_key),
@@ -836,7 +887,7 @@ def cortex_activity(
 
 @app.get("/dashboard/stats", include_in_schema=False)
 def dashboard_stats(
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     session: Session = Depends(get_session),
     _auth: AuthContext = Depends(require_api_key),
 ):
@@ -922,7 +973,7 @@ def dashboard_stats(
 @app.post("/feedback", response_model=schemas.FeedbackResponse)
 def submit_feedback(
     payload: schemas.FeedbackRequest,
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     auth: AuthContext = Depends(require_api_key),
     session: Session = Depends(get_session),
 ):
@@ -943,7 +994,37 @@ def submit_feedback(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         session.commit()
+        wal.log_event(
+            "feedback.knowledge",
+            namespace=namespace,
+            actor_key_id=auth.key_id,
+            payload={
+                "knowledge_item_id": payload.knowledge_item_id,
+                "signal": payload.signal,
+                "note_present": bool(payload.note),
+            },
+            result={
+                "recorded": result.get("recorded", True),
+                "strength": result.get("strength"),
+            },
+        )
         return schemas.FeedbackResponse(**result)
+
+    if payload.signal == "irrelevant":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="'irrelevant' is query-level feedback and requires knowledge_item_id from recall",
+        )
+
+    if not payload.concept_id and payload.query:
+        if not getattr(app.state.settings, "fuzzy_feedback_enabled", False):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Fuzzy feedback is disabled; send the exact ID returned by recall",
+            )
+        # Nearest-neighbour resolution can still target the wrong record even
+        # below a distance floor, so it remains an operator diagnostic only.
+        require_admin(auth)
 
     try:
         result = crud.create_concept_feedback(
@@ -970,13 +1051,30 @@ def submit_feedback(
         session.rollback()
     else:
         session.commit()
+    wal.log_event(
+        "feedback.concept",
+        namespace=namespace,
+        actor_key_id=auth.key_id,
+        payload={
+            "concept_id": payload.concept_id,
+            "signal": payload.signal,
+            "note_present": bool(payload.note),
+            "resolved_by": result.get("resolved_by"),
+        },
+        result={
+            "recorded": result.get("recorded", True),
+            "matched": result.get("matched", True),
+            "resolved_concept_id": result.get("concept_id") or result.get("nearest_concept_id"),
+            "match_distance": result.get("match_distance"),
+        },
+    )
     return schemas.FeedbackResponse(**result)
 
 
 @app.post("/session-complete", response_model=schemas.SessionCompleteResponse)
 def session_complete(
     payload: schemas.SessionCompleteRequest,
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     auth: AuthContext = Depends(require_api_key),
     session: Session = Depends(get_session),
 ):
@@ -1118,9 +1216,11 @@ def onboarding_me(auth: AuthContext = Depends(require_api_key)) -> str:
             "- Never read/write namespaces your key does not allow.",
             "- Prefer private namespaces; use shared namespaces only for intentional sharing.",
             "- Keep memory atomic and tagged. Do not dump full transcripts.",
+            "- The current repository, runtime, and web state outrank remembered copies.",
             "",
-            "Recommended Loop (every task):",
-            "1) Start: GET /query and POST /recall in the relevant namespace(s).",
+            "Recommended Loop (only when durable context can materially help):",
+            "1) Start: use GET /query for exact identifiers or POST /recall for semantic context.",
+            "   Skip memory for self-contained work or when the current source is authoritative.",
             "2) During: POST /ingest events for decisions/directives/results.",
             "3) End: POST /summarize_clear to archive events and store a summary.",
             "",
@@ -1398,11 +1498,10 @@ def admin_deactivate_api_key(
     auth: AuthContext = Depends(require_api_key),
     session: Session = Depends(get_session),
 ):
-    """Deactivate an API key immediately, including cache invalidation.
+    """Deactivate an API key immediately and invalidate this worker's cache.
 
-    Without the clear_auth_cache() call below, a revoked key would keep
-    authenticating for up to _AUTH_CACHE_TTL_SECONDS (3600s) via the bcrypt
-    lookup cache in security.py.
+    Other workers also re-read cached key IDs on every request, so their next
+    authorization check observes this revocation without a cache broadcast.
     """
     require_admin(auth)
     from uuid import UUID as _UUID
@@ -1445,7 +1544,7 @@ def complete_stale_sessions(
 
 @app.get("/admin/feedback")
 def list_feedback(
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     concept_id: str | None = Query(default=None),
     signal: str | None = Query(default=None),  # useful/noted/wrong
     limit: int = Query(default=50),
@@ -1500,7 +1599,7 @@ def list_feedback(
 
 @app.get("/admin/feedback/contested")
 def list_contested_concepts(
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     limit: int = Query(default=30),
     auth: AuthContext = Depends(require_api_key),
     session: Session = Depends(get_session),
@@ -1715,7 +1814,6 @@ def admin_trigger_synthesis(
 # Fields treated as sensitive — values are masked in GET responses.
 _SENSITIVE_FIELDS = frozenset({
     "openai_api_key",
-    "enrollment_passphrase",
     "database_url",
 })
 
@@ -1785,7 +1883,6 @@ _SETTING_DESCRIPTIONS: dict[str, str] = {
     "wal_dir": "Directory for WAL files (restart required)",
     "wal_retention_days": "Days before WAL files are pruned",
     "semantic_dedup_threshold": "Cosine similarity threshold for ingest dedup (0.0 = disabled)",
-    "enrollment_passphrase": "Required passphrase for /enroll/auto — masked (restart required)",
     "expose_db_port": "Expose Postgres port externally (restart required)",
     "bootstrap_admin_namespaces": "Comma-separated namespaces given to the bootstrap admin key (restart required)",
     "classifier_model": "Classifier model name (runtime override persists until deleted)",
@@ -2076,347 +2173,6 @@ def enroll(
         role=record.role.value if hasattr(record.role, "value") else str(record.role),
         namespaces=list(record.namespaces or []),
     )
-
-
-
-# ── Open Enrollment (LAN trust) ───────────────────────────────────
-
-
-@app.post("/enroll/auto", response_model=schemas.AutoEnrollResponse)
-def enroll_auto(
-    payload: schemas.AutoEnrollRequest,
-    request: Request,
-    session: Session = Depends(get_session),
-):
-    """Self-service enrollment. No auth required — LAN trust + optional passphrase."""
-    record, plaintext, agent_config = crud.auto_enroll(
-        session=session,
-        name=payload.name,
-        passphrase=payload.passphrase,
-        settings=app.state.settings,
-    )
-
-    return schemas.AutoEnrollResponse(
-        api_key=plaintext,
-        name=record.name,
-        role=record.role.value if hasattr(record.role, "value") else str(record.role),
-        namespaces=list(record.namespaces or []),
-        agent_config=schemas.AgentConfig(**agent_config),
-    )
-
-
-@app.get("/enroll/portal", include_in_schema=False)
-def enroll_portal():
-    """Serve the enrollment portal HTML page."""
-    portal_file = UI_DIR / "enroll.html"
-    if not portal_file.exists():
-        raise HTTPException(status_code=404, detail="Enrollment portal not found")
-    return FileResponse(portal_file)
-
-
-@app.get("/enroll/bootstrap.sh", response_class=PlainTextResponse, include_in_schema=False)
-def enroll_bootstrap_script(request: Request):
-    """Serve a curl-pipeable bootstrap script for CLI enrollment."""
-    server_host = request.headers.get("host", "localhost:8088")
-    base_url = f"http://{server_host}"
-
-    return f'''#!/usr/bin/env bash
-set -euo pipefail
-
-# AgentSSOT Bootstrap Enrollment Script
-# Usage: curl -s {base_url}/enroll/bootstrap.sh | bash -s -- "my-device-name"
-#   or:  curl -s {base_url}/enroll/bootstrap.sh | bash -s -- "my-device-name" --passphrase "secret"
-
-DEVICE_NAME=""
-PASSPHRASE=""
-FORCE=false
-BASE_URL="{base_url}"
-CLAUDE_DIR="$HOME/.claude"
-AGENT_JSON="$CLAUDE_DIR/agentssot/local/agent.json"
-
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --passphrase) PASSPHRASE="$2"; shift 2 ;;
-        --force) FORCE=true; shift ;;
-        -*) echo "Unknown option: $1" >&2; exit 1 ;;
-        *) DEVICE_NAME="$1"; shift ;;
-    esac
-done
-
-if [[ -z "$DEVICE_NAME" ]]; then
-    echo "Usage: curl -s $BASE_URL/enroll/bootstrap.sh | bash -s -- \"device-name\" [--passphrase \"secret\"] [--force]"
-    exit 1
-fi
-
-echo "==> Enrolling device: $DEVICE_NAME"
-
-if [[ -f "$AGENT_JSON" && "$FORCE" != "true" ]]; then
-    echo "WARNING: $AGENT_JSON already exists."
-    echo "Use --force to overwrite, or remove it manually."
-    exit 1
-fi
-
-if [[ ! -d "$CLAUDE_DIR" ]]; then
-    echo "==> ~/.claude directory not found. Creating it..."
-    mkdir -p "$CLAUDE_DIR"
-fi
-
-mkdir -p "$CLAUDE_DIR/agentssot/local"
-
-echo "==> Calling enrollment API..."
-RESPONSE=$(curl -sf -X POST "$BASE_URL/enroll/auto" \
-    -H "Content-Type: application/json" \
-    -d "{{\\"name\\":\\"$DEVICE_NAME\\",\\"passphrase\\":\\"$PASSPHRASE\\"}}")
-
-if [[ $? -ne 0 || -z "$RESPONSE" ]]; then
-    echo "ERROR: Enrollment failed. Is $BASE_URL reachable?"
-    exit 1
-fi
-
-echo "$RESPONSE" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-config = data['agent_config']
-print(json.dumps(config, indent=2))
-" > "$AGENT_JSON"
-
-echo "==> Wrote $AGENT_JSON"
-
-echo "==> Verifying enrollment..."
-API_KEY=$(python3 -c "import sys,json; print(json.load(sys.stdin)['api_key'])" <<< "$RESPONSE")
-HEALTH=$(curl -sf -H "X-API-Key: $API_KEY" "$BASE_URL/health" 2>/dev/null || echo "FAIL")
-
-if echo "$HEALTH" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['status'])" 2>/dev/null | grep -q "ok"; then
-    echo "==> Enrollment successful! Device '$DEVICE_NAME' is now connected to AgentSSOT."
-    echo ""
-    echo "    API Key:    $API_KEY"
-    echo "    Config:     $AGENT_JSON"
-    echo "    Namespaces: claude-shared, device-$DEVICE_NAME-private"
-else
-    echo "WARNING: Enrollment completed but health check failed. Config was still written."
-    echo "    Check connectivity to $BASE_URL"
-fi
-
-# --- MCP Plugin Installation ---
-echo ""
-echo "==> Installing hari-hive MCP plugin..."
-
-PLUGIN_DIR="$CLAUDE_DIR/plugins/hari-hive"
-
-# Check if uv is available (required for MCP server)
-if ! command -v uv &>/dev/null; then
-    echo "WARNING: uv not found. MCP plugin requires uv (https://docs.astral.sh/uv/)."
-    echo "    Install uv first, then re-run with --force to install plugin."
-    echo "    Enrollment succeeded but MCP tools will not be available."
-    exit 0
-fi
-
-# Download plugin bundle from API
-BUNDLE=$(curl -sf "$BASE_URL/enroll/plugin-bundle" 2>/dev/null)
-if [[ $? -ne 0 || -z "$BUNDLE" ]]; then
-    echo "WARNING: Could not download plugin bundle from $BASE_URL/enroll/plugin-bundle"
-    echo "    Enrollment succeeded but MCP plugin was not installed."
-    exit 0
-fi
-
-# Create plugin directory structure
-mkdir -p "$PLUGIN_DIR/hooks" "$PLUGIN_DIR/skills/hive"
-
-# Write each plugin file from the bundle
-echo "$BUNDLE" | python3 -c "
-import sys, json, os
-bundle = json.load(sys.stdin)
-plugin_dir = os.environ.get('PLUGIN_DIR', os.path.expanduser('~/.claude/plugins/hari-hive'))
-for rel_path, content in bundle.items():
-    full_path = os.path.join(plugin_dir, rel_path)
-    os.makedirs(os.path.dirname(full_path), exist_ok=True)
-    with open(full_path, 'w') as f:
-        f.write(content)
-    print(f'    Wrote {{rel_path}}')
-"
-
-echo "==> Plugin installed at $PLUGIN_DIR"
-
-# Enable plugin in settings.json if not already
-SETTINGS_FILE="$CLAUDE_DIR/settings.json"
-if [[ -f "$SETTINGS_FILE" ]]; then
-    python3 -c "
-import json, sys
-
-settings_file = sys.argv[1]
-with open(settings_file) as f:
-    settings = json.load(f)
-
-plugins = settings.setdefault('enabledPlugins', {{}})
-if 'hari-hive' not in plugins:
-    plugins['hari-hive'] = True
-    with open(settings_file, 'w') as f:
-        json.dump(settings, f, indent=2)
-        f.write('\\n')
-    print('==> Enabled hari-hive plugin in settings.json')
-else:
-    print('==> hari-hive plugin already enabled in settings.json')
-" "$SETTINGS_FILE"
-else
-    echo "    NOTE: No settings.json found. Plugin installed but not auto-enabled."
-    echo "    Enable manually or start Claude Code to auto-detect it."
-fi
-
-# Remove old hive hooks from settings.json if present
-if [[ -f "$SETTINGS_FILE" ]]; then
-    python3 -c "
-import json, sys
-
-settings_file = sys.argv[1]
-with open(settings_file) as f:
-    settings = json.load(f)
-
-hooks = settings.get('hooks', {{}})
-changed = False
-
-# Remove old SessionStart hive hook
-start_hooks = hooks.get('SessionStart', [])
-new_start = [h for h in start_hooks if 'session-recall' not in json.dumps(h) and 'hive-session-start' not in json.dumps(h)]
-if len(new_start) != len(start_hooks):
-    if new_start:
-        hooks['SessionStart'] = new_start
-    else:
-        hooks.pop('SessionStart', None)
-    changed = True
-
-# Remove old SessionEnd extract_and_ingest hook
-end_hooks = hooks.get('SessionEnd', [])
-new_end = [h for h in end_hooks if 'extract_and_ingest' not in json.dumps(h)]
-if len(new_end) != len(end_hooks):
-    hooks['SessionEnd'] = new_end
-    changed = True
-
-if changed:
-    with open(settings_file, 'w') as f:
-        json.dump(settings, f, indent=2)
-        f.write('\\n')
-    print('==> Removed old hive shell hooks from settings.json (replaced by plugin)')
-" "$SETTINGS_FILE" 2>/dev/null
-fi
-
-echo ""
-echo "==> Setup complete! Start a new Claude Code session to activate."
-echo "    MCP tools available: hive_recall, hive_query, hive_ingest, hive_stats, + 6 more"
-echo "    Slash command: /hive [query]"
-'''
-
-
-@app.get("/enroll/install-plugin.sh", response_class=PlainTextResponse, include_in_schema=False)
-def enroll_install_plugin_script(request: Request):
-    """Plugin-only install script for already-enrolled agents."""
-    server_host = request.headers.get("host", "localhost:8088")
-    base_url = f"http://{server_host}"
-
-    return f'''#!/usr/bin/env bash
-set -euo pipefail
-
-# hari-hive MCP Plugin Installer (plugin-only, no re-enrollment)
-# For agents that already have ~/.claude/agentssot/local/agent.json
-# Usage: curl -s {base_url}/enroll/install-plugin.sh | bash
-
-CLAUDE_DIR="$HOME/.claude"
-AGENT_JSON="$CLAUDE_DIR/agentssot/local/agent.json"
-PLUGIN_DIR="$CLAUDE_DIR/plugins/hari-hive"
-BASE_URL="{base_url}"
-
-# Verify agent.json exists (must be enrolled first)
-if [[ ! -f "$AGENT_JSON" ]]; then
-    echo "ERROR: $AGENT_JSON not found."
-    echo "    You must enroll first:"
-    echo "    curl -s $BASE_URL/enroll/bootstrap.sh | bash -s -- \\"my-device-name\\""
-    exit 1
-fi
-
-echo "==> Found agent config at $AGENT_JSON"
-
-# Check uv
-if ! command -v uv &>/dev/null; then
-    echo "ERROR: uv not found. Install it first: https://docs.astral.sh/uv/"
-    exit 1
-fi
-
-# Download plugin bundle
-echo "==> Downloading plugin bundle..."
-BUNDLE=$(curl -sf "$BASE_URL/enroll/plugin-bundle" 2>/dev/null)
-if [[ $? -ne 0 || -z "$BUNDLE" ]]; then
-    echo "ERROR: Could not download plugin bundle from $BASE_URL/enroll/plugin-bundle"
-    exit 1
-fi
-
-# Create plugin directory structure
-mkdir -p "$PLUGIN_DIR/hooks" "$PLUGIN_DIR/skills/hive"
-
-# Write plugin files
-echo "$BUNDLE" | python3 -c "
-import sys, json, os
-bundle = json.load(sys.stdin)
-plugin_dir = os.environ.get('PLUGIN_DIR', os.path.expanduser('~/.claude/plugins/hari-hive'))
-for rel_path, content in bundle.items():
-    full_path = os.path.join(plugin_dir, rel_path)
-    os.makedirs(os.path.dirname(full_path), exist_ok=True)
-    with open(full_path, 'w') as f:
-        f.write(content)
-    print(f'    Wrote {{rel_path}}')
-"
-
-echo "==> Plugin installed at $PLUGIN_DIR"
-
-# Enable plugin in settings.json
-SETTINGS_FILE="$CLAUDE_DIR/settings.json"
-if [[ -f "$SETTINGS_FILE" ]]; then
-    python3 -c "
-import json, sys
-settings_file = sys.argv[1]
-with open(settings_file) as f:
-    settings = json.load(f)
-
-changed = False
-plugins = settings.setdefault('enabledPlugins', {{}})
-if 'hari-hive' not in plugins:
-    plugins['hari-hive'] = True
-    changed = True
-
-# Remove old hive hooks
-hooks = settings.get('hooks', {{}})
-start_hooks = hooks.get('SessionStart', [])
-new_start = [h for h in start_hooks if 'session-recall' not in json.dumps(h) and 'hive-session-start' not in json.dumps(h)]
-if len(new_start) != len(start_hooks):
-    if new_start:
-        hooks['SessionStart'] = new_start
-    else:
-        hooks.pop('SessionStart', None)
-    changed = True
-
-end_hooks = hooks.get('SessionEnd', [])
-new_end = [h for h in end_hooks if 'extract_and_ingest' not in json.dumps(h)]
-if len(new_end) != len(end_hooks):
-    hooks['SessionEnd'] = new_end
-    changed = True
-
-if changed:
-    with open(settings_file, 'w') as f:
-        json.dump(settings, f, indent=2)
-        f.write('\\n')
-    print('==> Updated settings.json (enabled plugin, removed old hooks)')
-else:
-    print('==> settings.json already up to date')
-" "$SETTINGS_FILE"
-else
-    echo "    NOTE: No settings.json found. Plugin installed but not auto-enabled."
-fi
-
-echo ""
-echo "==> Done! Restart Claude Code to activate MCP tools."
-echo "    Tools: hive_recall, hive_query, hive_ingest, hive_stats, + 6 more"
-echo "    Slash command: /hive [query]"
-'''
-
-
 @app.get("/enroll/plugin-bundle", include_in_schema=False)
 def enroll_plugin_bundle():
     """Serve MCP plugin files as a JSON bundle for bootstrap installation."""

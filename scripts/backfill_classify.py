@@ -13,7 +13,7 @@ Pre-run: takes a pg_dump if --snapshot is set (default true).
 Usage:
     python -m scripts.backfill_classify
     python -m scripts.backfill_classify --batch 200 --rps 5 --no-snapshot
-    python -m scripts.backfill_classify --namespace claude-shared --resume
+    python -m scripts.backfill_classify --namespace default --resume
     python -m scripts.backfill_classify --dry-run
 
 Plan: docs/plans/2026-04-24-hive-tiered-memory-plan-1-foundation.md T3.1–T3.3
@@ -186,11 +186,11 @@ async def run(args) -> Counter:
     return results
 
 
-def sweep_entities(session, default_namespace: str = "claude-shared") -> int:
+def sweep_entities(session, default_namespace: str = "default") -> int:
     """Resolve entity_mentions strings to Entity ids; insert missing entities.
 
     After classify_one stores raw mention strings in entity_refs (e.g.
-    ['unraid','hari']), this sweep replaces them with canonical Entity UUIDs,
+    ['storage-node','build-host']), this sweep replaces them with canonical Entity UUIDs,
     inserting Entity rows for unknown slugs.
     """
     from app.models import Entity, EntityType
@@ -426,7 +426,7 @@ def main():
 
     print("\n[backfill] post-classification sweeps")
     with SessionLocal() as session:
-        promoted = sweep_entities(session, args.namespace or "claude-shared")
+        promoted = sweep_entities(session, args.namespace or "default")
         print(f"  entities promoted: {promoted}")
         sup = sweep_supersession(session, args.namespace)
         print(f"  supersession candidates: {sup}")

@@ -9,7 +9,7 @@ Flags items where:
   - content matches substrate-fact patterns (model versions, IPs, ports, hostnames)
 
 Output: JSON to stdout.
-Also ingests flagged items into claude-shared namespace tagged [decay-review].
+Also ingests flagged items into default namespace tagged [decay-review].
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ SUBSTRATE_PATTERNS = [
     re.compile(r'\b192\.168\.\d+\.\d+\b'),
     re.compile(r'\b10\.\d+\.\d+\.\d+\b'),
     re.compile(r':\d{4,5}\b'),
-    re.compile(r'\b(hari|webvm|dockers|blink|unraid|mypi|air|zoria)\b', re.IGNORECASE),
+    re.compile(r'\b(?:host|node|server)-[a-z0-9-]+\b', re.IGNORECASE),
 ]
 
 BASE_URL = os.environ.get("HIVE_BASE_URL", "http://localhost:8000")
@@ -123,14 +123,14 @@ def main() -> None:
 
     if flagged and admin_key:
         _ingest_decay_entries(flagged, admin_key)
-        print(f"# Ingested {len(flagged)} decay-review entries into claude-shared", file=sys.stderr)
+        print(f"# Ingested {len(flagged)} decay-review entries into default", file=sys.stderr)
 
 
 def _ingest_decay_entries(flagged: list[dict], admin_key: str) -> None:
     import urllib.request
     for item in flagged:
         body = json.dumps({
-            "namespace": "claude-shared",
+            "namespace": "default",
             "content": (
                 f"[decay-review] {item['id']} ({item['namespace']})\n"
                 f"Created: {item['created_at']}\n"

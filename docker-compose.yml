@@ -22,15 +22,17 @@ services:
       context: ./api
       args:
         GIT_SHA: ${GIT_SHA:-unknown}
+    # The image entrypoint validates this command and refuses multi-worker
+    # startup when the process-local gateway is enabled.
+    command:
+      ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "${GATEWAY_MAX_FRAME_BYTES:-16384}"]
     container_name: agentssot-api
     env_file:
       - .env
     environment:
       DATABASE_URL: ${DATABASE_URL}
-      # Override the stale .env OLLAMA_CHAT_MODEL (was qwen3:latest -> 404 on the
-      # Ollama server, which breaks /distill AND summarize). qwen3.6:27b is
-      # present and verified working. Move this into .env when convenient.
-      OLLAMA_CHAT_MODEL: qwen3.6:27b
+      # Reject oversized WebSocket frames in Uvicorn before application JSON parsing.
+      UVICORN_WS_MAX_SIZE: ${GATEWAY_MAX_FRAME_BYTES:-16384}
     extra_hosts:
       # Allows reaching Ollama running on the Docker host via http://host.docker.internal:11434
       # (works on Linux with Docker 20.10+ / Compose v2).
@@ -43,7 +45,9 @@ services:
       # ever reading dump contents. The API must never be able to write here.
       - ./backups:/backups:ro
     ports:
-      - "${API_PORT:-8088}:8000"
+      # Secure default: local machine only. Set API_BIND_HOST=0.0.0.0 only
+      # behind an authenticated network boundary you operate.
+      - "${API_BIND_HOST:-127.0.0.1}:${API_PORT:-8088}:8000"
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()\""]
       interval: 30s
@@ -130,7 +134,7 @@ services:
     volumes:
       - ./data/pgadmin:/var/lib/pgadmin
     ports:
-      - "${PGADMIN_PORT:-5050}:80"
+      - "${PGADMIN_BIND_HOST:-127.0.0.1}:${PGADMIN_PORT:-5050}:80"
     profiles: ["pgadmin"]
     restart: unless-stopped
 
@@ -142,6 +146,6 @@ services:
         condition: service_healthy
     command: ["TCP-LISTEN:5432,fork,reuseaddr", "TCP:db:5432"]
     ports:
-      - "5432:5432"
+      - "${DB_PORT_BIND_HOST:-127.0.0.1}:${DB_PORT:-5432}:5432"
     profiles: ["db-port"]
     restart: unless-stopped

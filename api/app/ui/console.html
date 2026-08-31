@@ -39,7 +39,7 @@
 
       <div class="filter-row">
         <select id="browseNamespace">
-          <option value="claude-shared">claude-shared</option>
+          <option value="default">default</option>
           <option value="default">default</option>
         </select>
         <input id="browseFilter" type="text" placeholder="Filter by text..." />
@@ -59,7 +59,7 @@
       <div class="search-box">
         <input id="searchText" type="text" placeholder="Natural language search across all memory..." />
         <select id="searchNamespace">
-          <option value="claude-shared">claude-shared</option>
+          <option value="default">default</option>
           <option value="default">default</option>
         </select>
         <input id="searchTopK" type="number" value="10" min="1" max="50" />
@@ -80,7 +80,7 @@
         <div class="card">
           <h3>Namespace Stats</h3>
           <div class="inline-row">
-            <input id="statsNamespace" type="text" value="claude-shared" placeholder="namespace" />
+            <input id="statsNamespace" type="text" value="default" placeholder="namespace" />
             <button id="statsBtn" class="secondary">Load Stats</button>
           </div>
           <pre id="statsOutput">--</pre>
@@ -88,7 +88,7 @@
         <div class="card">
           <h3>Dedup</h3>
           <div class="inline-row">
-            <input id="dedupNamespace" type="text" value="claude-shared" placeholder="namespace" />
+            <input id="dedupNamespace" type="text" value="default" placeholder="namespace" />
             <button id="dedupScanBtn" class="secondary">Scan</button>
             <button id="dedupRunBtn">Clean</button>
           </div>
@@ -109,7 +109,7 @@
               <option value="admin">admin</option>
             </select>
           </label>
-          <label>Namespaces <input id="keyNs" type="text" value="claude-shared" placeholder="comma-separated" /></label>
+          <label>Namespaces <input id="keyNs" type="text" value="default" placeholder="comma-separated" /></label>
           <button id="createKeyBtn">Create Key</button>
         </div>
         <div class="card">
@@ -119,7 +119,7 @@
         </div>
         <div class="card wide">
           <h3>Raw Ingest</h3>
-          <textarea id="ingestPayload" rows="6" placeholder='{"namespace":"claude-shared","knowledge_items":[...]}'></textarea>
+          <textarea id="ingestPayload" rows="6" placeholder='{"namespace":"default","knowledge_items":[...]}'></textarea>
           <button id="ingestBtn">Ingest</button>
         </div>
         <div class="card wide">

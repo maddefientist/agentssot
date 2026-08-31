@@ -16,16 +16,16 @@ def _item(id_, type_, entity_refs, content, confidence=1.0):
 
 
 def test_same_tier_same_entity_finds_candidates():
-    new = _item("new", "command", ["e-unraid"], "ssh unraid -p 22 root@192.168.1.116")
+    new = _item("new", "command", ["e-archive-node"], "ssh archive-node -p 22 service@192.0.2.10")
     existing = [
-        _item("old", "command", ["e-unraid"], "ssh unraid"),
-        _item("other", "command", ["e-hari"], "ssh hari"),
+        _item("old", "command", ["e-archive-node"], "ssh archive-node"),
+        _item("other", "command", ["e-worker-node"], "ssh worker-node"),
     ]
     matches = find_supersession_candidates(new, existing)
     assert {m.id for m in matches} == {"old"}
 
 
 def test_different_tier_no_match():
-    new = _item("new", "command", ["e-unraid"], "ssh unraid")
-    existing = [_item("rule1", "rule", ["e-unraid"], "Never access unraid")]
+    new = _item("new", "command", ["e-archive-node"], "ssh archive-node")
+    existing = [_item("rule1", "rule", ["e-archive-node"], "Never access archive-node")]
     assert find_supersession_candidates(new, existing) == []

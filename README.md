@@ -1,51 +1,75 @@
 # AgentSSOT
 
-> A cross-LLM shared memory service — give every AI agent durable, scoped, semantic memory.
+> A local-first memory control plane for agents that need durable context across
+> models, tools, devices, and sessions.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](api/)
 [![PostgreSQL 16](https://img.shields.io/badge/PostgreSQL-16+pgvector-4169E1?logo=postgresql&logoColor=white)](db/)
+[![Tests](https://github.com/maddefientist/agentssot/actions/workflows/test.yml/badge.svg)](https://github.com/maddefientist/agentssot/actions/workflows/test.yml)
 
 ---
 
-## What is AgentSSOT?
+## Why AgentSSOT?
 
-AgentSSOT (**Agent Single Source of Truth**) is a self-hosted memory backend for AI agents. It stores knowledge, events, and requirements in a PostgreSQL database with pgvector, providing both keyword search and semantic recall.
+Modern agents already have larger context windows and better local tools. The
+remaining problem is coordination: one agent cannot safely assume another
+agent's transcript, filesystem, or provider-specific memory is available or
+current.
 
-Instead of stuffing entire conversation histories into prompts, agents query AgentSSOT for just the top-K relevant facts they need. Multiple agents (Claude, GPT, Gemini, local models) can share a common memory layer with namespace-based privacy isolation.
+AgentSSOT (**Agent Single Source of Truth**) provides a self-hosted place for
+durable facts, decisions, requirements, and events. Agents can use exact search
+or bounded semantic recall, receive stable item IDs for feedback, and share only
+the namespaces their API keys permit.
 
-The system includes a built-in web dashboard, LLM-friendly onboarding, pluggable embedding/LLM providers (Ollama, OpenAI, or bring-your-own), and an optional cross-encoder reranker for higher-quality recall.
+It complements MCP and agent-to-agent protocols; it is not an agent runtime,
+model router, or replacement for the current repository, live runtime, or web.
 
-## Cortex Layer (2026-05)
+### Use memory when
 
-AgentSSOT now sits underneath **Cortex** — a typed-memory + synthesis + loadout-rotation system layered on the base service. Cortex adds:
+- a past decision or correction affects today's task;
+- multiple agents need the same durable operating context;
+- a long-running project spans sessions, models, or devices; or
+- an exact source reference or prior outcome needs to be recovered.
 
-- **Typed memory taxonomy** (`KnowledgeItem.memory_type`): `rule`, `doctrine`, `entity`, `command`, `episodic`, etc. (full list in `app/models.py`)
-- **Tiered loadout** — `rule` items (priority 5) always loaded; `doctrine` items (priority 4) rotated daily by hash. Pushed into agent context at session start as `<hive-loadout>`.
-- **Synthesis loop** — daily Ollama-only job clusters recent KIs, proposes/reconciles Concepts (`app/synthesis/`), decays stale ones.
-- **Doctrine promotion** — high-confidence Concepts (≥0.8, principle/mental_model) are mirrored into doctrine-typed KIs so they enter loadout (`app/synthesis/promotion.py`).
-- **Two-tier permission grant** — `POST /admin/api-keys/{id}/namespaces/grant` for explicit per-namespace write authorization; creator auto-granted on `hive_create_namespace`.
-- **Tiered ingest schema** — `TieredKnowledgeCreate` accepts `loadout_priority`, `cwd_hints`, `entity_refs`.
-- **GUI panels** for namespaces, keys, decay, wonder-queue (served at `/`).
-- **Operational rule** — orchestration is Ollama-only (synthesis, promotion, profile-building). Anthropic models are never called from this service.
+### Skip memory when
 
-For the operator-facing Cortex reference (naming conventions, scope taxonomy, full architecture diagram, open threads), see `~/.claude/cortex/README.md` on MBP.
+- the prompt or checked-out repository already contains the answer;
+- the fact is live state that should be verified directly;
+- the task is self-contained and recall would only add latency; or
+- no sufficiently relevant result is found. `NO_MEMORY_NEEDED` is a valid outcome.
 
----
+## Product boundary
 
-## Features
+| Layer | Status | Purpose |
+|---|---|---|
+| Memory kernel | Core | Auth, namespaces, ingest, exact query, bounded recall, feedback |
+| Dashboard and onboarding | Core | Inspect data, issue keys, and integrate agents |
+| Typed memory and lifecycle | Optional | Classification, expiry, supersession, loadouts, review |
+| Synthesis and reranking | Optional, off by default | More expensive local-model automation; evaluate before enabling |
+| Gateway/HUD | Experimental, off by default | Operator command/status transport; not required for memory |
 
-- **Semantic recall** — vector similarity search via pgvector with optional HNSW indexing
-- **Two-stage retrieval** — optional cross-encoder reranker (Ollama) for precision on top of vector recall
+The secure default exposes only the memory service on loopback. Agent admission
+uses admin-issued, single-use enrollment tokens; passphrase self-enrollment is
+not shipped. The model/tool gateway requires explicit operator configuration.
+
+## Core capabilities
+
+- **Bounded retrieval** — exact PostgreSQL search and semantic pgvector recall with a total Top-K budget
 - **Namespace isolation** — multi-tenant memory with RBAC (reader / writer / admin)
 - **API key auth** — bcrypt-hashed keys with scoped namespace access
-- **Pluggable providers** — embeddings and LLM summarization via Ollama, OpenAI, or none
-- **Auto-chunking** — knowledge items automatically split to ~800 chars for optimal embedding
-- **Session compaction** — background loop summarizes verbose event streams into durable knowledge
+- **Correctable records** — stable IDs, explicit feedback, expiry, and supersession fields
+- **Pluggable providers** — Ollama, OpenAI, or client-supplied embeddings
+- **Bounded chunking** — oversized knowledge items are split into configurable, reviewable chunks
+- **Optional compaction** — summarize verbose event streams into durable knowledge
 - **Built-in web dashboard** — browse, search, and admin panel served at `/`
-- **LLM onboarding** — plaintext guide at `/onboarding` tailored to the caller's API key
-- **Daily backups** — automated `pg_dump` to local volume
+- **Agent onboarding** — public enrollment instructions at `/onboarding` and key-specific guidance at `/onboarding/me`
+- **Validated backups** — automated `pg_dump` archives checked before atomic publication
+
+AgentSSOT does not assume that memory always helps. Evaluate retrieval precision,
+stale-memory harm, abstention behavior, token cost, and p95 latency on your own
+workload before enabling reranking, synthesis, or automatic session loadouts.
 
 ## Architecture
 
@@ -66,7 +90,7 @@ agentssot/
 │   ├── app/
 │   │   ├── embeddings/      # Embedding provider plugins
 │   │   ├── llm/             # LLM provider plugins (summarization)
-│   │   ├── reranker/        # Cross-encoder reranker
+│   │   ├── reranker/        # Optional model-based reranking
 │   │   ├── ui/              # Built-in web dashboard (HTML/CSS/JS)
 │   │   ├── main.py          # FastAPI routes
 │   │   ├── crud.py          # Database operations
@@ -97,19 +121,21 @@ cd agentssot
 
 # 2. Configure
 cp .env.example .env
-# Edit .env — set at least POSTGRES_PASSWORD
+# Edit .env — set POSTGRES_PASSWORD and a one-time BOOTSTRAP_ADMIN_API_KEY.
+# Generate the latter locally, for example:
+python -c 'import secrets; print("ssot_" + secrets.token_urlsafe(32))'
 
 # 3. Launch
 docker compose up -d --build
 
-# 4. Capture the bootstrap admin key (printed once on first run)
-docker compose logs api | grep BOOTSTRAP_ADMIN_API_KEY
-
-# 5. Open the dashboard
+# 4. Open the dashboard
 open http://localhost:8088
 ```
 
-The bootstrap admin key is your first API key — it has full access and is only printed once. Save it immediately.
+The bootstrap admin key is the value you supplied; it is hashed in the database
+and never printed by the service. After the first successful start, remove
+`BOOTSTRAP_ADMIN_API_KEY` from `.env` and keep the plaintext in your secret
+manager. Existing databases with an API key do not require this setting.
 
 ## API Reference
 
@@ -119,7 +145,8 @@ All authenticated endpoints require the `X-API-Key` header.
 |----------|--------|------|-------------|
 | `/health` | GET | None | Health check with provider status |
 | `/` | GET | None | Web dashboard |
-| `/onboarding` | GET | Any | LLM-friendly plaintext onboarding guide |
+| `/onboarding` | GET | None | Public enrollment-token onboarding guide |
+| `/enroll` | POST | Token | Redeem an admin-issued, single-use enrollment token |
 | `/ingest` | POST | Writer+ | Batch ingest entities, knowledge, events, requirements |
 | `/query` | GET | Reader+ | Keyword search with text filtering |
 | `/recall` | POST | Reader+ | Semantic vector search (Top-K) |
@@ -142,33 +169,30 @@ The API serves a single-page dashboard at `/` with three tabs:
 
 No build step required — it's plain HTML/CSS/JS calling the same API endpoints.
 
-## Gateway/HUD Layer (2026-05)
+## Optional Gateway/HUD Layer
 
-AgentSSOT includes **Madi HUD** — a realtime command interface and status surface for orchestrating agent workflows.
+The repository contains an experimental operator gateway/HUD and live provider
+configuration endpoints. They are not part of the public memory kernel. The
+gateway is absent unless `GATEWAY_ENABLED=true`; when enabled it requires an
+authorized admin to mint short-lived, single-use transport tickets and
+revalidates established connections after revocation. Orchestration and
+dispatch remain fail-closed unless the operator separately sets
+`GATEWAY_EXECUTION_ENABLED=true`.
 
-**Main endpoints:**
-- `GET  /hud` — Madi HUD frontend (Obsidian Terminal surface). Full-bleed interface at port 8088.
-- `GET  /connections` — Admin page: live provider health and connection status.
-- `WebSocket /gateway/ws` — Bidirectional command channel for HUD clients. Routes intents to executors ("brain regions").
-- `GET  /gateway/sse/status` — Server-sent events stream: realtime status snapshot (ingest rate, synthesis progress, token usage).
+Because tickets and abuse limits are process-local, enabled mode is restricted
+to one API worker and must use the image's owned entrypoint; direct ASGI
+launchers fail closed. Keep it behind TLS and an authenticated network boundary.
+Before enabling it or connecting any external identity, read
+[`docs/SECURE_CONTROL_PLANE.md`](docs/SECURE_CONTROL_PLANE.md). Future task and
+approval receipts described there are a design gate, not a shipped production
+control plane.
 
-**Executor registry** defines intent→executor bindings (e.g., `ingest-docs` → indexer, `classify` → classifier). Dispatch is hybrid: explicit intent or rules-based fallback, then classifier, then `chat-local` default.
+## MCP tool profiles
 
-Explore `/connections` to see live provider states and latencies; use `POST /admin/config` (below) to hot-swap providers mid-session.
-
-## Runtime Control Plane (2026-05)
-
-AgentSSOT provides live, operator-facing runtime overrides — no service restart required to swap Ollama models, adjust thresholds, or repair failing providers.
-
-**Main endpoints:**
-- `GET  /admin/config` — Read all overridable keys with current effective values vs. .env defaults.
-- `POST /admin/config` — Set an override key (e.g., `{"key": "synthesis_model", "value": "llama3.1"}`). Returns updated config + live `connections` snapshot.
-- `DELETE /admin/config/{key}` — Clear an override; revert to .env default.
-- `GET  /admin/connections` — Snapshot of all registered providers (Ollama, OpenAI, classifier, reranker) with reachability and latency.
-
-**HOT_KEYS** allow-list (runtime-configurable keys): `synthesis_model`, `ollama_embed_model`, `ollama_chat_model`, `synthesis_similarity_threshold`, `semantic_dedup_threshold`, `supersession_similarity_threshold`, `classifier_model`, `reranker_model`, and others. See `api/app/runtime_config.py:HOT_KEYS` for the full list.
-
-Values are type-coerced (bool/int/float/str) and validated (numeric ranges, URL syntax). DB is the source of truth; startup defaults are stored in `.env`.
+The default `core` MCP profile exposes six bounded tools: exact query, recall,
+ingest, teach, feedback, and expand. Administrative, lifecycle, Cortex,
+synthesis, loadout, and Synapse tools require an explicit `operator` profile so
+ordinary agents do not spend context or receive authority they do not need.
 
 ## Configuration
 
@@ -179,6 +203,7 @@ All configuration is via environment variables (or `.env` file):
 | `POSTGRES_PASSWORD` | *(required)* | Database password |
 | `DATABASE_URL` | *(from compose)* | PostgreSQL connection string |
 | `API_PORT` | `8088` | Port the API listens on |
+| `API_BIND_HOST` | `127.0.0.1` | Interface for the API port; opt in to wider exposure |
 | `LOG_LEVEL` | `info` | Logging level |
 | `EMBEDDING_PROVIDER` | `none` | `none`, `openai`, or `ollama` |
 | `EMBEDDING_DIM` | `1536` | Embedding vector dimension (must match model) |
@@ -192,6 +217,11 @@ All configuration is via environment variables (or `.env` file):
 | `RERANKER_PROVIDER` | `none` | `none` or `ollama` |
 | `OLLAMA_RERANKER_MODEL` | `dengcao/Qwen3-Reranker-8B:Q8_0` | Ollama reranker model |
 | `RERANKER_CANDIDATE_MULTIPLIER` | `3` | Fetch N*top_k candidates for reranking |
+| `GATEWAY_ENABLED` | `false` | Enable the experimental operator gateway/HUD |
+| `GATEWAY_EXECUTION_ENABLED` | `false` | Separately enable gateway orchestration and dispatch |
+| `GATEWAY_MAX_FRAME_BYTES` | `16384` | WebSocket transport frame ceiling |
+| `GATEWAY_CONNECTION_TTL_SECONDS` | `300` | Maximum WebSocket/SSE lifetime before re-authentication |
+| `BOOTSTRAP_ADMIN_API_KEY` | *(required on an empty database)* | Operator-generated initial admin key; hashed and never logged |
 | `COMPACTION_ENABLED` | `true` | Enable background session compaction |
 | `COMPACTION_INTERVAL_SECONDS` | `60` | Compaction loop interval |
 | `COMPACTION_EVENT_THRESHOLD` | `80` | Min events to trigger auto-compaction |
@@ -211,21 +241,32 @@ AgentSSOT supports three provider modes for both embeddings and LLM summarizatio
 
 **`openai`** — Use OpenAI's API. Set `OPENAI_API_KEY` in your `.env`.
 
-### Two-Stage Reranking
+### Optional Two-Stage Reranking
 
-When `RERANKER_PROVIDER=ollama`, recall uses a two-stage pipeline:
+Reranking is an opt-in quality/latency tradeoff. When
+`RERANKER_PROVIDER=ollama` and a caller requests reranking, recall uses a
+two-stage pipeline:
 1. Vector search fetches `top_k * RERANKER_CANDIDATE_MULTIPLIER` candidates
-2. A cross-encoder reranker rescores them for higher precision
+2. A configured model-based reranker rescores them
 
-If the reranker fails, results gracefully fall back to vector-only ranking.
+If the reranker fails, results fall back to vector-only ranking. Do not enable
+it merely because a model is available: measure whether it improves accepted
+results enough to justify shared GPU time and tail latency.
 
 ## Security Model
 
-- **API key authentication** on all endpoints except `/health`
+- **Secure network default** — Compose binds the API to `127.0.0.1`; LAN exposure requires an explicit `API_BIND_HOST` override
+- **API key authentication** on data and administrative APIs; public exceptions are limited to health, static UI/onboarding assets, and token redemption
 - Keys are **bcrypt-hashed** in the database (no plaintext storage)
 - **RBAC** with three roles: `reader`, `writer`, `admin`
 - **Namespace isolation** — each key is scoped to specific namespaces
-- Bootstrap admin key generated and logged once on first startup
+- The `admin` role is global control-plane authority; it is not delegated
+  administration limited by that key's namespace list
+- Bootstrap admin key supplied once by the operator, hashed, and never logged
+- **Fail-closed enrollment** — admission uses admin-issued, single-use tokens; passphrase writer-key enrollment is not shipped
+- **Fail-closed gateway** — model/tool execution is disabled by default and uses admin-authorized, single-use browser tickets when enabled
+
+Do not set `API_BIND_HOST=0.0.0.0` until an authenticated network boundary is in place.
 
 ### Recommended Namespace Pattern
 
@@ -237,11 +278,13 @@ finance-private      # Per-domain private memory
 
 Issue API keys with the minimum required namespaces. This creates siloed memory with explicit opt-in sharing.
 
-## LLM Agent Integration
+## Agent integration
 
-The killer feature: any LLM agent can use AgentSSOT as persistent memory in three steps:
+Use the smallest loop the task needs. A self-contained task should make no
+memory call at all.
 
-1. **Start of task** — recall relevant context:
+1. **When prior context can help** — query exact identifiers first, then use
+   semantic recall if needed:
    ```bash
    # Keyword search
    curl -H "X-API-Key: $KEY" "http://localhost:8088/query?namespace=default&q=auth+setup"
@@ -251,19 +294,21 @@ The killer feature: any LLM agent can use AgentSSOT as persistent memory in thre
      -d '{"namespace":"default","scope":"knowledge","query_text":"how is auth configured?","top_k":5}'
    ```
 
-2. **During task** — ingest decisions and facts:
+2. **When something becomes durable** — ingest an atomic decision or fact:
    ```bash
    curl -H "X-API-Key: $KEY" -X POST http://localhost:8088/ingest \
      -d '{"namespace":"default","knowledge_items":[{"content":"JWT auth uses RS256","tags":["auth","config"]}]}'
    ```
 
-3. **End of task** — summarize session events:
+3. **For a genuinely long session** — compact its event stream:
    ```bash
    curl -H "X-API-Key: $KEY" -X POST http://localhost:8088/summarize_clear \
      -d '{"namespace":"default","session_id":"session-abc123"}'
    ```
 
-See [`docs/ONBOARDING_FOR_LLMS.md`](docs/ONBOARDING_FOR_LLMS.md) for the full agent onboarding guide, or hit `GET /onboarding` with an API key for a version tailored to that key's permissions.
+See [`docs/ONBOARDING_FOR_LLMS.md`](docs/ONBOARDING_FOR_LLMS.md) for the full
+agent onboarding guide. `GET /onboarding` is public; `GET /onboarding/me`
+requires an API key and reports that key's permissions.
 
 ## Contributing
 

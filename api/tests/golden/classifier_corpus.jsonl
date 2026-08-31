@@ -1,16 +1,16 @@
-{"content":"ssh unraid","expected_type":"command"}
+{"content":"ssh archive-node","expected_type":"command"}
 {"content":"docker compose up -d --build api","expected_type":"command"}
-{"content":"curl -H \"X-Api-Key: $KEY\" http://192.168.1.225:8088/health","expected_type":"command"}
+{"content":"curl -H \"X-Api-Key: $KEY\" http://127.0.0.1:8088/health","expected_type":"command"}
 {"content":"Never use rm -rf with wildcards on system directories","expected_type":"rule"}
 {"content":"Always specify the namespace on /recall — namespaces are the privacy boundary","expected_type":"rule"}
-{"content":"When Gluetun port forwarding fails, restart Gluetun first then qbit (qbit shares Gluetun's netns)","expected_type":"skill"}
-{"content":"unraid (192.168.1.116, root@) — central storage hub, NFS exports /mnt/user/media to hari","expected_type":"entity"}
-{"content":"hari (192.168.1.225, hari@) — AI workhorse, Ollama host, runs the agentssot service on :8088","expected_type":"entity"}
+{"content":"When a VPN sidecar port forward fails, restart the sidecar before the dependent downloader","expected_type":"skill"}
+{"content":"archive-node (192.0.2.10, service@) — example storage host, exports /srv/data to worker-node","expected_type":"entity"}
+{"content":"worker-node (127.0.0.1, service@) — example inference host, runs AgentSSOT on :8088","expected_type":"entity"}
 {"content":"Embeddings: switched to nomic-embed-text 768d on 2026-02-25 from qwen3-embedding 4096d. Reason: speed/recall tradeoff for the agent loop.","expected_type":"decision"}
-{"content":"Session: hari on harihome 2026-02-10. Files touched: .ssh/config, authorized_keys. User: 'connection refused still', 'fix it please'.","expected_type":"episodic"}
+{"content":"Session: worker-node on lab-network 2026-02-10. Files touched: .ssh/config, authorized_keys. User: 'connection refused still', 'fix it please'.","expected_type":"episodic"}
 {"content":"git rebase -i HEAD~3 && git push --force-with-lease origin main","expected_type":"command"}
 {"content":"brew services restart postgresql@15","expected_type":"command"}
-{"content":"rsync -avz --delete /mnt/user/media/photos/ hari@192.168.1.225:/opt/photos/","expected_type":"command"}
+{"content":"rsync -avz --delete /srv/data/photos/ service@127.0.0.1:/srv/photos/","expected_type":"command"}
 {"content":"ollama run gemma4:31b --keepalive 30m","expected_type":"command"}
 {"content":"pyenv install 3.12.3 && pyenv global 3.12.3","expected_type":"command"}
 {"content":"python -m pip install --upgrade pip setuptools wheel","expected_type":"command"}
@@ -26,12 +26,12 @@
 {"content":"If pytest fails with 'ImportError: attempted relative import', check PYTHONPATH and that test files are not inside the package","expected_type":"skill"}
 {"content":"When the MCP plugin can't connect to the hive, verify: 1) network reachability, 2) api key validity, 3) namespace permissions","expected_type":"skill"}
 {"content":"If Ollama pulls a model but it won't load, check available VRAM and try a lower quant (Q4_K_M vs Q8_0)","expected_type":"skill"}
-{"content":"jellyfin (192.168.1.116:8096) — media server on unraid, hardware transcoding via Intel UHD P630, library mounted at /mnt/user/media","expected_type":"entity"}
-{"content":"dockers (192.168.1.230, docker@) — container host, runs jellyfin, qBittorrent, GluetunVPN, wireguard, homarr","expected_type":"entity"}
-{"content":"blink (192.168.1.235, hari@) — lightweight backup node, rsync target for agentssot DB dumps every 6h","expected_type":"entity"}
-{"content":"webvm (10.0.0.4, root@) — isolated browser VM for testing untrusted webapps, no egress except to hari:8088","expected_type":"entity"}
-{"content":"pourit (iOS app, React Native) — barcode-driven home bar inventory; backend on hari:8089, Postgres on dockers","expected_type":"entity"}
-{"content":"ezbar (iOS companion) — recipe scaling tool; shares pourit auth and inventory backend","expected_type":"entity"}
+{"content":"media-service (192.0.2.10:8096) — example media server on archive-node with hardware transcoding and /srv/media library","expected_type":"entity"}
+{"content":"container-node (192.0.2.20, service@) — example container host running media-service, downloader, VPN sidecar, and dashboard","expected_type":"entity"}
+{"content":"backup-node (192.0.2.30, service@) — example rsync target for AgentSSOT database dumps every 6h","expected_type":"entity"}
+{"content":"sandbox-vm (192.0.2.40, service@) — isolated browser VM for untrusted webapp tests with egress limited to worker-node:8088","expected_type":"entity"}
+{"content":"inventory-app (mobile app) — example barcode-driven inventory client backed by inventory-api and PostgreSQL","expected_type":"entity"}
+{"content":"recipe-app (mobile companion) — example recipe-scaling client sharing inventory-app authentication","expected_type":"entity"}
 {"content":"hive — tiered memory store for AI agents; Postgres+pgvector backend, FastAPI surface, Ollama for local inference","expected_type":"entity"}
 {"content":"Switched from OpenAI embeddings to local nomic-embed-text on 2025-11-12. Reason: cut token costs by ~99% and eliminate external dependency on the embedding write path","expected_type":"decision"}
 {"content":"Chose SQLAlchemy 2.x over 1.4 for the new models. Reason: Mapped[] syntax, better async support, and we already run Python 3.11+ everywhere","expected_type":"decision"}
@@ -48,7 +48,7 @@
 {"content":"Postgres JSONB containment operator @> evaluates to true only when the right-hand side is a valid JSONB document, not a bare string","expected_type":"fact"}
 {"content":"FastAPI dependency injection caches settings per-request via lru_cache on get_settings(); this is safe because settings are immutable after load","expected_type":"fact"}
 {"content":"When a rule says 'always specify namespace' that's a guardrail not a recipe — it's a rule even though the sentence structure looks like a skill","expected_type":"fact"}
-{"content":"unraid (192.168.1.116) — exports /mnt/user/media via NFS v4, runs ZFS pool 'tank' with lz4 compression","expected_type":"entity"}
+{"content":"archive-node (192.0.2.10) — exports /srv/media via NFS v4 and runs an example compressed storage pool","expected_type":"entity"}
 {"content":"pip install --no-cache-dir -r requirements.txt && playwright install chromium","expected_type":"command"}
 {"content":"Classifier outputs with confidence below 0.6 must be enqueued to review_queue with kind='low_conf' rather than auto-committing the inferred type","expected_type":"rule"}
 {"content":"Docker Compose service names must be DNS-compatible (no underscores in network alias resolution on older Docker versions)","expected_type":"rule"}

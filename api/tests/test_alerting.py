@@ -20,13 +20,13 @@ def test_post_alert_sends_expected_payload(monkeypatch):
     monkeypatch.setattr(alerting.httpx, "post", fake_post)
     ok = alerting.post_alert(
         "http://sink.local/hook", "synthesis.model_missing", "error",
-        "both models gone", {"missing": ["x"]}, host_label="hari",
+        "both models gone", {"missing": ["x"]}, host_label="build-host",
     )
     assert ok is True
     assert captured["url"] == "http://sink.local/hook"
     body = captured["json"]
     assert body["source"] == "hive"
-    assert body["host"] == "hari"
+    assert body["host"] == "build-host"
     assert body["severity"] == "error"
     assert body["event"] == "synthesis.model_missing"
     assert body["detail"] == {"missing": ["x"]}

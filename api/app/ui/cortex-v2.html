@@ -652,20 +652,14 @@
       <div class="rules-text">
         <strong>Enroll a new device</strong><br>
         1. From an admin session, create an enrollment token<br>
-        2. On the new device, call <code>POST /auto-enroll</code><br>
+        2. On the new device, redeem it with <code>POST /enroll</code><br>
         3. Save the returned agent config to <code>~/.claude/agentssot/local/agent.json</code><br><br>
         <strong>Verify connectivity</strong>
       </div>
       <div class="setup-cmd">curl -s http://YOUR_HOST:8088/health | python3 -m json.tool</div>
-      <div class="rules-text"><strong>Test recall</strong></div>
-      <div class="setup-cmd">curl -s -X POST http://YOUR_HOST:8088/recall \
-  -H "X-API-Key: YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"query_text":"test","namespace":"claude-shared"}' | python3 -m json.tool</div>
-      <div class="rules-text"><strong>Trigger synthesis manually</strong></div>
-      <div class="setup-cmd">curl -s -X POST http://YOUR_HOST:8088/synthesis/run \
-  -H "X-API-Key: ADMIN_KEY" \
-  -d '{"namespace":"claude-shared"}' | python3 -m json.tool</div>
+      <div class="rules-text"><strong>Test recall</strong><br>
+        Use an authenticated client with an explicitly authorized namespace.
+        Do not paste credentials into shared shell history.</div>
       <div class="rules-text">
         <br><strong>Troubleshooting</strong><br>
         - <code>embedding_available: false</code> — Check Ollama is running<br>
@@ -691,7 +685,7 @@
       <div class="admin-section">
         <h4>Concept Synthesis</h4>
         <div class="admin-row">
-          <input type="text" id="admin-synth-ns" placeholder="Namespace (e.g. claude-shared)" value="claude-shared" />
+          <input type="text" id="admin-synth-ns" placeholder="Namespace (e.g. default)" value="default" />
           <button class="admin-btn" id="admin-synth-btn">Trigger Synthesis</button>
         </div>
         <div class="admin-result" id="admin-synth-result"></div>
@@ -701,7 +695,7 @@
       <div class="admin-section">
         <h4>Semantic Deduplication</h4>
         <div class="admin-row">
-          <input type="text" id="admin-dedup-ns" placeholder="Namespace" value="claude-shared" />
+          <input type="text" id="admin-dedup-ns" placeholder="Namespace" value="default" />
         </div>
         <div class="admin-check-row">
           <input type="checkbox" id="admin-dedup-dryrun" checked />
@@ -717,7 +711,7 @@
       <div class="admin-section">
         <h4>Backfill Embeddings</h4>
         <div class="admin-row">
-          <input type="text" id="admin-backfill-ns" placeholder="Namespace" value="claude-shared" />
+          <input type="text" id="admin-backfill-ns" placeholder="Namespace" value="default" />
           <select id="admin-backfill-scope">
             <option value="knowledge">knowledge</option>
             <option value="requirements">requirements</option>
@@ -754,7 +748,7 @@
             </select>
           </div>
           <div class="admin-row">
-            <input type="text" id="admin-newkey-ns" placeholder="Namespaces (comma-separated)" style="flex:1" value="claude-shared" />
+            <input type="text" id="admin-newkey-ns" placeholder="Namespaces (comma-separated)" style="flex:1" value="default" />
             <button class="admin-btn" id="admin-newkey-btn">Create Key</button>
           </div>
         </div>
@@ -841,7 +835,7 @@
         </div>
         <div class="kb-filter-row">
           <select class="kb-select" id="kb-ns-select">
-            <option value="claude-shared">claude-shared</option>
+            <option value="default">default</option>
           </select>
           <select class="kb-select" id="kb-cat-select">
             <option value="">All categories</option>
@@ -1548,7 +1542,7 @@ document.getElementById('detailClose').addEventListener('click', unfocus);
 // ---------------------------------------------------------------------------
 async function loadLinks() {
   try {
-    const resp = await window.cortexFetch('/cortex/links?namespace=claude-shared&limit=200');
+    const resp = await window.cortexFetch('/cortex/links?namespace=default&limit=200');
     const data = await resp.json();
     allLinks = data.links || [];
     buildGlobalEdges();
@@ -1962,8 +1956,8 @@ document.querySelectorAll('.drawer-tab').forEach(function(tab) {
 async function loadDrawerData() {
   try {
     var responses = await Promise.all([
-      window.cortexFetch('/cortex/system-info?namespace=claude-shared'),
-      window.cortexFetch('/cortex/activity?namespace=claude-shared'),
+      window.cortexFetch('/cortex/system-info?namespace=default'),
+      window.cortexFetch('/cortex/activity?namespace=default'),
     ]);
     systemInfo = await responses[0].json();
     activityData = await responses[1].json();
@@ -2119,7 +2113,7 @@ function renderDrawer() {
 // ---------------------------------------------------------------------------
 async function loadData() {
   try {
-    const resp = await window.cortexFetch('/cortex/data?namespace=claude-shared');
+    const resp = await window.cortexFetch('/cortex/data?namespace=default');
     const data = await resp.json();
     const incoming = data.concepts || [];
 
@@ -2264,7 +2258,7 @@ function showTickerItem(event) {
 
 async function pollActivity() {
   try {
-    const resp = await window.cortexFetch('/cortex/activity?namespace=claude-shared&limit=10');
+    const resp = await window.cortexFetch('/cortex/activity?namespace=default&limit=10');
     const data = await resp.json();
     if (!data.events || data.events.length === 0) return;
 
@@ -2337,7 +2331,7 @@ loadData().then(function() {
   async function loadCortexTasks() {
     var statusFilter = document.getElementById('tasks-filter-status').value;
     var agentFilter  = document.getElementById('tasks-filter-agent').value;
-    var url = '/cortex/tasks?namespace=claude-shared';
+    var url = '/cortex/tasks?namespace=default';
     if (statusFilter && statusFilter !== 'all') url += '&status=' + encodeURIComponent(statusFilter);
     if (agentFilter  && agentFilter  !== 'all') url += '&agent_key=' + encodeURIComponent(agentFilter);
     try {
@@ -2602,7 +2596,7 @@ loadData().then(function() {
 
   document.getElementById('admin-synth-btn').addEventListener('click', async function() {
     var btn = this;
-    var ns = document.getElementById('admin-synth-ns').value.trim() || 'claude-shared';
+    var ns = document.getElementById('admin-synth-ns').value.trim() || 'default';
     if (!confirm('Run Concept Synthesis? This may be slow and is irreversible.')) return;
     setLoading(btn, true);
     var r = await adminFetch('/admin/synthesize', { method: 'POST', body: JSON.stringify({ namespace: ns }) });
@@ -2615,7 +2609,7 @@ loadData().then(function() {
 
   document.getElementById('admin-dedup-btn').addEventListener('click', async function() {
     var btn = this;
-    var ns = document.getElementById('admin-dedup-ns').value.trim() || 'claude-shared';
+    var ns = document.getElementById('admin-dedup-ns').value.trim() || 'default';
     var dryRun = document.getElementById('admin-dedup-dryrun').checked;
     if (!confirm('Run Semantic Deduplication? This may be slow and is irreversible.')) return;
     setLoading(btn, true);
@@ -2629,7 +2623,7 @@ loadData().then(function() {
 
   document.getElementById('admin-backfill-btn').addEventListener('click', async function() {
     var btn = this;
-    var ns = document.getElementById('admin-backfill-ns').value.trim() || 'claude-shared';
+    var ns = document.getElementById('admin-backfill-ns').value.trim() || 'default';
     var scope = document.getElementById('admin-backfill-scope').value;
     if (!confirm('Run Backfill Embeddings? This may be slow and is irreversible.')) return;
     setLoading(btn, true);
@@ -2725,7 +2719,7 @@ loadData().then(function() {
     var name = document.getElementById('admin-newkey-name').value.trim();
     var role = document.getElementById('admin-newkey-role').value;
     var nsRaw = document.getElementById('admin-newkey-ns').value.trim();
-    var namespaces = nsRaw ? nsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean) : ['claude-shared'];
+    var namespaces = nsRaw ? nsRaw.split(',').map(function(s) { return s.trim(); }).filter(Boolean) : ['default'];
     if (!name) { showResult('admin-keys-result', 'Enter a key name.', false); return; }
     setLoading(btn, true);
     var r = await adminFetch('/admin/api-keys', { method: 'POST', body: JSON.stringify({ name: name, role: role, namespaces: namespaces }) });
@@ -2864,7 +2858,7 @@ loadData().then(function() {
     try {
       var key = document.getElementById('admin-api-key').value.trim() || '';
       var headers = key ? { 'X-API-Key': key } : {};
-      var resp = await fetch('/admin/feedback?namespace=claude-shared&limit=200', { headers: headers });
+      var resp = await fetch('/admin/feedback?namespace=default&limit=200', { headers: headers });
       if (!resp.ok) { return; }
       feedbackData = await resp.json();
       var stats = computeStats(feedbackData);
@@ -2885,7 +2879,7 @@ loadData().then(function() {
     try {
       var key = document.getElementById('admin-api-key').value.trim() || '';
       var headers = key ? { 'X-API-Key': key } : {};
-      var url = '/admin/feedback?namespace=claude-shared&limit=50';
+      var url = '/admin/feedback?namespace=default&limit=50';
       if (filter && filter !== 'all') url += '&signal=' + filter;
       var resp = await fetch(url, { headers: headers });
       if (!resp.ok) {
@@ -2920,7 +2914,7 @@ loadData().then(function() {
     try {
       var key = document.getElementById('admin-api-key').value.trim() || '';
       var headers = key ? { 'X-API-Key': key } : {};
-      var resp = await fetch('/admin/feedback/contested?namespace=claude-shared&limit=30', { headers: headers });
+      var resp = await fetch('/admin/feedback/contested?namespace=default&limit=30', { headers: headers });
       if (!resp.ok) {
         el.textContent = '';
         var err = document.createElement('div');
@@ -3006,7 +3000,7 @@ loadData().then(function() {
 
   async function searchKnowledge() {
     var query = document.getElementById('kb-query').value.trim();
-    var ns = document.getElementById('kb-ns-select').value || 'claude-shared';
+    var ns = document.getElementById('kb-ns-select').value || 'default';
     var cat = document.getElementById('kb-cat-select').value;
     if (!query) return;
 

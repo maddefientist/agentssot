@@ -52,11 +52,11 @@ def test_streams_executor_tokens_and_done():
     assert events[-1].type == "done"
 
 
-def test_persists_user_and_madi_turns():
+def test_persists_user_and_assistant_turns():
     service, ex, store = build(tokens=("reply text",))
     drain(service, InboundMessage("user text", "s1"))
     hist = asyncio.run(store.history("s1"))
-    assert [t["role"] for t in hist] == ["user", "madi"]
+    assert [t["role"] for t in hist] == ["user", "assistant"]
     assert hist[0]["text"] == "user text"
     assert hist[1]["text"] == "reply text"
     assert hist[1]["intent"] == "chat-local"
@@ -69,7 +69,7 @@ def test_executor_sees_prior_history_not_current_turn():
     # On the second turn, ctx history should hold only the first exchange
     roles = [t["role"] for t in ex.seen_ctx["history"]]
     texts = [t["text"] for t in ex.seen_ctx["history"]]
-    assert roles == ["user", "madi"]
+    assert roles == ["user", "assistant"]
     assert texts == ["first", "ok"]
     assert "second" not in texts  # current turn not duplicated into history
 
@@ -80,8 +80,8 @@ def test_explicit_intent_routes_directly():
     assert events[0].data["intent"] == "dispatch"
 
 
-def test_empty_reply_not_persisted_as_madi_turn():
+def test_empty_reply_not_persisted_as_assistant_turn():
     service, ex, store = build(tokens=())  # executor yields no tokens
     drain(service, InboundMessage("hi", "s1"))
     hist = asyncio.run(store.history("s1"))
-    assert [t["role"] for t in hist] == ["user"]  # no empty madi turn
+    assert [t["role"] for t in hist] == ["user"]  # no empty assistant turn

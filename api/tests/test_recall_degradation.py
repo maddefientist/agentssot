@@ -28,9 +28,13 @@ import pytest
 
 from app.routers import knowledge as knowledge_router
 from app.reranker.base import RerankerProviderError
-from app.schemas import BucketedRecallRequest
+from app.schemas import BucketedRecallRequest, RecallRequest
 from app.security import AuthContext, ApiRole
 from app.synthesis import loop as synthesis_loop_module
+
+
+def test_recall_schema_defaults_to_fast_non_reranked_path():
+    assert RecallRequest().rerank is False
 
 
 def _fake_item(content="hello world"):
@@ -60,6 +64,9 @@ class _FakeSession:
         self.execute_calls += 1
         return list(self._rows)
 
+    def commit(self):
+        pass
+
 
 class _FakeEmbeddingProvider:
     is_available = True
@@ -79,13 +86,13 @@ class _FakeRequest:
 
 
 def _auth():
-    return AuthContext(key_id="k1", key_name="tester", role=ApiRole.writer.value, namespaces=["claude-shared"])
+    return AuthContext(key_id="k1", key_name="tester", role=ApiRole.writer.value, namespaces=["default"])
 
 
 def _request_data(tiers=("command",), top_per_tier=None):
     return BucketedRecallRequest(
         query="find the thing",
-        namespace="claude-shared",
+        namespace="default",
         tiers=list(tiers),
         top_per_tier=top_per_tier or {t: 5 for t in tiers},
     )

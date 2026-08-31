@@ -1,8 +1,8 @@
 """Contradiction detector: scan rules for negation patterns targeting an
 entity that the new command/skill references.
 
-Closes the OFF-LIMITS-unraid scenario: an old rule "Never access unraid"
-must surface for review when a new command "ssh unraid" is ingested.
+Closes the off-limits-host scenario: an old rule "Never access storage-node"
+must surface for review when a new command "ssh storage-node" is ingested.
 """
 from __future__ import annotations
 

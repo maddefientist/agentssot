@@ -49,8 +49,8 @@
   </section>
 
   <div x-show="!loading && allItems.length === 0" style="color: #8b949e; padding: 2rem;">
-    No wonder-queue items found. Items tagged [wonder-queue] or [madi-self][wonder-queue] in
-    claude-shared or madi-self namespaces will appear here.
+    No wonder-queue items found. Items tagged [wonder-queue] in the default
+    namespace will appear here.
   </div>
 </div>
 
@@ -96,7 +96,7 @@ function wonderApp() {
       if (!this.apiKey) { this.allItems = []; this._buildLanes([]); return; }
       this.loading = true;
       let all = [];
-      const namespaces = ["claude-shared", "madi-self"];
+      const namespaces = ["default"];
       for (const ns of namespaces) {
         try {
           const r = await fetch(`/query?namespace=${ns}&q=wonder-queue&limit=200`, {

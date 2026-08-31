@@ -15,9 +15,9 @@ def test_empty_history():
 def test_append_then_history():
     store = SessionStore(InMemoryBackend())
     run(store.append("s1", {"role": "user", "text": "hi"}))
-    run(store.append("s1", {"role": "madi", "text": "hello"}))
+    run(store.append("s1", {"role": "assistant", "text": "hello"}))
     hist = run(store.history("s1"))
-    assert [t["role"] for t in hist] == ["user", "madi"]
+    assert [t["role"] for t in hist] == ["user", "assistant"]
     assert hist[1]["text"] == "hello"
 
 

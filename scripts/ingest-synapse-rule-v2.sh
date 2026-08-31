@@ -24,9 +24,9 @@ if [ ! -f "$CFG" ]; then
     exit 1
 fi
 
-BASE_URL=$(python3 -c "import json; d=json.load(open('$CFG')); print(d.get('base_url','http://192.168.1.225:8088').rstrip('/'))")
+BASE_URL=$(python3 -c "import json; d=json.load(open('$CFG')); print(d.get('base_url','http://127.0.0.1:8088').rstrip('/'))")
 API_KEY=$(python3 -c "import json; d=json.load(open('$CFG')); print(d.get('api_key') or d.get('admin_api_key',''))")
-NS="claude-shared"
+NS="default"
 SOURCE_V1="synapse-phase4-rule-v1"
 SOURCE_V2="synapse-phase4-rule-v2"
 

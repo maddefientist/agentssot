@@ -1,4 +1,4 @@
-/* Madi HUD — "Obsidian Terminal".
+/* Operator gateway HUD — "Obsidian Terminal".
    Near-black + one warm brass accent. Mono for the machine layer, serif for the
    reading layer. Subtle phosphor scanlines, a breathing presence ring. One
    surface that morphs ambient (resting) -> active (working console). */
@@ -107,7 +107,7 @@ body.hud{
 .console .turn{display:flex; flex-direction:column; gap:3px}
 .console .who{font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--amber-dim)}
 .console .said.user{color:var(--ink)}
-.console .said.madi{font-family:var(--serif); font-size:15px; line-height:1.5; color:#f4f0e8; white-space:pre-wrap}
+.console .said.assistant{font-family:var(--serif); font-size:15px; line-height:1.5; color:#f4f0e8; white-space:pre-wrap}
 .console .meta{font-size:10px; color:var(--dim); letter-spacing:.5px}
 .console .fallover{font-size:11px; color:var(--amber); letter-spacing:.3px}
 .console .err{font-size:12px; color:var(--err)}

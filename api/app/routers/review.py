@@ -47,7 +47,7 @@ def _concept_summary(c: Concept) -> dict[str, Any]:
 
 @router.get("/concepts")
 async def list_band(
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),

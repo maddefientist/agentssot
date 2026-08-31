@@ -394,20 +394,14 @@
       <div class="rules-text">
         <strong>Enroll a new device</strong><br>
         1. From an admin session, create an enrollment token<br>
-        2. On the new device, call <code>POST /auto-enroll</code><br>
+        2. On the new device, redeem it with <code>POST /enroll</code><br>
         3. Save the returned agent config to <code>~/.claude/agentssot/local/agent.json</code><br><br>
         <strong>Verify connectivity</strong>
       </div>
       <div class="setup-cmd">curl -s http://YOUR_HOST:8088/health | python3 -m json.tool</div>
-      <div class="rules-text"><strong>Test recall</strong></div>
-      <div class="setup-cmd">curl -s -X POST http://YOUR_HOST:8088/recall \
-  -H "X-API-Key: YOUR_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"query_text":"test","namespace":"claude-shared"}' | python3 -m json.tool</div>
-      <div class="rules-text"><strong>Trigger synthesis manually</strong></div>
-      <div class="setup-cmd">curl -s -X POST http://YOUR_HOST:8088/synthesis/run \
-  -H "X-API-Key: ADMIN_KEY" \
-  -d '{"namespace":"claude-shared"}' | python3 -m json.tool</div>
+      <div class="rules-text"><strong>Test recall</strong><br>
+        Use an authenticated client with an explicitly authorized namespace.
+        Do not paste credentials into shared shell history.</div>
       <div class="rules-text">
         <br><strong>Troubleshooting</strong><br>
         - <code>embedding_available: false</code> — Check Ollama is running<br>
@@ -1110,7 +1104,7 @@ document.getElementById('detailClose').addEventListener('click', unfocus);
 // ---------------------------------------------------------------------------
 async function loadLinks() {
   try {
-    const resp = await window.cortexFetch('/cortex/links?namespace=claude-shared&limit=200');
+    const resp = await window.cortexFetch('/cortex/links?namespace=default&limit=200');
     const data = await resp.json();
     allLinks = data.links || [];
     buildGlobalEdges();
@@ -1524,8 +1518,8 @@ document.querySelectorAll('.drawer-tab').forEach(function(tab) {
 async function loadDrawerData() {
   try {
     var responses = await Promise.all([
-      window.cortexFetch('/cortex/system-info?namespace=claude-shared'),
-      window.cortexFetch('/cortex/activity?namespace=claude-shared'),
+      window.cortexFetch('/cortex/system-info?namespace=default'),
+      window.cortexFetch('/cortex/activity?namespace=default'),
     ]);
     systemInfo = await responses[0].json();
     activityData = await responses[1].json();
@@ -1681,7 +1675,7 @@ function renderDrawer() {
 // ---------------------------------------------------------------------------
 async function loadData() {
   try {
-    const resp = await window.cortexFetch('/cortex/data?namespace=claude-shared');
+    const resp = await window.cortexFetch('/cortex/data?namespace=default');
     const data = await resp.json();
     const incoming = data.concepts || [];
 
@@ -1826,7 +1820,7 @@ function showTickerItem(event) {
 
 async function pollActivity() {
   try {
-    const resp = await window.cortexFetch('/cortex/activity?namespace=claude-shared&limit=10');
+    const resp = await window.cortexFetch('/cortex/activity?namespace=default&limit=10');
     const data = await resp.json();
     if (!data.events || data.events.length === 0) return;
 

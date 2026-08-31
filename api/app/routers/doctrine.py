@@ -39,7 +39,7 @@ def _age_seconds(dt: datetime | None) -> int:
 
 @router.get("/list")
 async def list_doctrine(
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     search: str = Query(default=""),

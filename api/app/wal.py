@@ -1,4 +1,4 @@
-"""Write-ahead log for ingest/delete operations.
+"""Best-effort audit log for mutations and feedback receipts.
 
 One JSONL line per operation, daily-rotated file, with a redaction pass over
 sensitive field names. WAL writes are best-effort: a failure to log must never

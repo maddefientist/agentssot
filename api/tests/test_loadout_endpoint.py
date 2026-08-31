@@ -16,8 +16,8 @@ def test_loadout_for_agentssot_cwd():
         headers={"X-Api-Key": KEY},
         json={
             "cwd": "/opt/agentssot",
-            "device_id": "hari",
-            "namespace": "claude-shared",
+            "device_id": "build-host",
+            "namespace": "default",
             "token_budget": 750,
         },
         timeout=15,

@@ -15,8 +15,8 @@ def test_bucketed_recall_shape():
         f"{BASE}/api/v1/knowledge/recall",
         headers={"X-Api-Key": KEY},
         json={
-            "query": "ssh unraid",
-            "namespace": "claude-shared",
+            "query": "ssh storage-node",
+            "namespace": "default",
             "bucketed": True,
             "tiers": ["command", "rule", "skill", "entity"],
             "top_per_tier": {"command": 3, "rule": 2, "skill": 5, "entity": 3},
@@ -40,7 +40,7 @@ def test_bucketed_excludes_episodic_by_default():
     r = httpx.post(
         f"{BASE}/api/v1/knowledge/recall",
         headers={"X-Api-Key": KEY},
-        json={"query": "session log", "namespace": "claude-shared", "bucketed": True},
+        json={"query": "session log", "namespace": "default", "bucketed": True},
         timeout=15,
     )
     body = r.json()

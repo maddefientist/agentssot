@@ -56,8 +56,8 @@ def _call(namespace, auth, session):
 
 def test_allowed_namespace_and_role_queries_and_returns():
     session = _FakeSession(entities=[])
-    auth = _auth(["claude-shared"], role=ApiRole.writer.value)
-    result = _call("claude-shared", auth, session)
+    auth = _auth(["default"], role=ApiRole.writer.value)
+    result = _call("default", auth, session)
     assert result == []
     assert session.executed == 1
 
@@ -85,8 +85,8 @@ def test_reader_role_denied_even_in_authorized_namespace():
     """Role check is still enforced: reader keys cannot list entities even
     within their own authorized namespace."""
     session = _FakeSession(entities=[])
-    auth = _auth(["claude-shared"], role=ApiRole.reader.value)
+    auth = _auth(["default"], role=ApiRole.reader.value)
     with pytest.raises(HTTPException) as exc:
-        _call("claude-shared", auth, session)
+        _call("default", auth, session)
     assert exc.value.status_code == 403
     assert session.executed == 0

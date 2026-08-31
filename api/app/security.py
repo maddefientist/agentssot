@@ -2,13 +2,14 @@ import hashlib
 import secrets
 import time
 from dataclasses import dataclass
+from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, status
 from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .db import get_session
+from .db import SessionLocal, get_session
 from .models import ApiKey, ApiRole
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -118,6 +119,28 @@ def _lookup_api_key(session: Session, plaintext_key: str) -> AuthContext | None:
     return None
 
 
+def _current_cached_auth(session: Session, cached: AuthContext) -> AuthContext | None:
+    """Refresh a cached bcrypt match with a cheap primary-key lookup.
+
+    The cache avoids repeating bcrypt work; it must not cache authorization
+    state. This makes revocation, role changes, and namespace changes visible on
+    the next request even when another API worker performed the mutation.
+    """
+    try:
+        key_id = UUID(cached.key_id)
+    except (TypeError, ValueError, AttributeError):
+        return None
+    key = session.get(ApiKey, key_id)
+    if key is None or not key.is_active:
+        return None
+    return AuthContext(
+        key_id=str(key.id),
+        key_name=key.name,
+        role=key.role.value if isinstance(key.role, ApiRole) else str(key.role),
+        namespaces=list(key.namespaces or []),
+    )
+
+
 def require_api_key(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     session: Session = Depends(get_session),
@@ -127,7 +150,12 @@ def require_api_key(
 
     cached = _auth_cache_get(x_api_key)
     if cached:
-        return cached
+        current = _current_cached_auth(session, cached)
+        if current is None:
+            _auth_cache.pop(_cache_key(x_api_key), None)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+        _auth_cache_set(x_api_key, current)
+        return current
 
     auth = _lookup_api_key(session, x_api_key)
     if not auth:
@@ -139,3 +167,33 @@ def require_api_key(
 
 def clear_auth_cache() -> None:
     _auth_cache.clear()
+
+
+def auth_context_is_current(
+    auth: AuthContext,
+    *,
+    namespace: str,
+    minimum_role: str = ApiRole.admin.value,
+) -> bool:
+    """Re-read long-lived transport authorization, bypassing the auth cache.
+
+    Revocation, role downgrade, namespace removal, or a database failure all
+    fail closed. Tickets alone are only point-in-time credentials.
+    """
+    try:
+        key_id = UUID(auth.key_id)
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+    try:
+        with SessionLocal() as session:
+            key = session.get(ApiKey, key_id)
+            if key is None or not key.is_active:
+                return False
+            role = key.role.value if isinstance(key.role, ApiRole) else str(key.role)
+            if role not in ROLE_ORDER or ROLE_ORDER[role] < ROLE_ORDER[minimum_role]:
+                return False
+            namespaces = list(key.namespaces or [])
+            return namespace in namespaces or "*" in namespaces
+    except Exception:
+        return False

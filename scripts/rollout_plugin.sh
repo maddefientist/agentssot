@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rollout_plugin.sh — Push the local hari-hive plugin to every enrolled device
+# rollout_plugin.sh — Push the local agentssot plugin to every enrolled device
 # listed in ~/.claude/agentssot/hosts.json. Verify the plugin loads and
 # hive_loadout works on each.
 #
@@ -13,7 +13,7 @@
 # data loss is not.
 set -euo pipefail
 
-SOURCE="$HOME/.claude/plugins/hari-hive"
+SOURCE="$HOME/.claude/plugins/agentssot"
 HOSTS_JSON="$HOME/.claude/agentssot/hosts.json"
 DRY_RUN=false
 
@@ -85,7 +85,7 @@ for D in $DEVICES; do
         continue
     }
 
-    REMOTE_DIR="$REMOTE_HOME/.claude/plugins/hari-hive"
+    REMOTE_DIR="$REMOTE_HOME/.claude/plugins/agentssot"
 
     if $DRY_RUN; then
         # ── Dry-run: show what rsync WOULD change ────────────────────

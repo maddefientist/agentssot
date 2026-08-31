@@ -28,7 +28,7 @@
       </label>
       <label>
         <span>Device ID</span>
-        <input type="text" x-model="deviceId" placeholder="hari">
+        <input type="text" x-model="deviceId" placeholder="workstation">
       </label>
       <label>
         <span>Token Budget</span>
@@ -78,7 +78,7 @@ function loadoutApp() {
   return {
     apiKey: (window.cortexAuth ? window.cortexAuth.getKey() : ""),
     cwd: "/opt/agentssot",
-    deviceId: "hari",
+    deviceId: "workstation",
     budget: 750,
     rendered: "",
     error: "",
@@ -93,7 +93,7 @@ function loadoutApp() {
           body: JSON.stringify({
             cwd: this.cwd,
             device_id: this.deviceId,
-            namespace: "claude-shared",
+            namespace: "default",
             token_budget: this.budget,
           }),
         });

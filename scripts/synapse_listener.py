@@ -53,7 +53,7 @@ def _load_config() -> dict[str, Any]:
     except Exception as exc:
         logger.error("Cannot parse agent.json: %s — exiting", exc)
         sys.exit(1)
-    base_url = data.get("base_url", "http://192.168.1.225:8088").rstrip("/")
+    base_url = data.get("base_url", "http://127.0.0.1:8088").rstrip("/")
     api_key = data.get("api_key") or data.get("admin_api_key", "")
     device_name = data.get("device_name", "unknown")
     if not api_key:

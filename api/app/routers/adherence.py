@@ -47,7 +47,7 @@ def _ki_summary(ki: KnowledgeItem) -> dict[str, Any]:
 
 @router.get("/stats")
 async def adherence_stats(
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     days: int = Query(default=30, ge=1, le=365),
     limit: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_session),

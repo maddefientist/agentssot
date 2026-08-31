@@ -27,9 +27,9 @@ sys.path.insert(0, str(PLUGIN_PATH))
 
 def _write_agent_json(path: Path, **overrides) -> Path:
     cfg = {
-        "base_url": "http://192.168.1.225:8088",
+        "base_url": "http://127.0.0.1:8088",
         "api_key": "ssot_original_key",
-        "default_namespace": "claude-shared",
+        "default_namespace": "default",
         "device_name": "test-device",
     }
     cfg.update(overrides)
@@ -52,9 +52,9 @@ def test_read_agent_config_reflects_live_edits_without_reimport(mcp_server, tmp_
     namespace/device rotation on the NEXT call, without restarting."""
     agent_path = tmp_path / "agent.json"
     cfg_before = mcp_server._read_agent_config()
-    assert cfg_before["base_url"] == "http://192.168.1.225:8088"
+    assert cfg_before["base_url"] == "http://127.0.0.1:8088"
     assert cfg_before["api_key"] == "ssot_original_key"
-    assert cfg_before["default_ns"] == "claude-shared"
+    assert cfg_before["default_ns"] == "default"
     assert cfg_before["agent_key"] == "device-test-device-writer"
 
     _write_agent_json(
@@ -82,7 +82,7 @@ def test_read_agent_config_falls_back_on_unreadable_file(mcp_server, tmp_path):
 
 
 def test_default_namespace_helper_reflects_live_edit(mcp_server, tmp_path):
-    assert mcp_server._namespace_or_default("") == "claude-shared"
+    assert mcp_server._namespace_or_default("") == "default"
     _write_agent_json(tmp_path, default_namespace="rotated-ns")
     assert mcp_server._namespace_or_default("") == "rotated-ns"
     assert mcp_server._namespace_or_default("explicit-ns") == "explicit-ns"
@@ -181,6 +181,106 @@ def test_hive_recall_still_reports_hard_connection_error_distinctly(mcp_server, 
 
     assert result.startswith("Connection error:")
     assert not result.startswith("degraded:")
+
+
+def test_hive_recall_defaults_to_bounded_scope_honoring_fast_path(mcp_server, monkeypatch):
+    captured = {}
+
+    class _Response:
+        status_code = 200
+
+        def json(self):
+            return {
+                "items": [{
+                    "id": "event-1",
+                    "scope": "events",
+                    "score": 0.2,
+                    "snippet": "bounded event",
+                }]
+            }
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, path, json):
+            captured["path"] = path
+            captured["body"] = json
+            return _Response()
+
+    async def _fake_client(role=None):
+        return _FakeClient()
+
+    monkeypatch.setattr(mcp_server, "_client", _fake_client)
+    result = asyncio.run(mcp_server.hive_recall("what happened", scope="events", top_k=3))
+
+    assert captured["path"] == "/recall"
+    assert captured["body"]["scope"] == "events"
+    assert captured["body"]["top_k"] == 3
+    assert captured["body"]["rerank"] is False
+    assert "[events] bounded event" in result
+    assert "item_id=event-1" in result
+
+
+def test_hive_recall_deep_mode_is_explicitly_knowledge_only(mcp_server):
+    result = asyncio.run(mcp_server.hive_recall("query", scope="all", deep=True))
+    assert result == "Error: deep mode is a typed knowledge sweep; use scope='knowledge'."
+
+
+def test_hive_recall_deep_mode_uses_a_total_result_budget(mcp_server, monkeypatch):
+    captured = {}
+
+    class _Response:
+        status_code = 200
+
+        def json(self):
+            return {
+                "buckets": {
+                    tier: [
+                        {"id": f"{tier}-{i}", "abstract": f"{tier} {i}"}
+                        for i in range(3)
+                    ]
+                    for tier in ("command", "rule", "skill", "entity", "decision")
+                },
+                "diagnostics": {},
+            }
+
+    class _FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, path, json):
+            captured["path"] = path
+            captured["body"] = json
+            return _Response()
+
+    async def _fake_client(role=None):
+        return _FakeClient()
+
+    monkeypatch.setattr(mcp_server, "_client", _fake_client)
+    result = asyncio.run(
+        mcp_server.hive_recall("deep context", scope="knowledge", top_k=7, deep=True)
+    )
+
+    assert captured["path"] == "/api/v1/knowledge/recall"
+    assert set(captured["body"]["top_per_tier"].values()) == {2}
+    assert result.count("\n  • ") == 7
+
+
+def test_default_mcp_profile_exposes_only_core_memory_tools(mcp_server):
+    names = {tool.name for tool in asyncio.run(mcp_server.mcp.list_tools())}
+    assert names == mcp_server._CORE_TOOL_NAMES
+
+
+def test_irrelevant_feedback_requires_exact_knowledge_item(mcp_server):
+    result = asyncio.run(mcp_server.hive_feedback("irrelevant", concept_id="concept-1"))
+    assert result == "Error: 'irrelevant' requires the exact knowledge_item_id returned by recall"
 
 
 def test_hive_status_keeps_agent_config_separate_from_server_config(

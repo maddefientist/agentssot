@@ -29,7 +29,7 @@ class SweepResult:
         return self.__dict__
 
 
-def run_sweep(session: Session, namespace: str = "claude-shared",
+def run_sweep(session: Session, namespace: str = "default",
               dry_run: bool = False) -> dict:
     now = datetime.now(timezone.utc)
     decay_cutoff = now - DECAY_AGE

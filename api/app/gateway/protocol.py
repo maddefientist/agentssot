@@ -1,4 +1,4 @@
-"""Wire protocol for the Madi gateway.
+"""Wire protocol for the optional operator gateway.
 
 Two dataclasses cross the boundary between channels (HUD WebSocket today,
 Telegram/voice later) and the gateway:
@@ -35,10 +35,21 @@ class InboundMessage:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "InboundMessage":
+        if not isinstance(d, dict):
+            raise ValueError("message must be a JSON object")
+        text = d.get("text")
+        session_id = d.get("session_id")
+        intent = d.get("intent")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("text must be a non-empty string")
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError("session_id must be a non-empty string")
+        if intent is not None and not isinstance(intent, str):
+            raise ValueError("intent must be a string when provided")
         return cls(
-            text=d.get("text", ""),
-            session_id=d.get("session_id", ""),
-            intent=d.get("intent"),
+            text=text.strip(),
+            session_id=session_id.strip(),
+            intent=intent,
         )
 
 

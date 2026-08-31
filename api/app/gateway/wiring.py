@@ -1,16 +1,8 @@
-"""Production wiring — assemble a live GatewayService against the running app.
+"""Production wiring — assemble a GatewayService against the running app.
 
 Everything model-/IO-bound is constructed here and injected into the (already
-unit-tested) gateway components. Kept in one place so the moving parts — hive
-recall via crud, the local Ollama streamer/classifier, the orchestrate fallback
-ladder, dispatch via chain.sh — are visible together.
-
-Reachability is environment-shaped, by design:
-- ``anthropic`` rung lights up only where ANTHROPIC_API_KEY + SDK exist; on hari
-  it fails fast and the ladder falls over (visibly) to the next rung.
-- ``chain`` rungs run ~/.claude/scripts/chain.sh (present on hari) → deepseek /
-  glm.
-- ``ollama`` rung (local qwen) always works → the floor of the ladder.
+unit-tested) gateway components. The public default is a local Ollama rung;
+broader providers and host hooks are deployment-specific operator policy.
 """
 from __future__ import annotations
 
@@ -41,7 +33,7 @@ def _build_brief(ctx: dict[str, Any]) -> str:
     """Flatten recent history + current text into a single prompt for a rung."""
     parts: list[str] = []
     for turn in ctx.get("history", [])[-8:]:
-        who = "Madi" if turn.get("role") == "madi" else "Operator"
+        who = "Operator" if turn.get("role") == "user" else "Assistant"
         parts.append(f"{who}: {turn.get('text', '')}")
     parts.append(f"Operator: {ctx.get('text', '')}")
     return "\n".join(parts)
@@ -258,7 +250,7 @@ def _synapse_activity() -> dict[str, Any] | None:
     }
 
 
-def build_gateway(app):
+def build_gateway(app, *, execution_enabled: bool = False):
     """Return ``(service_factory, status_snapshot)`` wired to the live app."""
     recall_fn = _recall_fn(app)
     stats_fn = _stats_fn()
@@ -270,6 +262,7 @@ def build_gateway(app):
         chat_streamer=make_ollama_streamer(),
         orchestrate_runner=_make_orchestrate_runner(),
         dispatch_runner=_make_dispatch_runner(),
+        execution_enabled=execution_enabled,
     )
     router = IntentRouter(classifier=make_ollama_classifier())
     store = SessionStore(SqlBackend(SessionLocal))
@@ -284,4 +277,4 @@ def build_gateway(app):
             synapse=_synapse_activity,  # live agent activity (DB-backed, always available)
         )
 
-    return (lambda: service), status_snapshot
+    return (lambda _auth: service), status_snapshot

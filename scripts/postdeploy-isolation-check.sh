@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# postdeploy-isolation-check.sh — namespace-isolation deploy gate (runs ON hari).
+# postdeploy-isolation-check.sh — namespace-isolation deploy gate (runs on the target host).
 #
 # Runs the isolation benchmark against the freshly-deployed API and FAILS
 # (non-zero exit) if any cross-tenant leak is detected. Wire this into the deploy
 # flow right after `docker compose up -d` so a regression in namespace RBAC can
 # never reach a healthy/"deployed" state.
 #
-# It lives where the backend + admin key already are (hari) — it is NOT meant to
+# It runs where the backend and deployment credential are available; it is not meant to
 # run inside the MBA Fastlane CI, which has no backend to talk to.
 #
 # Admin key resolution (first hit wins):
@@ -45,7 +45,7 @@ GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'
 
 if [[ -z "$ADMIN_KEY" ]]; then
   echo -e "${RED}✗ SSOT_ADMIN_KEY not set — cannot run isolation gate.${NC}" >&2
-  echo "  Recover it: docker logs agentssot-api 2>&1 | grep BOOTSTRAP_ADMIN_API_KEY" >&2
+  echo "  Provide SSOT_ADMIN_KEY or SSOT_ADMIN_KEY_FILE; bootstrap plaintext is never logged." >&2
   exit 2
 fi
 

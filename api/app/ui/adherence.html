@@ -168,7 +168,7 @@
 function adherenceApp() {
   return {
     apiKey: (window.cortexAuth ? window.cortexAuth.getKey() : ""),
-    namespace: localStorage.getItem('adherenceNs') || 'claude-shared',
+    namespace: localStorage.getItem('adherenceNs') || 'default',
     windowDays: 30,
     rollup: null,
     under_fetched: [],

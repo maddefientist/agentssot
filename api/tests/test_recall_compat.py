@@ -19,7 +19,7 @@ def test_recall_legacy_path_with_bucketed_false():
     r = httpx.post(
         f"{BASE}/api/v1/knowledge/recall",
         headers={"X-Api-Key": KEY},
-        json={"query": "ssh unraid", "namespace": "claude-shared", "bucketed": False, "limit": 3},
+        json={"query": "ssh storage-node", "namespace": "default", "bucketed": False, "limit": 3},
         timeout=15,
     )
     assert r.status_code == 200

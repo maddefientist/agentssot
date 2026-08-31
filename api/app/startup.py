@@ -4,7 +4,7 @@ from sqlalchemy import func, select, text
 
 from .db import SessionLocal
 from .models import ApiKey, ApiRole, Namespace
-from .security import generate_api_key, hash_api_key
+from .security import hash_api_key
 from .cortex import ensure_cortex_tables
 from .settings import get_settings
 
@@ -17,7 +17,8 @@ def initialize_system(settings) -> None:
     with SessionLocal() as session:
         _ensure_enrollment_tokens_table(session)
         _ensure_concepts_table(session)
-        _ensure_gateway_session_table(session)
+        if settings.gateway_enabled:
+            _ensure_gateway_session_table(session)
         _ensure_typed_memory_columns(session)
         ensure_cortex_tables(session)
         _bootstrap_namespaces(session, settings)
@@ -94,7 +95,7 @@ def _ensure_enrollment_tokens_table(session) -> None:
 
 
 def _ensure_gateway_session_table(session) -> None:
-    """Create gateway_session table for Madi HUD/gateway conversational state.
+    """Create the optional gateway conversation-state table.
 
     Kept out of the knowledge graph: chatter must never pollute recall. State
     lives here so a gateway restart loses nothing and a thread can span
@@ -193,7 +194,12 @@ def _bootstrap_admin_key_if_needed(session, settings) -> None:
     if key_count > 0:
         return
 
-    plaintext = generate_api_key()
+    plaintext = settings.bootstrap_admin_api_key.strip()
+    if len(plaintext) < 32 or not plaintext.startswith("ssot_"):
+        raise RuntimeError(
+            "No API keys exist. Set BOOTSTRAP_ADMIN_API_KEY to a unique "
+            "ssot_-prefixed value of at least 32 characters for first boot."
+        )
     key = ApiKey(
         name="bootstrap-admin",
         key_hash=hash_api_key(plaintext),
@@ -204,7 +210,9 @@ def _bootstrap_admin_key_if_needed(session, settings) -> None:
     session.add(key)
     session.commit()
 
-    logger.warning("BOOTSTRAP_ADMIN_API_KEY=%s...%s", plaintext[:8], plaintext[-4:])
+    logger.warning(
+        "created bootstrap admin key; plaintext was supplied by the operator and was not logged"
+    )
 
 
 def _maybe_enable_hnsw_indexes(session, settings) -> None:

@@ -2,7 +2,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
-from sqlalchemy import select, and_, func, or_, cast, text
+from sqlalchemy import select, and_, func, or_, cast, text, update
 from sqlalchemy.dialects.postgresql import ARRAY, TEXT
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
@@ -68,7 +68,7 @@ def _resolve_entity_refs(session: Session, namespace: str, refs):
     """Split caller-supplied entity_refs into resolved UUIDs and leftover names.
 
     Callers may pass entity UUIDs (kept as-is) or human names/slugs like
-    'unraid' (the historical drift that spammed the recall path). For each
+    'storage-node' (legacy drift that can spam the recall path). For each
     non-UUID ref, look up an Entity in this namespace by slug, then
     case-insensitive name. Resolved → its UUID string. Unresolved → returned
     as a leftover name so the caller can preserve it as an ``entity:<name>``
@@ -371,7 +371,7 @@ async def ingest_tiered(
 
     # Plan 1 T2.5: supersession + contradiction scans.
     # Both the caller AND the classifier supply entity references as human names
-    # ('unraid', 'jellyfin') — NOT UUIDs, despite the schema. Stored verbatim
+    # ('storage-node', 'media-service') — NOT UUIDs, despite the schema. Stored verbatim
     # they break the jsonb ?| supersession operator and spam the recall path
     # (`_safe_uuids`). Resolve every name to its entity UUID here; keep only
     # UUIDs in entity_refs, and preserve anything unresolved as an `entity:<name>`
@@ -548,7 +548,13 @@ async def recall_tiered(
         raise HTTPException(status_code=500, detail=f"Embedding generation failed: {e}")
 
     # Build query with category filter
-    conditions = [KnowledgeItem.namespace == namespace]
+    now = datetime.now(timezone.utc)
+    conditions = [
+        KnowledgeItem.namespace == namespace,
+        or_(KnowledgeItem.status == "active", KnowledgeItem.status.is_(None)),
+        KnowledgeItem.superseded_by.is_(None),
+        or_(KnowledgeItem.expires_at.is_(None), KnowledgeItem.expires_at > now),
+    ]
 
     if data.categories:
         category_enums = [MemoryCategory(c) for c in data.categories]
@@ -606,6 +612,19 @@ async def recall_tiered(
         from ..output_sanitizer import sanitize_obj_fields
         for r in results:
             sanitize_obj_fields(r, ("content", "abstract", "summary", "full_content"))
+
+    # Recall is an observed read, not a popularity guess. Keep the lifecycle
+    # counters honest for this flat compatibility path just as /recall does.
+    if results:
+        session.execute(
+            update(KnowledgeItem)
+            .where(KnowledgeItem.id.in_([r.id for r in results]))
+            .values(
+                last_recalled_at=func.now(),
+                recall_count=KnowledgeItem.recall_count + 1,
+            )
+        )
+        session.commit()
 
     return TieredRecallResponse(
         results=results,
@@ -795,6 +814,18 @@ async def _recall_bucketed(
             for bi in bucket_items:
                 sanitize_obj_fields(bi, ("abstract", "summary", "content"))
 
+    selected_ids = [item.id for items in buckets.values() for item in items]
+    if selected_ids:
+        session.execute(
+            update(KnowledgeItem)
+            .where(KnowledgeItem.id.in_(selected_ids))
+            .values(
+                last_recalled_at=func.now(),
+                recall_count=KnowledgeItem.recall_count + 1,
+            )
+        )
+        session.commit()
+
     _maybe_alert_slow_recall(vec_ms, rerank_total_ms, namespace)
 
     return BucketedRecallResponse(
@@ -853,7 +884,7 @@ async def compute_loadout(
     agent post-compaction to restore push context.
     """
 
-    namespace = data.namespace or "claude-shared"
+    namespace = data.namespace or "default"
     ensure_namespace_access(
         auth, namespace,
         {ApiRole.reader.value, ApiRole.writer.value, ApiRole.admin.value},

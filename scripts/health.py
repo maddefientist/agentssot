@@ -28,7 +28,7 @@ def generate_report() -> str:
     # Knowledge items
     ki = psql("""
         SELECT COALESCE(status, 'active') as st, COUNT(*), ROUND(AVG(COALESCE(strength, 1.0))::numeric, 2)
-        FROM knowledge_items WHERE namespace = 'claude-shared'
+        FROM knowledge_items WHERE namespace = 'default'
         GROUP BY COALESCE(status, 'active') ORDER BY 1
     """)
     lines.append("## Knowledge Items")
@@ -43,7 +43,7 @@ def generate_report() -> str:
     # Concepts
     concepts = psql("""
         SELECT type::text, COUNT(*), ROUND(AVG(confidence)::numeric, 3)
-        FROM concepts WHERE namespace = 'claude-shared'
+        FROM concepts WHERE namespace = 'default'
           AND NOT (tags @> ARRAY['superseded']::text[])
         GROUP BY type ORDER BY count DESC
     """)
@@ -70,7 +70,7 @@ def generate_report() -> str:
     ki_recall = psql("""
         SELECT COUNT(*) FILTER (WHERE last_recalled_at > NOW() - INTERVAL '7 days') as recalled_items,
                ROUND(AVG(recall_count) FILTER (WHERE recall_count > 0)::numeric, 1) as avg_recalls
-        FROM knowledge_items WHERE namespace = 'claude-shared'
+        FROM knowledge_items WHERE namespace = 'default'
     """)
     lines.append(f"- Knowledge items recalled: {ki_recall}")
     lines.append("")
@@ -107,7 +107,7 @@ def generate_report() -> str:
     top_ki = psql("""
         SELECT LEFT(content, 60), strength, recall_count
         FROM knowledge_items
-        WHERE namespace = 'claude-shared' AND COALESCE(status, 'active') = 'active'
+        WHERE namespace = 'default' AND COALESCE(status, 'active') = 'active'
         ORDER BY strength DESC LIMIT 10
     """)
     lines.append("## Top 10 Strongest Knowledge Items")
@@ -123,7 +123,7 @@ def generate_report() -> str:
     weak_ki = psql("""
         SELECT LEFT(content, 60), strength, recall_count, created_at::date
         FROM knowledge_items
-        WHERE namespace = 'claude-shared' AND COALESCE(status, 'active') = 'active'
+        WHERE namespace = 'default' AND COALESCE(status, 'active') = 'active'
         ORDER BY strength ASC LIMIT 10
     """)
     lines.append("## Top 10 Weakest Knowledge Items (Decay Candidates)")

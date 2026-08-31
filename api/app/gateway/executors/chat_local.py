@@ -16,8 +16,8 @@ from .base import Executor
 Streamer = Callable[[list[dict[str, str]]], "AsyncIterator[str]"]
 
 SYSTEM = (
-    "You are Madi, the operator's AI agent. Reply concisely and directly, "
-    "in your own grounded voice. You are speaking through the HUD."
+    "You are the operator's local assistant. Reply concisely and directly. "
+    "You are speaking through an explicitly enabled gateway."
 )
 
 
@@ -30,7 +30,10 @@ class ChatLocalExecutor(Executor):
     def _build_messages(self, ctx: dict[str, Any]) -> list[dict[str, str]]:
         messages = [{"role": "system", "content": SYSTEM}]
         for turn in ctx.get("history", []):
-            role = "assistant" if turn.get("role") == "madi" else "user"
+            # Older sessions may contain a pre-standard role label. Only the
+            # explicit user role is treated as user input; other stored replies
+            # are normalized to the standard assistant role.
+            role = "user" if turn.get("role") == "user" else "assistant"
             messages.append({"role": role, "content": turn.get("text", "")})
         messages.append({"role": "user", "content": ctx.get("text", "")})
         return messages

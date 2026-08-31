@@ -128,7 +128,7 @@
 function reviewApp() {
   return {
     adminKey: (window.cortexAuth ? window.cortexAuth.getKey() : ""),
-    namespace: localStorage.getItem("reviewNs") || "claude-shared",
+    namespace: localStorage.getItem("reviewNs") || "default",
     kind: "",
     items: [],
     band: [],

@@ -5,7 +5,7 @@
 #   "httpx>=0.27",
 # ]
 # ///
-"""hari-hive MCP server -- proxies tool calls to the AgentSSOT REST API."""
+"""AgentSSOT MCP server -- proxies tool calls to the REST API."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ try:
 except Exception as exc:
     raise SystemExit(f"Cannot read agent config at {_agent_path}: {exc}") from exc
 
-BASE_URL: str = _cfg.get("base_url", "http://192.168.1.225:8088")
+BASE_URL: str = _cfg.get("base_url", "http://127.0.0.1:8088")
 # Default client key is the writer/reader key from agent.json. The admin key
 # (admin.json) is used ONLY by tools that explicitly request role="admin" via
 # _client()/_api_key_for() below — never as a blanket default for every tool.
@@ -43,11 +43,11 @@ BASE_URL: str = _cfg.get("base_url", "http://192.168.1.225:8088")
 # cortex-recall.sh, hive-session-start.sh, ...) reads api_key FIRST; only this line
 # preferred admin, so it was a local mutation against house convention, not an idiom.
 API_KEY: str = _cfg.get("api_key", "")
-DEFAULT_NS: str = _cfg.get("default_namespace", "claude-shared")
+DEFAULT_NS: str = _cfg.get("default_namespace", "default")
 DEVICE_NAME: str = _cfg.get("device_name", "unknown")
 TIMEOUT = httpx.Timeout(30.0, connect=10.0)
 
-mcp = FastMCP("hari-hive")
+mcp = FastMCP("agentssot")
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -202,31 +202,60 @@ async def hive_recall(
     scope: str = "all",
     top_k: int = 5,
     session_id: str = "",
+    deep: bool = False,
 ) -> str:
-    """Semantic (vector) recall from hari-hive memory. Returns tier-bucketed results.
+    """Recall durable memory when cross-session context is genuinely useful.
+
+    The default is one bounded, non-reranked pass: ``top_k`` is the total
+    result budget and ``scope`` is honored. Set ``deep=True`` only for an
+    explicit, expensive five-tier knowledge sweep. For self-contained work or
+    when the current repo/web/runtime is authoritative, skip this tool.
 
     Args:
         query: Natural-language search query.
-        namespace: Namespace to search (default: claude-shared).
-        scope: Scope filter -- all (blends knowledge + concepts), knowledge, requirements, events, or concepts.
-        top_k: Max results per tier (used as default for top_per_tier).
+        namespace: Namespace to search (defaults to the agent configuration).
+        scope: all (knowledge + concepts), knowledge, requirements, events, or concepts.
+        top_k: Total result budget in normal and deep modes.
         session_id: Optional session identifier for tracking recall events.
+        deep: Use the slower tier-bucketed knowledge path with per-tier reranking.
     """
     ns = namespace or _read_agent_config()["default_ns"]
     import time as _time
-    body: dict[str, Any] = {
-        "query": query,
-        "namespace": ns,
-        "bucketed": True,
-        "top_per_tier": {
-            "command": top_k, "rule": top_k, "skill": top_k,
-            "entity": top_k, "decision": top_k,
-        },
-        "session_id": session_id or f"session-{_time.time_ns()}",
-    }
+    valid_scopes = {"all", "knowledge", "requirements", "events", "concepts"}
+    if scope not in valid_scopes:
+        return f"Error: scope must be one of {', '.join(sorted(valid_scopes))}"
+    top_k = min(max(int(top_k), 1), 20)
+    sid = session_id or f"session-{_time.time_ns()}"
+    if deep:
+        if scope != "knowledge":
+            return "Error: deep mode is a typed knowledge sweep; use scope='knowledge'."
+        path = "/api/v1/knowledge/recall"
+        per_tier = max(1, (top_k + 4) // 5)
+        body: dict[str, Any] = {
+            "query": query,
+            "namespace": ns,
+            "bucketed": True,
+            "top_per_tier": {
+                "command": per_tier, "rule": per_tier, "skill": per_tier,
+                "entity": per_tier, "decision": per_tier,
+            },
+        }
+    else:
+        path = "/recall"
+        body = {
+            "query_text": query,
+            "namespace": ns,
+            "scope": scope,
+            "top_k": top_k,
+            "session_id": sid,
+            "agent_key": _read_agent_config()["agent_key"],
+            # The default memory lookup must not monopolize a shared GPU. Deep
+            # mode remains available when the caller explicitly needs it.
+            "rerank": False,
+        }
     try:
         async with await _client() as c:
-            resp = await c.post("/api/v1/knowledge/recall", json=body)
+            resp = await c.post(path, json=body)
     except httpx.TimeoutException as exc:
         return _degraded_timeout_message(exc, "try hive_query for exact match instead of hive_recall.")
     except httpx.HTTPError as exc:
@@ -234,11 +263,53 @@ async def hive_recall(
     if resp.status_code != 200:
         return await _api_error(resp)
     data = resp.json()
+    if not deep:
+        items = data.get("items", [])
+        if not items:
+            return f"No results for '{query}' in {ns}. Continue without Hive context."
+        lines = [f"Recall (fast): '{query}' in {ns} — {len(items)} total"]
+        for it in items:
+            item_scope = it.get("scope", "knowledge")
+            id_label = {
+                "knowledge": "knowledge_item_id",
+                "concepts": "concept_id",
+            }.get(item_scope, "item_id")
+            distance = float(it.get("score", 0.0))
+            lines.append(
+                f"  • [{item_scope}] {it.get('snippet', '')} "
+                f"({id_label}={it['id']}, distance={distance:.3f})"
+            )
+        best_distance = min(float(it.get("score", 1.0)) for it in items)
+        weak_match_raw = os.environ.get("HIVE_WEAK_MATCH_DISTANCE", "").strip()
+        try:
+            weak_match_distance = float(weak_match_raw) if weak_match_raw else None
+        except ValueError:
+            weak_match_distance = None
+        if weak_match_distance is not None and best_distance > weak_match_distance:
+            lines.append(
+                "\nRelevance warning: even the nearest vector match exceeds this "
+                "deployment's calibrated weak-match distance "
+                f"(distance={best_distance:.3f}). Prefer NO_MEMORY_NEEDED unless "
+                "you can independently recognize a returned item as relevant."
+            )
+        else:
+            lines.append(
+                "\nDistances are deployment-specific and only comparable within this "
+                "result set. Use NO_MEMORY_NEEDED unless the content is independently relevant."
+            )
+        if any(it.get("scope") in {"knowledge", "concepts"} for it in items):
+            lines.append(
+                "\nRate only the exact item shown: use knowledge_item_id for knowledge "
+                "results or concept_id for concept results."
+            )
+        return "\n".join(lines)
+
     buckets = data.get("buckets", {})
     diag = data.get("diagnostics", {})
-    lines = [f"Recall: '{query}' in {ns}"]
+    lines = [f"Recall (deep knowledge sweep): '{query}' in {ns}"]
     total = 0
     for tier, items in buckets.items():
+        items = items[: max(0, top_k - total)]
         if not items:
             continue
         total += len(items)
@@ -265,11 +336,11 @@ async def hive_query(
     namespace: str = "",
     limit: int = 20,
 ) -> str:
-    """Full-text search across hari-hive items. Faster than recall for exact matches.
+    """Full-text search across AgentSSOT items. Faster than recall for exact matches.
 
     Args:
         q: Text search query.
-        namespace: Namespace to search (default: claude-shared).
+        namespace: Namespace to search (defaults to the agent configuration).
         limit: Max results.
     """
     ns = _namespace_or_default(namespace)
@@ -299,13 +370,13 @@ async def hive_ingest(
     source: str | None = None,
     namespace: str = "",
 ) -> str:
-    """Ingest a single knowledge item into hari-hive memory.
+    """Ingest a single knowledge item into AgentSSOT memory.
 
     Args:
         content: The text content to store.
         tags: Optional list of tags for categorization.
         source: Optional source identifier (e.g. file path, URL).
-        namespace: Target namespace (default: claude-shared).
+        namespace: Target namespace (defaults to the agent configuration).
     """
     # Posts to the TIERED route (/api/v1/knowledge/ingest), not legacy /ingest.
     #
@@ -354,7 +425,7 @@ async def hive_stats(namespace: str = "") -> str:
     """Get item counts and stats for a namespace.
 
     Args:
-        namespace: Namespace to check (default: claude-shared).
+        namespace: Namespace to check (defaults to the agent configuration).
     """
     ns = _namespace_or_default(namespace)
     params = {"namespace": ns}
@@ -401,7 +472,7 @@ async def hive_summarize(
 
     Args:
         session_id: Unique session identifier.
-        namespace: Namespace (default: claude-shared).
+        namespace: Namespace (defaults to the agent configuration).
         project_slug: Optional project slug for scoping.
         max_events: Max events to summarize at once.
     """
@@ -440,12 +511,12 @@ async def cortex_state(
     Use this at session start to reload prior working state before continuing a task.
 
     agent_key convention: slugified basename of the project cwd, e.g. "agentssot" or
-    "teleton". One rolling task per project; the same key is shared across Pi madi-core
-    and Claude Code so both see the same blackboard.
+    "teleton". One rolling task per project; the same key can be shared across
+    explicitly admitted clients so they see the same blackboard.
 
     Args:
         agent_key: Slug identifying the agent/project (e.g. "agentssot").
-        namespace: Namespace (default: claude-shared).
+        namespace: Namespace (defaults to the agent configuration).
         include_completed: If True, include completed/abandoned tasks.
     """
     ns = _namespace_or_default(namespace)
@@ -520,7 +591,7 @@ async def cortex_reconstruct(
 
     Args:
         agent_key: Slug identifying the agent/project (e.g. "agentssot").
-        namespace: Namespace (default: claude-shared).
+        namespace: Namespace (defaults to the agent configuration).
         max_chars: Budget cap for the returned injection string.
         include_recent_knowledge: If True, attach relevant knowledge snippets.
         top_k_knowledge: How many knowledge items to include (if enabled).
@@ -574,7 +645,7 @@ async def cortex_update(
     without affecting the lists.
 
     agent_key convention: slugified basename of the project cwd (e.g. "agentssot").
-    One rolling task per project; shared between Pi madi-core and Claude Code.
+    One rolling task per project; shared only between explicitly admitted clients.
 
     Args:
         agent_key: Slug identifying the agent/project.
@@ -586,7 +657,7 @@ async def cortex_update(
         artifacts: COMPLETE list of artifact paths/URLs (overwrites previous).
         context_snapshot: Optional free-form snapshot string (overwrites previous).
         delta: Optional incremental note appended to the audit delta log.
-        namespace: Namespace (default: claude-shared).
+        namespace: Namespace (defaults to the agent configuration).
     """
     valid_statuses = {"pending", "in_progress", "completed", "abandoned"}
     if status not in valid_statuses:
@@ -633,7 +704,7 @@ async def cortex_update(
 
 @mcp.tool()
 async def hive_create_namespace(name: str) -> str:
-    """Create a new namespace in hari-hive.
+    """Create a new namespace in AgentSSOT.
 
     Also grants the agent's writer key access to the new namespace (Layer-2 fix).
 
@@ -743,11 +814,11 @@ async def hive_delete_items(
     ids: list[str],
     namespace: str = "",
 ) -> str:
-    """Delete specific items by ID from hari-hive.
+    """Delete specific items by ID from AgentSSOT.
 
     Args:
         ids: List of item UUIDs to delete.
-        namespace: Namespace (default: claude-shared).
+        namespace: Namespace (defaults to the agent configuration).
     """
     ns = _namespace_or_default(namespace)
     body = {"namespace": ns, "ids": ids}
@@ -773,7 +844,7 @@ async def hive_dedup(
     """Find and optionally remove duplicate items in a namespace.
 
     Args:
-        namespace: Namespace to deduplicate (default: claude-shared).
+        namespace: Namespace to deduplicate (defaults to the agent configuration).
         dry_run: If True, only report duplicates without deleting (default: True).
     """
     ns = _namespace_or_default(namespace)
@@ -802,7 +873,11 @@ async def hive_feedback(
     session_id: str = "",
     namespace: str = "",
 ) -> str:
-    """Rate a recalled memory: 'useful' (helped), 'noted' (good reminder), or 'wrong' (outdated/incorrect).
+    """Rate an exact recalled item.
+
+    Use ``irrelevant`` when a knowledge item was a poor match for this query;
+    it records the retrieval failure without globally flagging a valid fact.
+    Use ``wrong`` only when the stored fact itself is incorrect or stale.
 
     PREFER knowledge_item_id -- pass the `id=` value printed by hive_recall.
     That is a knowledge-item id and it is the only way to rate the exact thing
@@ -812,18 +887,20 @@ async def hive_feedback(
     and tells you so, rather than silently rating an unrelated neighbour.
 
     Args:
-        signal: Feedback signal -- 'useful', 'noted', or 'wrong'.
+        signal: 'useful', 'noted', 'irrelevant', or 'wrong'.
         knowledge_item_id: UUID from hive_recall output (`id=...`). Preferred.
         concept_id: Direct concept UUID (from hive_concepts / concept scope).
         query: Fuzzy semantic query -- fallback only, may resolve to nothing.
         note: Optional correction or context note (recommended for 'wrong' signal).
         session_id: Optional session identifier.
-        namespace: Namespace the target lives in (default: claude-shared).
+        namespace: Namespace the target lives in (defaults to the agent configuration).
     """
     if not knowledge_item_id and not concept_id and not query:
         return "Error: provide knowledge_item_id (preferred), concept_id, or query"
-    if signal not in ("useful", "noted", "wrong"):
-        return "Error: signal must be 'useful', 'noted', or 'wrong'"
+    if signal not in ("useful", "noted", "wrong", "irrelevant"):
+        return "Error: signal must be 'useful', 'noted', 'irrelevant', or 'wrong'"
+    if signal == "irrelevant" and not knowledge_item_id:
+        return "Error: 'irrelevant' requires the exact knowledge_item_id returned by recall"
 
     ns = _namespace_or_default(namespace)
     body: dict[str, Any] = {"signal": signal, "agent_key": _read_agent_config()["agent_key"]}
@@ -864,6 +941,11 @@ async def hive_feedback(
         )
 
     if data.get("knowledge_item_id"):
+        if data["signal"] == "irrelevant":
+            return (
+                "Retrieval feedback recorded: irrelevant for knowledge item "
+                f"{data['knowledge_item_id']} (global strength/status unchanged)"
+            )
         return (
             f"Feedback recorded: {data['signal']} for knowledge item "
             f"{data['knowledge_item_id']} (new strength: {data.get('strength', 0):.2f})"
@@ -893,7 +975,7 @@ async def hive_teach(
         trigger: When this skill activates (situation description).
         action: What to do (specific steps).
         success_hint: How to verify it worked (optional).
-        namespace: Target namespace (default: claude-shared).
+        namespace: Target namespace (defaults to the agent configuration).
     """
     ns = _namespace_or_default(namespace)
     content = f"When: {trigger}\nDo: {action}"
@@ -1157,7 +1239,7 @@ async def hive_status() -> str:
         lines.append("Status: ALL GOOD — connected, enrolled, learning")
 
     lines.append("")
-    lines.append("Tip: Use hive_recall before starting work. Use hive_feedback when knowledge helps. Facts are auto-extracted at session end.")
+    lines.append("Tip: Recall only when durable cross-session context can help; otherwise continue with NO_MEMORY_NEEDED. Rate exact item ids with hive_feedback.")
 
     return "\n".join(lines)
 
@@ -1235,7 +1317,7 @@ async def hive_loadout(
     Args:
         cwd: Working directory. Defaults to PWD or cwd().
         device_id: Calling device id. Defaults to this device.
-        namespace: Namespace (default: claude-shared).
+        namespace: Namespace (defaults to the agent configuration).
         token_budget: Max tokens to pack. Default 750.
     """
     body = {
@@ -1555,8 +1637,8 @@ async def synapse_status() -> dict[str, Any]:
             )
     elif not agentssot_reachable:
         hint = (
-            f"Local flag on but cannot reach agentssot at {cfg['base_url']}. "
-            "Confirm LAN connectivity to hari (192.168.1.225)."
+            f"Local flag on but cannot reach AgentSSOT at {cfg['base_url']}. "
+            "Confirm the configured endpoint is reachable from this host."
         )
     elif listener == "not_installed":
         hint = (
@@ -1581,8 +1663,33 @@ async def synapse_status() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Entrypoint
+# Tool-surface profile and entrypoint
 # ---------------------------------------------------------------------------
+
+_CORE_TOOL_NAMES = {
+    "hive_recall",
+    "hive_query",
+    "hive_ingest",
+    "hive_feedback",
+    "hive_teach",
+    "hive_expand",
+}
+
+
+def _apply_tool_profile() -> str:
+    """Keep the default MCP context small; operator tools are explicit opt-in."""
+    profile = os.environ.get("HIVE_MCP_PROFILE", "core").strip().lower()
+    if profile not in {"core", "operator"}:
+        raise RuntimeError("HIVE_MCP_PROFILE must be 'core' or 'operator'")
+    if profile == "core":
+        registered = [tool.name for tool in mcp._tool_manager.list_tools()]
+        for name in registered:
+            if name not in _CORE_TOOL_NAMES:
+                mcp.remove_tool(name)
+    return profile
+
+
+MCP_PROFILE = _apply_tool_profile()
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")

@@ -1,7 +1,7 @@
 """Best-effort outbound alerting — channel-agnostic webhook POST.
 
 Alerting must NEVER raise into or block hive. All failures are logged and
-swallowed. Point ALERT_WEBHOOK_URL at ntfy / Discord / Slack / Madi / the
+swallowed. Point ALERT_WEBHOOK_URL at ntfy, Discord, Slack, or another
 :9877 fleet server — swapping channels never touches this code.
 """
 from __future__ import annotations

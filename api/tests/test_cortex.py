@@ -7,17 +7,15 @@ from .conftest import BASE_URL
 
 pytestmark = pytest.mark.integration
 
-API_KEY = None  # Will be set by fixture
-
-
 @pytest.fixture(scope="module")
 def api_key():
-    """Get a working API key by enrolling a test device."""
-    import uuid
-    name = f"cortex-test-{uuid.uuid4().hex[:8]}"
-    resp = httpx.post(f"{BASE_URL}/enroll/auto", json={"name": name, "passphrase": ""})
-    assert resp.status_code == 200
-    return resp.json()["api_key"]
+    """Use an explicitly supplied key for an isolated integration service."""
+    import os
+
+    key = os.environ.get("AGENTSSOT_TEST_API_KEY", "")
+    if not key:
+        pytest.skip("set AGENTSSOT_TEST_API_KEY for an isolated test deployment")
+    return key
 
 
 @pytest.fixture(scope="module")
@@ -34,7 +32,7 @@ class TestWeightedRecall:
             headers=headers,
             json={
                 "query_text": "docker deployment",
-                "namespace": "claude-shared",
+                "namespace": "default",
                 "scope": "knowledge",
                 "top_k": 3,
             },
@@ -51,7 +49,7 @@ class TestWeightedRecall:
             headers=headers,
             json={
                 "query_text": "security patterns",
-                "namespace": "claude-shared",
+                "namespace": "default",
                 "scope": "concepts",
                 "top_k": 3,
             },
@@ -68,7 +66,7 @@ class TestWeightedRecall:
             headers=headers,
             json={
                 "query_text": "python programming",
-                "namespace": "claude-shared",
+                "namespace": "default",
                 "scope": "all",
                 "top_k": 5,
             },
@@ -91,7 +89,7 @@ class TestKnowledgeFeedback:
             headers=headers,
             json={
                 "query_text": "test",
-                "namespace": "claude-shared",
+                "namespace": "default",
                 "scope": "knowledge",
                 "top_k": 1,
             },
@@ -110,7 +108,7 @@ class TestKnowledgeFeedback:
             json={
                 "signal": "useful",
                 "knowledge_item_id": kid,
-                "namespace": "claude-shared",
+                "namespace": "default",
             },
             timeout=30,
         )
@@ -128,7 +126,7 @@ class TestKnowledgeFeedback:
             json={
                 "signal": "noted",
                 "knowledge_item_id": kid,
-                "namespace": "claude-shared",
+                "namespace": "default",
             },
             timeout=30,
         )
@@ -144,7 +142,7 @@ class TestKnowledgeFeedback:
             headers=headers,
             json={
                 "query_text": "architecture",
-                "namespace": "claude-shared",
+                "namespace": "default",
                 "scope": "concepts",
                 "top_k": 1,
             },
@@ -162,7 +160,7 @@ class TestKnowledgeFeedback:
             json={
                 "signal": "useful",
                 "concept_id": concept_id,
-                "namespace": "claude-shared",
+                "namespace": "default",
             },
             timeout=30,
         )
@@ -175,14 +173,14 @@ class TestCortexLinks:
     """Test the /cortex/links endpoint for neural network edges."""
 
     def test_cortex_links_returns_list(self):
-        resp = httpx.get(f"{BASE_URL}/cortex/links", params={"namespace": "claude-shared"})
+        resp = httpx.get(f"{BASE_URL}/cortex/links", params={"namespace": "default"})
         assert resp.status_code == 200
         data = resp.json()
         assert "links" in data
         assert isinstance(data["links"], list)
 
     def test_cortex_links_structure(self):
-        resp = httpx.get(f"{BASE_URL}/cortex/links", params={"namespace": "claude-shared"})
+        resp = httpx.get(f"{BASE_URL}/cortex/links", params={"namespace": "default"})
         assert resp.status_code == 200
         data = resp.json()
         if data["links"]:
@@ -194,7 +192,7 @@ class TestCortexLinks:
             assert "co_occurrences" in link
 
     def test_cortex_links_respects_limit(self):
-        resp = httpx.get(f"{BASE_URL}/cortex/links", params={"namespace": "claude-shared", "limit": 5})
+        resp = httpx.get(f"{BASE_URL}/cortex/links", params={"namespace": "default", "limit": 5})
         assert resp.status_code == 200
         data = resp.json()
         assert len(data["links"]) <= 5

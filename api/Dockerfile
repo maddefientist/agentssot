@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY app /app/app
 COPY tests /app/tests
 COPY pyproject.toml /app/pyproject.toml
+COPY container_entrypoint.py /app/container_entrypoint.py
 
 # Keep revision-only rebuilds from invalidating the expensive dependency
 # layers above. The exact source revision is still present in both the OCI
@@ -25,4 +26,5 @@ ENV GIT_SHA=$GIT_SHA
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["python", "/app/container_entrypoint.py"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--ws-max-size", "16384"]

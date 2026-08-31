@@ -37,6 +37,19 @@ class DeferredBriefingExecutor(Executor):
         yield Event.done({"action": "briefing", "deferred": True})
 
 
+class DisabledExecutor(Executor):
+    """Fail-closed placeholder for a capability not enabled in production."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    async def execute(self, intent: str, ctx: dict[str, Any]) -> AsyncIterator[Event]:
+        yield Event.error(
+            f"{self.name} is disabled; explicit operator enablement is required",
+            retryable=False,
+        )
+
+
 def build_registry(
     *,
     recall_fn: Callable[[str], Any],
@@ -47,11 +60,20 @@ def build_registry(
     teach_fn: Optional[Callable[[str], Any]] = None,
     ladder: Optional[list[dict[str, Any]]] = None,
     briefing_executor: Optional[Executor] = None,
+    execution_enabled: bool = False,
 ) -> dict[str, Executor]:
     return {
         "chat-local": ChatLocalExecutor(chat_streamer),
         "hive-tool": HiveToolExecutor(recall_fn, stats_fn, teach_fn),
-        "orchestrate": OrchestrateExecutor(ladder or ORCHESTRATE_LADDER, orchestrate_runner),
-        "dispatch": DispatchExecutor(dispatch_runner),
+        "orchestrate": (
+            OrchestrateExecutor(ladder or ORCHESTRATE_LADDER, orchestrate_runner)
+            if execution_enabled
+            else DisabledExecutor("orchestrate")
+        ),
+        "dispatch": (
+            DispatchExecutor(dispatch_runner)
+            if execution_enabled
+            else DisabledExecutor("dispatch")
+        ),
         "briefing": briefing_executor or DeferredBriefingExecutor(),
     }

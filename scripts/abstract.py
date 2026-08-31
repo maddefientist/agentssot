@@ -107,7 +107,7 @@ def main():
     raw = psql("""
         SELECT title, content, type::text
         FROM concepts
-        WHERE namespace = 'claude-shared'
+        WHERE namespace = 'default'
           AND NOT (tags @> ARRAY['superseded']::text[])
           AND created_at > NOW() - INTERVAL '3 months'
         ORDER BY confidence DESC, updated_at DESC
@@ -185,7 +185,7 @@ def main():
             INSERT INTO concepts (id, namespace, type, scope, title, content, confidence, version, tags, embedding)
             VALUES (
                 '{concept_id}',
-                'claude-shared',
+                'default',
                 'principle',
                 'global',
                 E'{safe_title}',

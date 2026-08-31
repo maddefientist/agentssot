@@ -23,7 +23,7 @@ class _FakeConcept:
     def __init__(self, cid="c-1", title="Execute Feedback Loop Triad Verification"):
         self.id = cid
         self.title = title
-        self.namespace = "claude-shared"
+        self.namespace = "default"
         self.confidence = 1.0  # deliberately high: the misleading D3 value
         self.confirming_agents = []
         self.tags = []
@@ -76,7 +76,7 @@ def _call(distance, signal="wrong", note="Unrelated recall.", **kw):
     session = _FakeSession((concept, distance))
     result = crud.create_concept_feedback(
         session=session,
-        namespace="claude-shared",
+        namespace="default",
         signal=signal,
         agent_key="device-test-writer",
         embedding_provider=_FakeEmbedder(),
@@ -161,7 +161,7 @@ def test_id_resolved_feedback_reports_no_match_distance():
     session = _S(None)
     result = crud.create_concept_feedback(
         session=session,
-        namespace="claude-shared",
+        namespace="default",
         signal="useful",
         agent_key="device-test-writer",
         embedding_provider=_FakeEmbedder(),
@@ -202,7 +202,7 @@ def test_id_resolved_correction_keeps_its_attribution():
     session = _S(None)
     crud.create_concept_feedback(
         session=session,
-        namespace="claude-shared",
+        namespace="default",
         signal="wrong",
         agent_key="device-test-writer",
         embedding_provider=_FakeEmbedder(),

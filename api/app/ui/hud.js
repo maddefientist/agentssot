@@ -1,4 +1,4 @@
-/* Madi HUD client.
+/* Operator gateway HUD client.
    - WebSocket /gateway/ws  : command channel (stream tokens/events back)
    - SSE       /gateway/sse/status : ambient status panels
    The surface morphs ambient -> active on first command. */
@@ -54,8 +54,21 @@
 
   // ---- websocket command channel ----
   var ws = null;
-  var current = null; // current madi response element
+  var current = null; // current assistant response element
 
+  function apiKey() {
+    return (window.cortexAuth && window.cortexAuth.getKey()) || localStorage.getItem("cortexKey") || "";
+  }
+  async function issueTicket(scope) {
+    var key = apiKey();
+    if (!key) throw new Error("Set an admin API key from the Classic dashboard first.");
+    var response = await fetch("/gateway/tickets/" + scope, {
+      method: "POST",
+      headers: { "X-API-Key": key }
+    });
+    if (!response.ok) throw new Error("Gateway authorization failed (" + response.status + ").");
+    return (await response.json()).ticket;
+  }
   function wsURL() {
     var proto = location.protocol === "https:" ? "wss:" : "ws:";
     return proto + "//" + location.host + "/gateway/ws";
@@ -65,8 +78,17 @@
     el.textContent = state;
     el.className = "conn " + (state === "online" ? "online" : state === "offline" ? "offline" : "");
   }
-  function connect() {
-    ws = new WebSocket(wsURL());
+  async function connect() {
+    var ticket;
+    try {
+      ticket = await issueTicket("websocket");
+    } catch (err) {
+      setConn("auth required");
+      addNote("err", "⚠ " + err.message);
+      return;
+    }
+    // Keep the one-time ticket out of URLs and reverse-proxy access logs.
+    ws = new WebSocket(wsURL(), ["agentssot-ticket", ticket]);
     ws.onopen = function () { setConn("online"); };
     ws.onclose = function () {
       setConn("offline");
@@ -86,7 +108,7 @@
     if (type === "event") {
       if (data && data.routing) {
         brainLive.textContent = data.executor + " · " + data.intent;
-        current = addTurn("Madi", "madi");
+        current = addTurn("Assistant", "assistant");
       } else if (data && data.fallover) {
         addNote("fallover", "↳ fell over to " + data.to);
       } else if (data && data.hive === "recall" && data.results) {
@@ -95,7 +117,7 @@
         });
       }
     } else if (type === "token") {
-      if (!current) current = addTurn("Madi", "madi");
+      if (!current) current = addTurn("Assistant", "assistant");
       current.textContent += data;
       consoleEl.scrollTop = consoleEl.scrollHeight;
     } else if (type === "error") {
@@ -150,12 +172,7 @@
     dot("dot-opus", byName["opus"]);
     dot("dot-deepseek", byName["deepseek-v4-pro"]);
   }
-  function startSSE() {
-    if (!window.EventSource) return;
-    var es = new EventSource("/gateway/sse/status");
-    es.onmessage = function (ev) {
-      var snap;
-      try { snap = JSON.parse(ev.data); } catch (e) { return; }
+  function renderStatus(snap) {
       if (snap.hive) {
         var ki = snap.hive.knowledge_items;
         if (ki && typeof ki === "object") {
@@ -191,8 +208,40 @@
           $("dot-synapse").className = "dot";
         }
       }
-    };
-    es.onerror = function () { /* EventSource auto-reconnects */ };
+  }
+
+  async function startSSE() {
+    var ticket;
+    try { ticket = await issueTicket("status"); }
+    catch (err) { return; }
+    try {
+      // EventSource cannot attach a credential header. Fetch streaming can,
+      // so the status ticket never appears in a URL.
+      var response = await fetch("/gateway/sse/status", {
+        headers: { "X-Gateway-Ticket": ticket },
+        cache: "no-store"
+      });
+      if (!response.ok || !response.body) throw new Error("status stream unavailable");
+      var reader = response.body.getReader();
+      var decoder = new TextDecoder();
+      var pending = "";
+      while (true) {
+        var part = await reader.read();
+        if (part.done) break;
+        pending += decoder.decode(part.value, { stream: true });
+        var frames = pending.split("\n\n");
+        pending = frames.pop();
+        frames.forEach(function (frame) {
+          var line = frame.split("\n").find(function (x) { return x.indexOf("data: ") === 0; });
+          if (!line) return;
+          try { renderStatus(JSON.parse(line.slice(6))); } catch (e) { /* next frame */ }
+        });
+      }
+    } catch (err) {
+      // Bounded or revoked streams reconnect with a freshly authorized ticket.
+    } finally {
+      setTimeout(startSSE, 2500);
+    }
   }
 
   connect();

@@ -48,19 +48,19 @@ class TestDashboardStatsIntegration:
 
     def test_stats_endpoint_returns_200(self, client):
         """Dashboard stats endpoint is public and returns 200."""
-        resp = client.get("/dashboard/stats", params={"namespace": "claude-shared"})
+        resp = client.get("/dashboard/stats", params={"namespace": "default"})
         assert resp.status_code == 200
 
     def test_stats_has_original_fields(self, client):
         """Original fields are still present for backward compat."""
-        resp = client.get("/dashboard/stats", params={"namespace": "claude-shared"})
+        resp = client.get("/dashboard/stats", params={"namespace": "default"})
         data = resp.json()
         for field in ["concepts", "skills", "knowledge", "recalls_24h", "ingested_24h", "avg_confidence"]:
             assert field in data, f"Missing original field: {field}"
 
     def test_stats_has_memory_type_distribution(self, client):
         """M3 data: memory_type_distribution is a dict of type→count."""
-        resp = client.get("/dashboard/stats", params={"namespace": "claude-shared"})
+        resp = client.get("/dashboard/stats", params={"namespace": "default"})
         data = resp.json()
         assert "memory_type_distribution" in data
         dist = data["memory_type_distribution"]
@@ -71,7 +71,7 @@ class TestDashboardStatsIntegration:
 
     def test_stats_has_staleness_distribution(self, client):
         """M3 data: staleness_distribution has expected buckets."""
-        resp = client.get("/dashboard/stats", params={"namespace": "claude-shared"})
+        resp = client.get("/dashboard/stats", params={"namespace": "default"})
         data = resp.json()
         assert "staleness_distribution" in data
         staleness = data["staleness_distribution"]
@@ -80,7 +80,7 @@ class TestDashboardStatsIntegration:
 
     def test_stats_has_secret_scanning(self, client):
         """M8 data: secret_scanning status is present."""
-        resp = client.get("/dashboard/stats", params={"namespace": "claude-shared"})
+        resp = client.get("/dashboard/stats", params={"namespace": "default"})
         data = resp.json()
         assert "secret_scanning" in data
         assert "enabled" in data["secret_scanning"]
@@ -88,7 +88,7 @@ class TestDashboardStatsIntegration:
 
     def test_stats_has_sync_status(self, client):
         """M10 data: sync status is present."""
-        resp = client.get("/dashboard/stats", params={"namespace": "claude-shared"})
+        resp = client.get("/dashboard/stats", params={"namespace": "default"})
         data = resp.json()
         assert "sync" in data
         assert "enabled" in data["sync"]
@@ -98,7 +98,7 @@ class TestDashboardStatsIntegration:
 
     def test_memory_type_distribution_counts_correctly(self, client):
         """Verify that summing memory_type_distribution ≈ total knowledge count."""
-        resp = client.get("/dashboard/stats", params={"namespace": "claude-shared"})
+        resp = client.get("/dashboard/stats", params={"namespace": "default"})
         data = resp.json()
         total_knowledge = data["knowledge"]
         dist_sum = sum(data["memory_type_distribution"].values())
@@ -108,7 +108,7 @@ class TestDashboardStatsIntegration:
 
     def test_staleness_distribution_sums_to_total(self, client):
         """Verify staleness buckets sum to total knowledge count."""
-        resp = client.get("/dashboard/stats", params={"namespace": "claude-shared"})
+        resp = client.get("/dashboard/stats", params={"namespace": "default"})
         data = resp.json()
         total_knowledge = data["knowledge"]
         staleness_sum = sum(data["staleness_distribution"].values())

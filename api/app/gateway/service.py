@@ -6,7 +6,7 @@ handle(msg):
   3. classify intent (explicit > rules > classifier > default)
   4. emit a routing event so the HUD shows which executor/intent is live
   5. dispatch to the executor and relay its Events verbatim, collecting tokens
-  6. persist Madi's assembled reply
+  6. persist the assistant's assembled reply
 
 State lives in hive via the SessionStore, so a restart mid-conversation loses
 nothing and a thread can later continue on another channel.
@@ -63,5 +63,5 @@ class GatewayService:
         reply = "".join(collected).strip()
         if reply:
             await self._session.append(
-                msg.session_id, {"role": "madi", "text": reply, "intent": intent}
+                msg.session_id, {"role": "assistant", "text": reply, "intent": intent}
             )

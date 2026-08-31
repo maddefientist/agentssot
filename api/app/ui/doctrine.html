@@ -150,7 +150,7 @@
 function doctrineApp() {
   return {
     apiKey: (window.cortexAuth ? window.cortexAuth.getKey() : ""),
-    namespace: localStorage.getItem('doctrineNs') || 'claude-shared',
+    namespace: localStorage.getItem('doctrineNs') || 'default',
     search: '',
     items: [],
     total: 0,

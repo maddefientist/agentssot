@@ -71,7 +71,7 @@ def _concept_to_signal(c: Concept) -> dict[str, Any]:
 
 @router.get("/feed")
 async def list_signals(
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     types: str = Query(default="manual,wonder,error,pattern,adherence"),
     limit: int = Query(default=50, ge=1, le=200),
     session: Session = Depends(get_session),
@@ -207,7 +207,7 @@ async def list_signals(
 class ManualLeadIn(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     note: str = Field(..., min_length=1)
-    namespace: str = Field(default="claude-shared")
+    namespace: str = Field(default="default")
     tags: list[str] = Field(default_factory=list)
 
 

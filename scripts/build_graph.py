@@ -28,7 +28,7 @@ def build_evidence_graph(cur):
     cur.execute("""
         SELECT id, evidence_ids, tags
         FROM concepts
-        WHERE namespace = 'claude-shared'
+        WHERE namespace = 'default'
           AND NOT (tags @> ARRAY['superseded'])
           AND array_length(evidence_ids, 1) > 0
     """)
@@ -75,7 +75,7 @@ def build_tag_graph(cur):
     cur.execute("""
         SELECT id, tags
         FROM concepts
-        WHERE namespace = 'claude-shared'
+        WHERE namespace = 'default'
           AND NOT (tags @> ARRAY['superseded'])
           AND array_length(tags, 1) > 0
     """)

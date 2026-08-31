@@ -12,6 +12,19 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8088, alias="API_PORT")
     log_level: str = Field(default="info", alias="LOG_LEVEL")
 
+    # The optional operator gateway can recall shared memory and invoke model/tool
+    # executors. Keep it out of the public memory kernel unless explicitly
+    # enabled; enabled transports still require admin-scoped one-time tickets.
+    gateway_enabled: bool = Field(default=False, alias="GATEWAY_ENABLED")
+    gateway_execution_enabled: bool = Field(default=False, alias="GATEWAY_EXECUTION_ENABLED")
+    gateway_ticket_ttl_seconds: float = Field(default=60.0, alias="GATEWAY_TICKET_TTL_SECONDS")
+    gateway_max_text_chars: int = Field(default=8000, alias="GATEWAY_MAX_TEXT_CHARS")
+    gateway_max_frame_bytes: int = Field(default=16384, alias="GATEWAY_MAX_FRAME_BYTES")
+    gateway_max_messages_per_minute: int = Field(default=30, alias="GATEWAY_MAX_MESSAGES_PER_MINUTE")
+    gateway_max_connections: int = Field(default=8, alias="GATEWAY_MAX_CONNECTIONS")
+    gateway_connection_ttl_seconds: float = Field(default=300.0, alias="GATEWAY_CONNECTION_TTL_SECONDS")
+    gateway_revalidate_seconds: float = Field(default=15.0, alias="GATEWAY_REVALIDATE_SECONDS")
+
     default_top_k: int = Field(default=5, alias="DEFAULT_TOP_K")
     max_snippet_chars: int = Field(default=900, alias="MAX_SNIPPET_CHARS")
 
@@ -103,7 +116,7 @@ class Settings(BaseSettings):
     # Alerting (channel-agnostic webhook; empty URL = alerting no-ops)
     alert_enabled: bool = Field(default=True, alias="ALERT_ENABLED")
     alert_webhook_url: str = Field(default="", alias="ALERT_WEBHOOK_URL")
-    alert_host_label: str = Field(default="hari", alias="ALERT_HOST_LABEL")
+    alert_host_label: str = Field(default="agentssot", alias="ALERT_HOST_LABEL")
 
     enable_hnsw_index: bool = Field(default=False, alias="ENABLE_HNSW_INDEX")
 
@@ -161,14 +174,13 @@ class Settings(BaseSettings):
     # existing item. Verbatim items bypass this check. 0.0 disables dedup.
     semantic_dedup_threshold: float = Field(default=0.0, alias="SEMANTIC_DEDUP_THRESHOLD")
 
-    # Relevance floor for /feedback query-mode (fuzzy) concept resolution. A
-    # `query` whose nearest concept is farther than this cosine distance
-    # resolves to NOTHING instead of to the argmax. See the derivation comment
-    # on crud.FEEDBACK_MATCH_MAX_DISTANCE — this number was measured against
-    # the live corpus, not guessed. Raising it re-opens the misfire class.
+    # Legacy fuzzy feedback is disabled by default. If an operator explicitly
+    # enables its admin-only diagnostic path, this is the secondary distance
+    # floor; deployments must calibrate it for their embedding model/corpus.
     feedback_match_max_distance: float = Field(
         default=0.35, alias="FEEDBACK_MATCH_MAX_DISTANCE"
     )
+    fuzzy_feedback_enabled: bool = Field(default=False, alias="FUZZY_FEEDBACK_ENABLED")
 
     # Auto-classifier (Plan 1 Phase 2)
     classifier_provider: Literal["none", "ollama"] = Field(
@@ -187,11 +199,14 @@ class Settings(BaseSettings):
         default=0.6, alias="CLASSIFIER_MIN_CONFIDENCE"
     )
 
-    # Open enrollment passphrase (empty = no passphrase required)
-    enrollment_passphrase: str = Field(default="", alias="ENROLLMENT_PASSPHRASE")
     expose_db_port: bool = Field(default=False, alias="EXPOSE_DB_PORT")
 
     bootstrap_admin_namespaces: str = Field(default="default", alias="BOOTSTRAP_ADMIN_NAMESPACES")
+    bootstrap_admin_api_key: str = Field(
+        default="",
+        alias="BOOTSTRAP_ADMIN_API_KEY",
+        repr=False,
+    )
 
     # Backup freshness reporting (read-only: /doctor stats ./backups, mounted
     # read-only into the API container; the dump loop itself lives in

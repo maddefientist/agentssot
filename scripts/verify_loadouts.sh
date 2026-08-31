@@ -11,7 +11,7 @@
 set -u
 
 HOSTS_JSON="$HOME/.claude/agentssot/hosts.json"
-API_BASE="http://192.168.1.225:8088"
+API_BASE="http://127.0.0.1:8088"
 
 # ── Colors ──────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -74,7 +74,7 @@ if [ -z "$KEY" ]; then
 fi
 
 DEVNAME=$(hostname -s 2>/dev/null || echo unknown)
-BODY="{\"cwd\":\"/home/$USER\",\"device_id\":\"$DEVNAME\",\"namespace\":\"claude-shared\",\"token_budget\":300}"
+BODY="{\"cwd\":\"/home/$USER\",\"device_id\":\"$DEVNAME\",\"namespace\":\"default\",\"token_budget\":300}"
 
 RESP=$(curl -sS --max-time 3 \
     -H "X-Api-Key: $KEY" \

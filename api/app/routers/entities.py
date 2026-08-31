@@ -15,7 +15,7 @@ router = APIRouter(prefix="/api/v1/entities", tags=["entities"])
 
 @router.get("/")
 async def list_entities(
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     limit: int = Query(default=200, ge=1, le=1000),
     session: Session = Depends(get_session),
     auth: AuthContext = Depends(require_api_key),

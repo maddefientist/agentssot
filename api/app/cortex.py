@@ -14,7 +14,6 @@ Endpoints:
 """
 
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
@@ -33,42 +32,20 @@ logger = logging.getLogger("agentssot.cortex")
 
 router = APIRouter(prefix="/cortex", tags=["cortex"])
 
-# ---------------------------------------------------------------------------
-# Fast internal auth
-# ---------------------------------------------------------------------------
-# Cortex endpoints are called from hooks on every conversation turn.
-# CORTEX_INTERNAL_TOKEN is an exact-match (==) shared secret fast path so
-# trusted internal callers skip the bcrypt lookup below. Any other key must
-# resolve to a real, active ApiKey row (via require_api_key's cached bcrypt
-# verify) — a bare "ssot_"-prefixed string with no DB record is rejected.
-
-_INTERNAL_TOKEN = os.environ.get("CORTEX_INTERNAL_TOKEN", "")
-
-
 def _require_cortex_key(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
     session: Session = Depends(get_session),
-) -> "AuthContext | None":
-    """API key check for cortex endpoints: internal-token fast path, else real verify.
-
-    Returns None for the trusted internal token (full access, used by session hooks),
-    or the resolved AuthContext for a real API key (namespace-scoped)."""
+) -> AuthContext:
+    """Resolve Cortex callers through the normal revocable API-key boundary."""
     if not x_api_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing X-API-Key")
-    if _INTERNAL_TOKEN and x_api_key == _INTERNAL_TOKEN:
-        return None  # trusted internal token — full access, skip namespace ACL
-    # Not the internal token — verify it's a real, active API key.
     return require_api_key(x_api_key=x_api_key, session=session)
 
 
 def _enforce_cortex_ns(
-    auth: "AuthContext | None", namespace: str, roles: set[str]
+    auth: AuthContext, namespace: str, roles: set[str]
 ) -> None:
-    """Namespace authorization for cortex endpoints. Internal-token callers
-    (auth is None) are fully trusted; real API keys must be scoped to the
-    namespace they touch."""
-    if auth is None:
-        return
+    """Enforce the same role and namespace boundary as durable memory APIs."""
     ensure_namespace_access(auth, namespace, roles)
 
 
@@ -78,7 +55,7 @@ def _enforce_cortex_ns(
 # ---------------------------------------------------------------------------
 
 class CortexUpdateRequest(BaseModel):
-    namespace: str = "claude-shared"
+    namespace: str = "default"
     agent_key: str
     task_id: str | None = None  # auto-generated if not provided
     task_title: str
@@ -120,7 +97,7 @@ class CortexStateResponse(BaseModel):
 
 
 class CortexReconstructRequest(BaseModel):
-    namespace: str = "claude-shared"
+    namespace: str = "default"
     agent_key: str
     max_chars: int = 8000  # budget for injection
     include_recent_knowledge: bool = False
@@ -218,7 +195,7 @@ def ensure_cortex_tables(session) -> None:
 @router.post("/update", response_model=CortexUpdateResponse)
 def cortex_update(
     req: CortexUpdateRequest,
-    auth: "AuthContext | None" = Depends(_require_cortex_key),
+    auth: AuthContext = Depends(_require_cortex_key),
     session: Session = Depends(get_session),
 ):
     """Upsert working memory for an agent's task."""
@@ -295,10 +272,10 @@ def cortex_update(
 
 @router.get("/state", response_model=CortexStateResponse)
 def cortex_state(
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     agent_key: str = Query(...),
     include_completed: bool = Query(default=False),
-    auth: "AuthContext | None" = Depends(_require_cortex_key),
+    auth: AuthContext = Depends(_require_cortex_key),
     session: Session = Depends(get_session),
 ):
     """Get current working memory state for an agent."""
@@ -371,7 +348,7 @@ def cortex_state(
 @router.post("/reconstruct", response_model=CortexReconstructResponse)
 def cortex_reconstruct(
     req: CortexReconstructRequest,
-    auth: "AuthContext | None" = Depends(_require_cortex_key),
+    auth: AuthContext = Depends(_require_cortex_key),
     session: Session = Depends(get_session),
 ):
     """Build a budget-aware context injection string from working memory.
@@ -457,10 +434,10 @@ def cortex_reconstruct(
 
 @router.get("/tasks", response_model=CortexTasksResponse)
 def cortex_tasks_list(
-    namespace: str = Query(default="claude-shared"),
+    namespace: str = Query(default="default"),
     status: str | None = Query(default=None),
     agent_key: str | None = Query(default=None),
-    auth: "AuthContext | None" = Depends(_require_cortex_key),
+    auth: AuthContext = Depends(_require_cortex_key),
     session: Session = Depends(get_session),
 ):
     """List all active tasks across agents."""

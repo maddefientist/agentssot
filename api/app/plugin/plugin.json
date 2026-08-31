@@ -1,7 +1,7 @@
 {
-  "name": "hari-hive",
+  "name": "agentssot",
   "version": "1.0.0",
-  "description": "AgentSSOT (hari-hive) unified memory -- MCP tools for recall, query, ingest, and admin",
+  "description": "AgentSSOT unified memory -- MCP tools for recall, query, ingest, and administration",
   "author": "MadDefientist",
   "hooks": ["SessionStart", "SessionEnd"],
   "commands": ["hive"],
@@ -16,8 +16,13 @@
     },
     "defaultNamespace": {
       "type": "string",
-      "default": "claude-shared",
+      "default": "default",
       "description": "Default namespace for recall/query/ingest"
+    },
+    "toolProfile": {
+      "type": "string",
+      "default": "core",
+      "description": "Use core for six bounded memory tools; operator explicitly enables administrative and experimental tools"
     }
   }
 }

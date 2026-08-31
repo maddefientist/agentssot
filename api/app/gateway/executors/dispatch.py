@@ -1,4 +1,4 @@
-"""Dispatch executor — fleet jobs, builds, chains via hari-core / chain.sh.
+"""Dispatch executor — adapter for an explicitly configured operator runner.
 
 The actual job runner (a subprocess wrapper that streams stdout) is injected, so
 this class stays a thin streaming adapter and unit tests need no real processes.

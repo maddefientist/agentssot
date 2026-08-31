@@ -14,8 +14,8 @@ def test_ingest_classifies_and_populates_layers():
         pytest.skip("no test key")
 
     body = {
-        "content": "ssh unraid",
-        "namespace": "claude-shared",
+        "content": "ssh storage-node",
+        "namespace": "default",
         "tags": ["plan1-test", str(uuid.uuid4())],
     }
     r = httpx.post(
@@ -46,7 +46,7 @@ def test_low_confidence_ingest_lands_in_review_queue():
     # Ambiguous content classifier should be unsure about
     body = {
         "content": "things and stuff and so on and so forth",
-        "namespace": "claude-shared",
+        "namespace": "default",
         "tags": ["plan1-low-conf-test"],
     }
     r = httpx.post(
@@ -67,7 +67,7 @@ def test_contradiction_creates_review_queue_entry():
         headers={"X-Api-Key": KEY},
         json={
             "content": "Never access fakeunraid — this host is OFF LIMITS",
-            "namespace": "claude-shared",
+            "namespace": "default",
             "memory_type": "rule",
             "tags": ["plan1-contradiction-test", "rule"],
         },
@@ -80,7 +80,7 @@ def test_contradiction_creates_review_queue_entry():
         headers={"X-Api-Key": KEY},
         json={
             "content": "ssh fakeunraid",
-            "namespace": "claude-shared",
+            "namespace": "default",
             "memory_type": "command",
             "tags": ["plan1-contradiction-test", "command"],
         },

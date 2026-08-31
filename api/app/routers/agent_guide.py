@@ -24,7 +24,7 @@ _env = Environment(
 async def agent_guide(auth: AuthContext = Depends(require_api_key)):
     settings = get_settings()
     tmpl = _env.get_template("agent_guide.md.j2")
-    api_base = getattr(settings, "public_api_base", None) or "http://192.168.1.225:8088"
+    api_base = getattr(settings, "public_api_base", None) or "http://127.0.0.1:8088"
     version = getattr(settings, "version", None) or "dev"
     body = tmpl.render(
         key_name=auth.key_name or "(unnamed)",
@@ -32,6 +32,6 @@ async def agent_guide(auth: AuthContext = Depends(require_api_key)):
         device_id=getattr(auth, "device_id", None) or "(unknown)",
         api_base=api_base,
         version=version,
-        namespaces=auth.namespaces or ["claude-shared"],
+        namespaces=auth.namespaces or ["default"],
     )
     return Response(content=body, media_type="text/plain", headers={"Cache-Control": "max-age=60"})

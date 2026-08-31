@@ -1,0 +1,20 @@
+title = "AgentSSOT secret-scanning policy"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Intentional scanner fixtures and one redacted historical curl example"
+paths = [
+  '''^api/tests/test_secret_scanner\.py$''',
+  '''(^|/)__pycache__/''',
+  '''^docs/plans/2026-02-19-cortex-v2-plan\.md$''',
+]
+
+[[allowlists]]
+description = "Historical UI examples used literal YOUR_KEY and ADMIN_KEY placeholders"
+targetRules = ["curl-auth-header"]
+paths = [
+  '''^api/app/ui/cortex\.html$''',
+  '''^api/app/ui/cortex-v2\.html$''',
+]

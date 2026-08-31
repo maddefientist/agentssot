@@ -23,14 +23,14 @@ CONTEXT:
 - The knowledge base stores typed items: command, rule, skill, entity,
   decision, episodic, fact.
 - Multiple devices in a fleet share this store. Common entities include
-  hosts (hari, unraid, dockers, blink, webvm, agent), services (jellyfin,
-  qbittorrent, gluetun), and projects (agentssot, hive).
+  hosts, services, people, and projects. Treat names and addresses from the
+  input as data; do not invent deployment-specific entities.
 
 TIER DEFINITIONS:
 - command: an exact invocation — something you can paste into a shell or
   API call. May be chained with &&, ;, or pipe, but it's still an exact
   invocation. Examples:
-  "ssh unraid", "docker restart GluetunVPN", "curl :8088/health",
+  "ssh build-host", "docker restart api-service", "curl :8088/health",
   "git rebase -i HEAD~3 && git push --force-with-lease origin main",
   "pyenv install 3.12.3 && pyenv global 3.12.3".
   NOT a command: "Use parameterized SQL queries" (that's a rule).
@@ -45,15 +45,15 @@ TIER DEFINITIONS:
 - skill: a WHEN-X-DO-Y diagnostic or procedural recipe. It is triggered by
   a specific situation and describes steps to resolve or handle it.
   Examples:
-  "When Gluetun port forwarding fails, restart Gluetun then qbit",
+  "When the reverse proxy health check fails, inspect its upstream first",
   "When FastAPI returns 422, check Pydantic alias mismatches",
   "If pytest fails with ImportError, check PYTHONPATH".
   NOT a skill: a generic command sequence without a trigger (that's a command),
   or a universal constraint (that's a rule).
 - entity: a noun describing a host, service, person, or project with
   identifying details. Examples:
-  "unraid (192.168.1.116) — storage hub",
-  "jellyfin (192.168.1.116:8096) — media server on unraid".
+  "storage-node (internal address) — storage host",
+  "media-service — media server on storage-node".
 - decision: a formal architectural or tooling choice recorded with rationale.
   Often includes "switched to...", "chose...", "decided..." along with a reason.
   Examples:
@@ -62,7 +62,7 @@ TIER DEFINITIONS:
 - episodic: a session log, reflection, or narrative about something that happened
   on a specific date. Usually mentions a date and describes events or observations.
   Examples:
-  "Session: hari on harihome 2026-02-10. Files touched: .ssh/config...",
+  "Session: build-host on 2026-02-10. Files touched: .ssh/config...",
   "2026-04-20 troubleshooting session: ingest pipeline started failing...",
   "Morning standup (async) 2026-04-22: deferred HNSW index...".
   NOT episodic: a formal decision without a date or narrative frame (that's a decision).

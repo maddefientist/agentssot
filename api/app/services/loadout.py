@@ -28,7 +28,7 @@ def resolve_cwd_entities(cwd: str, entities: Iterable[dict[str, Any]]) -> list[d
     """Return entities whose cwd_hints prefix-match the given cwd.
 
     Match rule: cwd starts with the hint OR cwd contains the hint as a path
-    segment (e.g. cwd '/home/hari/.claude' matches hint '/.claude').
+    segment (e.g. cwd '/home/user/.agent' matches hint '/.agent').
     """
     matched: list[dict[str, Any]] = []
     cwd_norm = cwd.rstrip("/")

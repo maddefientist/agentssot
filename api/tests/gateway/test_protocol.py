@@ -15,11 +15,11 @@ def test_inbound_carries_explicit_intent():
     assert msg.intent == "dispatch"
 
 
-def test_inbound_tolerates_missing_fields():
-    msg = InboundMessage.from_dict({})
-    assert msg.text == ""
-    assert msg.session_id == ""
-    assert msg.intent is None
+def test_inbound_rejects_missing_fields():
+    import pytest
+
+    with pytest.raises(ValueError, match="text"):
+        InboundMessage.from_dict({})
 
 
 def test_event_token_serializes():

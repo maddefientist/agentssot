@@ -34,7 +34,7 @@ def test_chat_local_builds_history_into_messages():
         "text": "and now?",
         "history": [
             {"role": "user", "text": "first"},
-            {"role": "madi", "text": "reply"},
+            {"role": "assistant", "text": "reply"},
         ],
     }
     drain(ChatLocalExecutor(streamer), "chat-local", ctx)

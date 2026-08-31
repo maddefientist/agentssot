@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 # Make the plugin importable
-PLUGIN_PATH = Path("~/.claude/plugins/hari-hive").expanduser()
+PLUGIN_PATH = Path(__file__).resolve().parents[1] / "app" / "plugin"
 sys.path.insert(0, str(PLUGIN_PATH))
 
 

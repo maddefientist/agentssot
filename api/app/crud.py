@@ -1,5 +1,7 @@
 import logging
 import math
+import re
+import secrets
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -389,6 +391,8 @@ def _recall_knowledge_weighted(
             stmt.where(KnowledgeItem.namespace == namespace)
             .where(KnowledgeItem.embedding.is_not(None))
             .where(or_(KnowledgeItem.status == "active", KnowledgeItem.status.is_(None)))
+            .where(KnowledgeItem.superseded_by.is_(None))
+            .where(or_(KnowledgeItem.expires_at.is_(None), KnowledgeItem.expires_at > func.now()))
         )
         if project_id:
             stmt = stmt.where(KnowledgeItem.project_id == project_id)
@@ -596,7 +600,7 @@ def recall(
     top_k = min(max(top_k, 1), 50)
 
     # When reranker is available, fetch a wider candidate set for re-scoring.
-    use_reranker = reranker_provider.is_available and payload.query_text
+    use_reranker = payload.rerank and reranker_provider.is_available and payload.query_text
     candidate_k = top_k * settings.reranker_candidate_multiplier if use_reranker else top_k
     candidate_k = min(candidate_k, 150)
 
@@ -653,6 +657,12 @@ def recall(
             "success_hint": item.success_hint,
         }
 
+    def _finish(items: list[dict]) -> list[dict]:
+        """Apply the optional expensive stage, then enforce the total result cap."""
+        if not payload.rerank:
+            return items[:top_k]
+        return _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+
     if payload.scope == "knowledge":
         items = _recall_knowledge_weighted(
             session, payload.namespace, query_embedding, candidate_k,
@@ -661,7 +671,7 @@ def recall(
             max_staleness=payload.max_staleness,
             query_text=payload.query_text,
         )
-        items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        items = _finish(items)
         _track_knowledge_recalls(session, [i["id"] for i in items])
         if getattr(settings, "recall_sentence_trim", False):
             from .sentence_trim import trim_recall_items
@@ -697,7 +707,7 @@ def recall(
             }
             for item, score_value in rows
         ]
-        items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        items = _finish(items)
         if payload.agent_key:
             update_profile_from_recall(session, payload.agent_key, payload.namespace)
         return items
@@ -728,7 +738,7 @@ def recall(
             }
             for item, score_value in rows
         ]
-        items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        items = _finish(items)
         if payload.agent_key:
             update_profile_from_recall(session, payload.agent_key, payload.namespace)
         return items
@@ -747,7 +757,7 @@ def recall(
         rows = session.execute(stmt).all()
 
         items = [_concept_to_recall(item, score_value) for item, score_value in rows]
-        items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        items = _finish(items)
         items = _apply_spreading_activation(session, items, payload.namespace)
         if payload.agent_key:
             items = _boost_by_agent_profile(session, items, payload.agent_key, payload.namespace)
@@ -798,7 +808,7 @@ def recall(
         items.sort(key=lambda x: x["score"])
         items = items[:candidate_k]
 
-        items = _apply_reranker(payload.query_text, items, top_k, reranker_provider)
+        items = _finish(items)
         items = _apply_spreading_activation(session, items, payload.namespace)
         if payload.agent_key:
             items = _boost_by_agent_profile(session, items, payload.agent_key, payload.namespace)
@@ -840,7 +850,13 @@ def create_namespace(session: Session, name: str) -> Namespace:
     return namespace
 
 
-def create_api_key_record(session: Session, name: str, role: str, namespaces: list[str]) -> tuple[ApiKey, str]:
+def _create_api_key_record_uncommitted(
+    session: Session,
+    name: str,
+    role: str,
+    namespaces: list[str],
+) -> tuple[ApiKey, str]:
+    """Validate and stage a key without committing the caller's transaction."""
     normalized_namespaces = sorted(set(ns.strip() for ns in namespaces if ns.strip()))
     if not normalized_namespaces:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one namespace is required")
@@ -864,6 +880,17 @@ def create_api_key_record(session: Session, name: str, role: str, namespaces: li
         is_active=True,
     )
     session.add(record)
+    session.flush()
+    return record, plaintext
+
+
+def create_api_key_record(session: Session, name: str, role: str, namespaces: list[str]) -> tuple[ApiKey, str]:
+    record, plaintext = _create_api_key_record_uncommitted(
+        session=session,
+        name=name,
+        role=role,
+        namespaces=namespaces,
+    )
     session.commit()
     session.refresh(record)
     return record, plaintext
@@ -1586,7 +1613,7 @@ def list_enrollment_tokens(session: Session) -> list[dict]:
 
 
 def redeem_enrollment_token(session: Session, plaintext_token: str, key_name: str) -> tuple[ApiKey, str]:
-    """Validate an enrollment token and create a new API key."""
+    """Atomically reserve one token use and create exactly one API key."""
     active_tokens = session.scalars(
         select(EnrollmentToken).where(EnrollmentToken.is_active.is_(True))
     ).all()
@@ -1600,77 +1627,62 @@ def redeem_enrollment_token(session: Session, plaintext_token: str, key_name: st
     if not matched_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired enrollment token")
 
-    # Check expiry
-    if matched_token.expires_at and matched_token.expires_at < datetime.now(UTC):
-        matched_token.is_active = False
+    try:
+        # Bcrypt identifies the candidate; the row lock serializes the actual
+        # admission decision. populate_existing is essential because the
+        # candidate is already present in this Session's identity map.
+        locked_token = session.scalar(
+            select(EnrollmentToken)
+            .where(EnrollmentToken.id == matched_token.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        now = datetime.now(UTC)
+        if locked_token is None or not locked_token.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired enrollment token",
+            )
+        if locked_token.expires_at and locked_token.expires_at < now:
+            locked_token.is_active = False
+            session.commit()
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Enrollment token has expired")
+        if locked_token.times_used >= locked_token.max_uses:
+            locked_token.is_active = False
+            session.commit()
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Enrollment token has been fully used")
+
+        name = key_name.strip()
+        if locked_token.name_hint:
+            name = f"{locked_token.name_hint}-{name}"
+
+        record, api_key_plaintext = _create_api_key_record_uncommitted(
+            session=session,
+            name=name,
+            role=(
+                locked_token.role.value
+                if isinstance(locked_token.role, ApiRole)
+                else str(locked_token.role)
+            ),
+            namespaces=list(locked_token.namespaces or []),
+        )
+        locked_token.times_used += 1
+        if locked_token.times_used >= locked_token.max_uses:
+            locked_token.is_active = False
+
+        # Key issuance and token consumption become visible together.
         session.commit()
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Enrollment token has expired")
-
-    # Check usage limit
-    if matched_token.times_used >= matched_token.max_uses:
-        matched_token.is_active = False
-        session.commit()
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Enrollment token has been fully used")
-
-    # Create the API key
-    name = key_name.strip()
-    if matched_token.name_hint:
-        name = f"{matched_token.name_hint}-{name}"
-
-    record, api_key_plaintext = create_api_key_record(
-        session=session,
-        name=name,
-        role=matched_token.role.value if isinstance(matched_token.role, ApiRole) else str(matched_token.role),
-        namespaces=list(matched_token.namespaces or []),
-    )
-
-    # Increment usage
-    matched_token.times_used += 1
-    if matched_token.times_used >= matched_token.max_uses:
-        matched_token.is_active = False
-
-    session.commit()
-    return record, api_key_plaintext
-
-
-def auto_enroll(session: Session, name: str, passphrase: str, settings) -> tuple[ApiKey, str, dict]:
-    """Open enrollment: create namespace + writer key for a new device. Returns (ApiKey, plaintext_key, agent_config_dict)."""
-    expected = settings.enrollment_passphrase
-    if expected and passphrase != expected:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid enrollment passphrase")
-
-    # Sanitize device name for namespace
-    safe_name = name.strip().lower().replace(" ", "-")
-    if not safe_name:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Device name is required")
-
-    private_ns = f"device-{safe_name}-private"
-    shared_ns = "claude-shared"
-
-    # Ensure both namespaces exist
-    for ns in [shared_ns, private_ns]:
-        create_namespace(session, ns)
-
-    # Create writer key scoped to shared + private
-    namespaces = [shared_ns, private_ns]
-    key_name = f"enroll-{safe_name}"
-    record, plaintext = create_api_key_record(
-        session=session,
-        name=key_name,
-        role="writer",
-        namespaces=namespaces,
-    )
-
-    agent_config = {
-        "base_url": f"http://localhost:{settings.api_port}",
-        "api_key": plaintext,
-        "device_name": safe_name,
-        "default_namespace": shared_ns,
-        "default_scope": "knowledge",
-        "namespaces": namespaces,
-    }
-
-    return record, plaintext, agent_config
+        session.refresh(record)
+        return record, api_key_plaintext
+    except HTTPException:
+        # Used/invalid paths may have a pending read transaction. Roll it back
+        # unless the expiry/limit branch deliberately committed deactivation.
+        if session.in_transaction():
+            session.rollback()
+        raise
+    except Exception:
+        session.rollback()
+        raise
 
 
 # ── Agent Profiles (Layer 4: Personalization) ─────────────────────
@@ -1681,7 +1693,7 @@ def get_or_create_profile(session: Session, agent_key: str, namespace: str) -> A
     profile = session.get(AgentProfile, agent_key)
     if profile:
         return profile
-    # Extract device name: "device-hari-writer" -> "hari"
+    # Extract device name: "device-workstation-writer" -> "workstation"
     parts = agent_key.split("-")
     device_name = parts[1] if len(parts) >= 3 and parts[0] == "device" else agent_key
     profile = AgentProfile(
@@ -1797,34 +1809,10 @@ def log_recall_events(
     return count
 
 
-# Relevance floor for query-mode (fuzzy) concept resolution in /feedback.
-#
-# DERIVED BY MEASUREMENT, NOT GUESSED. Measured 2026-07-27 against the live
-# `claude-shared` namespace (1,445 embedded, non-superseded concepts;
-# nomic-embed-text, 768d) by replaying the exact query this function issues:
-#
-#   query class                                        n    min     p50     max
-#   ---------------------------------------------- ----  -----   -----   -----
-#   quotes the concept's own embedded text (EXACT)   45  0.000   0.000   0.007
-#   quotes title + first 200 chars   (TITLE_SNIP)    45  0.002   0.039   0.087
-#   real recall queries from recall_events (OPS)     60  0.209   0.327   0.443
-#   genuinely out-of-domain / meta queries           14  0.360   0.445   0.510
-#
-# Genuine, content-bearing feedback tops out at 0.087; true garbage floors at
-# 0.360. 0.35 sits below that floor with all 90 genuine matches retained.
-#
-# It is chosen specifically to kill the observed failure: the three phrasings
-# that produced the historical 18-signal sink on "Execute Feedback Loop Triad
-# Verification" measure 0.360 / 0.382 / 0.391 and are all rejected here.
-#
-# KNOWN LIMIT — do not read this as "matches above the floor are correct".
-# The 0.21-0.44 operational band overlaps the garbage band, so this floor
-# removes the blatant misfires, not the subtle ones. A short bare-title query
-# scores 0.099-0.438 against a title+content embedding, so query-mode remains
-# a lossy fallback. The real fix is callers sending knowledge_item_id /
-# concept_id; see submit_feedback in main.py.
-#
-# Overridable at runtime via the `feedback_match_max_distance` hot key.
+# Legacy query-mode feedback is disabled by default at the HTTP boundary and
+# admin-only when explicitly enabled. This distance is only a secondary safety
+# floor and must be calibrated for the deployment's embedding model and corpus;
+# exact IDs remain the supported feedback contract.
 FEEDBACK_MATCH_MAX_DISTANCE = 0.35
 
 
@@ -2029,6 +2017,9 @@ KNOWLEDGE_STRENGTH_DELTAS = {
     "useful": 0.2,
     "noted": 0.1,
     "wrong": -0.5,
+    # Query-level mismatch is not evidence that the stored fact is globally
+    # false. Record the receipt without mutating strength or item status.
+    "irrelevant": 0.0,
 }
 
 

@@ -1,12 +1,12 @@
 ---
 name: hive
-description: Query and manage hari-hive (AgentSSOT) unified memory. Use when asked to search memory, recall context, store knowledge, or manage the knowledge base.
+description: Query and manage AgentSSOT unified memory. Use when asked to search memory, recall context, store knowledge, or manage the knowledge base.
 allowed-tools: Read, Bash, Grep, Glob, AskUserQuestion
 ---
 
 # /hive — AgentSSOT Knowledge Base
 
-Interact with hari-hive unified memory via MCP tools.
+Interact with AgentSSOT unified memory via MCP tools.
 
 ## Commands
 
@@ -24,9 +24,21 @@ When the user runs `/hive`, determine intent from arguments:
 
 ## Default Behavior
 
-- Namespace: `claude-shared` unless specified
-- Scope: `knowledge` unless specified
-- Top-k: 5 for recall, 10 for query
+- Namespace: use the agent's configured namespace unless specified
+- Scope: `all` unless specified (knowledge + synthesized concepts)
+- Recall: one non-reranked pass, 5 total results
+- Query: 10 exact/keyword results
+- Deep tier sweep: explicit only; it is slower and uses a per-tier result budget
+
+## Recall Decision
+
+Use Hive only when prior cross-session or cross-agent context could materially
+change the answer. Skip it when the prompt/repository is self-contained or live
+state should be verified directly. A weak or empty match means
+`NO_MEMORY_NEEDED`; do not force unrelated memory into the task.
+
+Rate only the exact ID returned by recall. Do not use fuzzy feedback when an
+item ID is available.
 
 ## Tags Convention
 
