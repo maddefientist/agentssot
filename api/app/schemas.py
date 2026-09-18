@@ -536,6 +536,12 @@ class BucketedRecallRequest(BaseModel):
     include_superseded: bool = Field(False)
     include_expired: bool = Field(False)
     exclude_episodic: bool = Field(True, description="Exclude episodic tier by default")
+    # Attribution (opt-in): when set, the recall is written to the audit WAL
+    # as a retrieval receipt (query length + surfaced item ids, never query text). Neither field feeds
+    # any automatic usefulness/promotion signal -- recall frequency alone is
+    # not evidence of usefulness.
+    session_id: str | None = Field(None, description="Caller session id, for retrieval-receipt attribution only")
+    agent_key: str | None = Field(None, description="Caller/agent identifier, for retrieval-receipt attribution only")
 
 
 class BucketedRecallItem(BaseModel):

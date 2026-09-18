@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 from uuid import UUID
 
+from .. import crud
 from ..db import get_session
 from ..llm.classifier import classify
 from ..llm.layer_compute import compute_layers
@@ -663,6 +664,10 @@ async def _recall_bucketed(
     base_filters = [
         KnowledgeItem.namespace == namespace,
         KnowledgeItem.embedding.isnot(None),
+        # Converged with the legacy /recall path: a knowledge item disputed
+        # via 'wrong' feedback (status='flagged') must not remain eligible
+        # here just because this path forgot to check status.
+        crud.knowledge_active_status_clause(),
     ]
     if not data.include_superseded:
         base_filters.append(KnowledgeItem.superseded_by.is_(None))
@@ -797,7 +802,9 @@ async def _recall_bucketed(
                 id=it.id,
                 memory_type=str(it.memory_type) if it.memory_type else "fact",
                 source_ref=getattr(it, "source_ref", None),
-                abstract=it.abstract,
+                # Bounded source-text fallback: never render a blank abstract
+                # for an item that was never classified/tiered.
+                abstract=crud.resolve_bounded_abstract(it.abstract, it.summary, it.content),
                 summary=it.summary if data.expand_layer in ("summary", "full") else None,
                 content=it.content if data.expand_layer == "full" else None,
                 score=float(s),
@@ -825,6 +832,27 @@ async def _recall_bucketed(
             )
         )
         session.commit()
+
+    # Attribution receipt: opt-in, written only when the caller supplied
+    # session_id/agent_key. This is a retrieval record for correction/audit
+    # traceability, not a usefulness signal -- unlike the legacy concepts
+    # path's RecallEvent, it never feeds promotion/decay.
+    if data.session_id or data.agent_key:
+        wal.log_event(
+            "knowledge.recall_bucketed",
+            namespace=namespace,
+            actor_key_id=auth.key_id,
+            payload={
+                "query_chars": len(data.query),
+                "session_id": data.session_id,
+                "agent_key": data.agent_key,
+                "tiers": tiers,
+            },
+            result={
+                "item_ids": [str(i) for i in selected_ids],
+                "counts": {t: len(v) for t, v in buckets.items()},
+            },
+        )
 
     _maybe_alert_slow_recall(vec_ms, rerank_total_ms, namespace)
 

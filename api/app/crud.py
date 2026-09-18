@@ -29,6 +29,35 @@ def _clip(text: str | None, max_chars: int) -> str:
     return text[: max_chars - 3] + "..."
 
 
+def knowledge_active_status_clause():
+    """Eligibility clause shared by every knowledge-item retrieval path.
+
+    Excludes items disputed via feedback (status='flagged'); untyped legacy
+    rows (status IS NULL) remain eligible. Kept as one function so recall
+    paths cannot silently diverge on what counts as an eligible item -- see
+    ``_recall_knowledge_weighted`` (legacy /recall) and
+    ``routers.knowledge._recall_bucketed`` (bucketed /api/v1/knowledge/recall).
+    """
+    return or_(KnowledgeItem.status == "active", KnowledgeItem.status.is_(None))
+
+
+def resolve_bounded_abstract(
+    abstract: str | None,
+    summary: str | None,
+    content: str | None,
+    max_chars: int = 160,
+) -> str | None:
+    """Fall back to a bounded excerpt of summary/content when an item was
+    never classified/tiered and has no synthesized abstract, so recall never
+    renders a blank line for an otherwise-eligible result."""
+    if abstract:
+        return abstract
+    fallback = summary or content
+    if not fallback:
+        return None
+    return _clip(fallback, max_chars)
+
+
 def _safe_float(value, fallback: float = 1.0) -> float:
     """Convert scores to finite floats to avoid NaN/Inf leaking into JSON responses."""
     try:
@@ -390,7 +419,7 @@ def _recall_knowledge_weighted(
         stmt = (
             stmt.where(KnowledgeItem.namespace == namespace)
             .where(KnowledgeItem.embedding.is_not(None))
-            .where(or_(KnowledgeItem.status == "active", KnowledgeItem.status.is_(None)))
+            .where(knowledge_active_status_clause())
             .where(KnowledgeItem.superseded_by.is_(None))
             .where(or_(KnowledgeItem.expires_at.is_(None), KnowledgeItem.expires_at > func.now()))
         )
