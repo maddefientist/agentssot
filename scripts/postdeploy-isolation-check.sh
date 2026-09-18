@@ -70,7 +70,7 @@ set -e
 if [[ "$rc" -eq 0 ]]; then
   echo -e "${GREEN}✓ ISOLATION GATE PASSED — 100% tenant isolation.${NC}"
 else
-  echo -e "${RED}✗ ISOLATION GATE FAILED — cross-tenant leak detected. Blocking deploy.${NC}" >&2
-  echo -e "${YELLOW}  See benchmarks/isolation/results/isolation_report.md${NC}" >&2
+  echo -e "${RED}✗ ISOLATION GATE FAILED OR INCOMPLETE — acceptance blocked.${NC}" >&2
+  echo -e "${YELLOW}  Inspect the error above. A timeout is not proof of a leak; an older report may be stale.${NC}" >&2
 fi
 exit "$rc"
