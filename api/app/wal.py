@@ -29,6 +29,16 @@ _REDACT_KEYS = {
     "api_key", "apikey", "token", "password", "passphrase", "secret",
     "authorization", "bearer", "private_key", "openai_api_key",
     "x-api-key", "cookie",
+    # Prose/body fields: WAL is an audit receipt, not a content store.
+    # Key-name redaction cannot catch secrets in oddly named fields; callers
+    # must still omit raw content from payload/result.
+    "content", "content_preview", "body", "conversation_summary",
+    "abstract", "summary", "context_snippet", "note",
+    # Metadata that can carry caller-controlled strings on the ingest write
+    # path. Callers still omit these from receipts; this is defense-in-depth.
+    # Do not redact agent_key/session_id here: recall attribution receipts
+    # (out of this repair's scope) still echo those identifiers.
+    "source", "source_ref", "tags", "cwd_hints", "entity_refs", "memory_type",
 }
 
 _REDACTED = "[REDACTED]"

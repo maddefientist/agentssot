@@ -239,6 +239,37 @@ def scan_text(text: str) -> ScanResult:
     return ScanResult(has_secrets=bool(matched), matched_patterns=matched)
 
 
+def collect_field_rejections(
+    fields: dict[str, str | None | list[str] | tuple[str, ...] | None],
+) -> list[str]:
+    """Scan named fields; return rejection messages that never include secret values.
+
+    Empty/None fields are skipped. List/tuple values are scanned element-wise so
+    metadata such as tags, cwd_hints, and entity_refs cannot bypass the gate.
+    Exceptions from ``scan_text`` propagate: callers must not catch-and-continue
+    when scanning is enabled. Bypass is only the operator flag
+    ``INGEST_SECRET_SCANNING=false`` (same as legacy ingest_batch).
+    """
+    rejections: list[str] = []
+    for name, value in fields.items():
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple)):
+            for idx, item in enumerate(value):
+                if not item:
+                    continue
+                result = scan_text(str(item))
+                if result.has_secrets:
+                    rejections.append(f"{name}[{idx}]: rejected — {result.reason}")
+            continue
+        if not value:
+            continue
+        result = scan_text(value)
+        if result.has_secrets:
+            rejections.append(f"{name}: rejected — {result.reason}")
+    return rejections
+
+
 def scan_batch(texts: list[str]) -> dict[int, ScanResult]:
     """Scan a list of texts, returning a dict of index→ScanResult for items with secrets.
 

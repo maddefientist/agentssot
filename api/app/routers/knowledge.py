@@ -35,6 +35,7 @@ from ..schemas import (
 from ..security import AuthContext, ensure_namespace_access, require_api_key
 from ..synthesis.summary_generator import generate_tiered_summaries
 from .. import wal
+from ..secret_scanner import collect_field_rejections
 from ..reranker import build_reranker_pair, pick_reranker
 from ..services.loadout import (
     resolve_cwd_entities, fetch_loadout_candidates, pack_loadout, loadout_cache_key,
@@ -178,6 +179,37 @@ async def ingest_tiered(
     namespace = data.namespace or "default"
     ensure_namespace_access(auth, namespace, {ApiRole.writer.value, ApiRole.admin.value})
 
+    # Secret scan before inference, embedding, persistence, or content logging.
+    # Bypass is only INGEST_SECRET_SCANNING=false (same as crud.ingest_batch).
+    # Scanner exceptions propagate: there is no disable-on-error fallback.
+    # Tags must be scanned before classify(); remaining caller strings before persist.
+    settings = get_settings()
+    if getattr(settings, "ingest_secret_scanning", True):
+        rejections = collect_field_rejections({
+            "content": data.content,
+            "abstract": data.abstract,
+            "summary": data.summary,
+            "source": data.source,
+            "source_ref": data.source_ref,
+            "tags": data.tags,
+            "memory_type": data.memory_type,
+            "cwd_hints": data.cwd_hints,
+            "entity_refs": data.entity_refs,
+        })
+        if rejections:
+            _log.warning(
+                "secret scan rejected ingest_tiered field(s) in namespace=%s count=%s",
+                namespace,
+                len(rejections),
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Ingest rejected: content contains potential secrets.\n"
+                    + "\n".join(rejections)
+                ),
+            )
+
     # Generate embedding for full content.
     # Two distinct "no embedding" cases:
     #   1. No provider configured / provider unavailable -> intentional None,
@@ -208,7 +240,6 @@ async def ingest_tiered(
     category_enum = MemoryCategory(category_value) if category_value else None
 
     # Plan 1 T2.3: auto-classify if caller didn't provide explicit type/abstract/summary
-    settings = get_settings()
     classifier_out: dict | None = None
     needs_review = False
     if (data.abstract is None and data.summary is None and not data.verbatim):
@@ -255,7 +286,7 @@ async def ingest_tiered(
                     "knowledge.dedup_hit",
                     namespace=namespace,
                     actor_key_id=auth.key_id,
-                    payload={"content_preview": data.content[:200]},
+                    payload={"content_chars": len(data.content or "")},
                     result={
                         "existing_id": str(existing.id),
                         "similarity": round(similarity, 4),
@@ -292,6 +323,43 @@ async def ingest_tiered(
                 summary = gen_summary
                 summary_to_store = summary or layers["summary"]
 
+    # Re-scan derived/generated layers and classifier-owned strings before persist.
+    # Input fields were already scanned; this catches model output that was not
+    # in the request (abstract/summary, cwd_hints, device_hints, entity mentions).
+    derived_cwd_hints = (
+        list(data.cwd_hints)[:50]
+        if data.cwd_hints
+        else (list(classifier_out.get("cwd_hints", []) or [])[:50] if classifier_out else [])
+    )
+    derived_device_hints = (
+        list(classifier_out.get("device_hints", []) or [])[:50] if classifier_out else []
+    )
+    derived_entity_mentions = (
+        list(classifier_out.get("entity_mentions") or []) if classifier_out else []
+    )
+    if getattr(settings, "ingest_secret_scanning", True):
+        derived_rejections = collect_field_rejections({
+            "abstract": abstract_to_store,
+            "summary": summary_to_store,
+            "memory_type": data.memory_type,
+            "cwd_hints": derived_cwd_hints,
+            "device_hints": derived_device_hints,
+            "entity_mentions": derived_entity_mentions,
+        })
+        if derived_rejections:
+            _log.warning(
+                "secret scan rejected ingest_tiered derived field(s) in namespace=%s count=%s",
+                namespace,
+                len(derived_rejections),
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Ingest rejected: content contains potential secrets.\n"
+                    + "\n".join(derived_rejections)
+                ),
+            )
+
     # Persist layer=full because the record always stores full content;
     # abstract/summary are optional metadata (not separate layers).
     layer = ContentLayer.full
@@ -315,12 +383,8 @@ async def ingest_tiered(
         verbatim=data.verbatim,
         confidence=float(classifier_out.get("confidence", 1.0)) if classifier_out else 1.0,
         # cwd_hints: caller-supplied wins; fall back to classifier output.
-        cwd_hints=(
-            list(data.cwd_hints)[:50]
-            if data.cwd_hints
-            else (list(classifier_out.get("cwd_hints", []) or [])[:50] if classifier_out else [])
-        ),
-        device_hints=(list(classifier_out.get("device_hints", []) or [])[:50]) if classifier_out else [],
+        cwd_hints=derived_cwd_hints,
+        device_hints=derived_device_hints,
         last_classified_at=datetime.now(timezone.utc) if classifier_out else None,
         # loadout_priority: caller-supplied value overrides the default 0.
         loadout_priority=data.loadout_priority,
@@ -493,8 +557,19 @@ async def ingest_tiered(
         "knowledge.ingest",
         namespace=namespace,
         actor_key_id=auth.key_id,
-        payload=data.model_dump(),
-        result={"id": str(ki.id), "verbatim": ki.verbatim, "layer": ki.layer.value},
+        payload={
+            "content_chars": len(data.content or ""),
+            "has_source": bool(data.source),
+            "has_source_ref": bool(data.source_ref),
+            "tag_count": len(data.tags or []),
+            "has_memory_type": bool(data.memory_type),
+            "cwd_hint_count": len(derived_cwd_hints),
+            "entity_ref_count": len(data.entity_refs or []),
+            "verbatim": bool(data.verbatim),
+            "has_abstract": bool(abstract_to_store),
+            "has_summary": bool(summary_to_store),
+        },
+        result={"id": str(ki.id), "verbatim": bool(ki.verbatim), "layer": ki.layer.value},
     )
 
     return ki

@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import crud, schemas, wal
+from .secret_scanner import collect_field_rejections
 from .background import compaction_loop, lifecycle_sweep_loop
 from .db import SessionLocal, get_session
 from .embeddings import build_embedding_provider
@@ -1071,6 +1072,34 @@ def submit_feedback(
     return schemas.FeedbackResponse(**result)
 
 
+def _reject_secret_fields(
+    fields: dict[str, str | None | list[str] | tuple[str, ...] | None],
+    *,
+    namespace: str,
+    where: str,
+) -> None:
+    """Reject secret-bearing text. Scanner exceptions propagate; no disable-on-error."""
+    settings = getattr(app.state, "settings", None) or get_settings()
+    if not getattr(settings, "ingest_secret_scanning", True):
+        return
+    rejections = collect_field_rejections(fields)
+    if not rejections:
+        return
+    logger.warning(
+        "secret scan rejected %s field(s) in namespace=%s count=%s",
+        where,
+        namespace,
+        len(rejections),
+    )
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=(
+            "Ingest rejected: content contains potential secrets.\n"
+            + "\n".join(rejections)
+        ),
+    )
+
+
 @app.post("/session-complete", response_model=schemas.SessionCompleteResponse)
 def session_complete(
     payload: schemas.SessionCompleteRequest,
@@ -1080,10 +1109,26 @@ def session_complete(
 ):
     ensure_namespace_access(auth, namespace, {ApiRole.writer.value, ApiRole.admin.value})
 
-    # 1. Mark recall events as session completed
-    completed_count = crud.mark_session_completed(session, payload.session_id)
+    # Resolve identity before scanning so a secret in caller agent_key *or* the
+    # fallback auth key name cannot reach extraction/writes. Bypass is only
+    # INGEST_SECRET_SCANNING=false (same as crud.ingest_batch).
+    agent_key = payload.agent_key or auth.key_name
+    device_name = agent_key.replace("device-", "").replace("-writer", "") if agent_key else "unknown"
+    persist_tags = ["session-extract", f"device-{device_name}", "auto-extracted"]
+    _reject_secret_fields(
+        {
+            "conversation_summary": payload.conversation_summary,
+            "agent_key": agent_key,
+            "session_id": payload.session_id,
+            "recalled_concept_ids": payload.recalled_concept_ids,
+            "tags": persist_tags,
+        },
+        namespace=namespace,
+        where="session_complete.input",
+    )
 
-    # 2. Extract facts via Ollama (zero Claude tokens)
+    # Extract facts via Ollama (zero Claude tokens) before any DB write so a
+    # secret-bearing extraction can still abort with nothing persisted.
     llm = app.state.llm_provider
     extraction_prompt = (
         "Extract 3-5 key facts from this conversation summary. "
@@ -1099,10 +1144,13 @@ def session_complete(
         except Exception:
             facts = []
 
-    # 3. Ingest extracted facts
+    extracted_fields = {f"extracted_facts[{idx}]": fact for idx, fact in enumerate(facts)}
+    _reject_secret_fields(extracted_fields, namespace=namespace, where="session_complete.extracted")
+
+    # Writes happen only after both input and extracted facts passed the scanner.
+    completed_count = crud.mark_session_completed(session, payload.session_id)
+
     from . import models as _models
-    agent_key = payload.agent_key or auth.key_name
-    device_name = agent_key.replace("device-", "").replace("-writer", "") if agent_key else "unknown"
     for fact in facts:
         embedding = None
         if app.state.embedding_provider.is_available:
@@ -1114,15 +1162,30 @@ def session_complete(
             namespace=namespace,
             content=fact,
             source=agent_key,
-            tags=["session-extract", f"device-{device_name}", "auto-extracted"],
+            tags=persist_tags,
             embedding=embedding,
         ))
 
-    # 4. Update agent profile from session activity
     if agent_key:
         crud.update_profile_from_recall(session, agent_key, namespace)
 
     session.commit()
+
+    wal.log_event(
+        "session.complete",
+        namespace=namespace,
+        actor_key_id=auth.key_id,
+        payload={
+            "has_session_id": bool(payload.session_id),
+            "summary_chars": len(payload.conversation_summary or ""),
+            "has_agent_key": bool(payload.agent_key),
+            "recalled_concept_count": len(payload.recalled_concept_ids or []),
+        },
+        result={
+            "facts_extracted": len(facts),
+            "recall_events_completed": completed_count,
+        },
+    )
 
     return schemas.SessionCompleteResponse(
         session_id=payload.session_id,
@@ -1259,7 +1322,12 @@ def ingest(
         "ingest.batch",
         namespace=namespace,
         actor_key_id=auth.key_id,
-        payload=payload.model_dump(),
+        payload={
+            "knowledge_item_count": len(payload.knowledge_items or []),
+            "event_count": len(payload.events or []),
+            "requirement_count": len(payload.requirements or []),
+            "entity_count": len(payload.entities or []),
+        },
         result={"counts": counts},
     )
     return schemas.IngestResponse(namespace=namespace, counts=counts)
